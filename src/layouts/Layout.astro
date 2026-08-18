@@ -1,14 +1,28 @@
+---
+import { getSession } from '../shared/session';
+
+const token = getSession(Astro.cookies);
+const isLoggedIn = token !== null;
+---
+
 <!doctype html>
-<html lang="en">
+<html lang="es">
 	<head>
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width" />
 		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
 		<link rel="icon" href="/favicon.ico" />
 		<meta name="generator" content={Astro.generator} />
-		<title>Astro Basics</title>
+		<title>Salud Frontend</title>
 	</head>
 	<body>
+		{isLoggedIn && (
+			<header>
+				<nav>
+					<a href="/logout">Salir</a>
+				</nav>
+			</header>
+		)}
 		<slot />
 	</body>
 </html>
