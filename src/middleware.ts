@@ -2,7 +2,7 @@ import { defineMiddleware } from 'astro/middleware';
 import { isTokenValid } from './shared/jwt';
 import { getSession } from './shared/session';
 
-const PUBLIC_PATHS = ['/login', '/auth/login'];
+const PUBLIC_PATHS = ['/login', '/auth/login', '/auth/register'];
 
 export const onRequest = defineMiddleware(async (context, next) => {
 	const { pathname } = context.url;
