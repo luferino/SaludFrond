@@ -27,9 +27,9 @@ Chain strategy: pending
 
 ## Phase 1: Foundation — Envelope Errors & Auth Actions
 
-- [ ] 1.1 `src/shared/apiClient.ts`: add `ApiError` (Error subclass: `status`, optional `code`/`message`); parse `{ error: { code, message } }` on every non-2xx; keep 401 `clearSession` + throw `code: 'UNAUTHORIZED'`; network failures throw plain `Error('Service unavailable')`.
+- [x] 1.1 `src/shared/apiClient.ts`: add `ApiError` (Error subclass: `status`, optional `code`/`message`); parse `{ error: { code, message } }` on every non-2xx; keep 401 `clearSession` + throw `code: 'UNAUTHORIZED'`; network failures throw plain `Error('Service unavailable')`.
 - [ ] 1.2 `src/actions/index.ts`: register schema adds `email: z.string().min(1)` (presence only; native `type="email"` is the format hint).
-- [ ] 1.3 `src/pods/auth/actions/login.ts`: narrow `LoginResponse` to `{ token }`; cookie `maxAge` from `decodeJwt` `exp` − now, fallback 7200s; sanitizer rejects `//` prefix and `://`; map errors by code (`UNAUTHORIZED` → "Credenciales inválidas", `BAD_REQUEST` → message, fallback `HTTP ${status}`); drop substring matching.
+- [x] 1.3 `src/pods/auth/actions/login.ts`: narrow `LoginResponse` to `{ token }`; cookie `maxAge` from `decodeJwt` `exp` − now, fallback 7200s; sanitizer rejects `//` prefix and `://`; map errors by code (`UNAUTHORIZED` → "Credenciales inválidas", `BAD_REQUEST` → message, fallback `HTTP ${status}`); drop substring matching.
 - [ ] 1.4 `src/pods/auth/actions/register.ts`: add email to input type and POST body; map `CONFLICT`/`BAD_REQUEST` → backend message, fallback `HTTP ${status}`; success `redirectTo: '/auth/login'`; drop substring matching.
 
 ## Phase 2: Forms
