@@ -39,9 +39,9 @@ Chain strategy: pending
 
 ## Phase 3: Redirects & Guard
 
-- [ ] 3.1 `src/middleware.ts`: drop `/login` from PUBLIC_PATHS; redirect to `/auth/login?returnTo=<encoded pathname>`.
-- [ ] 3.2 `src/pages/index.astro`: redirect to `/auth/login?returnTo=/`.
-- [ ] 3.3 `src/pages/logout.astro`: redirect to `/auth/login`.
+- [x] 3.1 `src/middleware.ts`: drop `/login` from PUBLIC_PATHS; redirect to `/auth/login?returnTo=<encoded pathname>`.
+- [x] 3.2 `src/pages/index.astro`: redirect to `/auth/login?returnTo=/`.
+- [x] 3.3 `src/pages/logout.astro`: redirect to `/auth/login`.
 
 ## Phase 4: Verification & Cleanup
 
