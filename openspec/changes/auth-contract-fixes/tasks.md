@@ -34,8 +34,8 @@ Chain strategy: pending
 
 ## Phase 2: Forms
 
-- [ ] 2.1 `src/pods/auth/components/RegisterForm.astro`: add email input (`type="email"`, required); add `use:form` directive.
-- [ ] 2.2 `src/pods/auth/components/LoginForm.astro`: add `use:form`; on success `Astro.redirect(result.data.returnTo)`.
+- [x] 2.1 `src/pods/auth/components/RegisterForm.astro`: add email input (`type="email"`, required); add `use:form` directive.
+- [x] 2.2 `src/pods/auth/components/LoginForm.astro`: add `use:form`; on success `Astro.redirect(result.data.returnTo)`.
 
 ## Phase 3: Redirects & Guard
 

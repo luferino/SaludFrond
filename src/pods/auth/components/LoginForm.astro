@@ -3,9 +3,13 @@ import { actions } from 'astro:actions';
 
 const result = Astro.getActionResult(actions.login);
 const returnTo = Astro.url.searchParams.get('returnTo') ?? '/';
+
+if (result?.data?.returnTo) {
+	return Astro.redirect(result.data.returnTo);
+}
 ---
 
-<form method="POST" action={actions.login}>
+<form method="POST" action={actions.login} use:form>
 	<input type="hidden" name="returnTo" value={returnTo} />
 
 	{result?.error && (
