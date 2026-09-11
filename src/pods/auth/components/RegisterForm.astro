@@ -2,10 +2,6 @@
 import { actions } from 'astro:actions';
 
 const result = Astro.getActionResult(actions.register);
-
-if (result?.data?.redirectTo) {
-	return Astro.redirect(result.data.redirectTo);
-}
 ---
 
 <form method="POST" action={actions.register} use:form>
