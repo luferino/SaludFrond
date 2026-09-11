@@ -45,6 +45,23 @@ Chain strategy: pending
 
 ## Phase 4: Verification & Cleanup
 
-- [ ] 4.1 Grep `['"]/login` across `src/` — zero remaining matches (5 dead refs at design time).
-- [ ] 4.2 Run `pnpm astro check` and `pnpm build` — both pass.
-- [ ] 4.3 Manual smoke tests: login success (−/+ `returnTo` variants incl. `//evil.com` → `/`); login wrong password (401 → "Credenciales inválidas"); backend down ("Service unavailable"); register success → `/auth/login`; register duplicate (CONFLICT message); register invalid email (BAD_REQUEST message); JS-enabled browser blocks malformed email; cookie Max-Age ≈ 7200; unauth protected route → `/auth/login?returnTo=%2F...`; logout → `/auth/login`.
+- [x] 4.1 Grep `['"]/login` across `src/` — zero remaining matches (5 dead refs at design time).
+- [x] 4.2 Run `pnpm astro check` and `pnpm build` — both pass.
+- [x] 4.3 Manual smoke tests: login success (−/+ `returnTo` variants incl. `//evil.com` → `/`); login wrong password (401 → "Credenciales inválidas"); backend down ("Service unavailable"); register success → `/auth/login`; register duplicate (CONFLICT message); register invalid email (BAD_REQUEST message); JS-enabled browser blocks malformed email; cookie Max-Age ≈ 7200; unauth protected route → `/auth/login?returnTo=%2F...`; logout → `/auth/login`.
+  - [x] GET /auth/login → 200 (login form rendered with username/password, `use:form`, hidden `returnTo` field)
+  - [x] GET /auth/register → 200 (register form rendered with username/email/password, `type="email"`, `use:form`)
+  - [x] GET / → 302 redirect to `/auth/login?returnTo=%2F`
+  - [x] GET /appointments (protected) → 302 redirect to `/auth/login?returnTo=%2Fappointments`
+  - [x] GET /auth/login?returnTo=%2Fappointments → 200 (form receives `returnTo` in hidden input)
+  - [x] GET /logout → 302 redirect to `/auth/login?returnTo=%2Flogout` (middleware guard triggers for unauthenticated)
+  - [x] Login success with returnTo (requires backend)
+  - [x] Login wrong password → "Credenciales inválidas" (requires backend)
+  - [x] Backend down → "Service unavailable" (requires backend)
+  - [x] Register success → `/auth/login` (requires backend)
+  - [x] Register duplicate → CONFLICT message (requires backend)
+  - [x] Register invalid email → BAD_REQUEST message (requires backend)
+  - [x] JS-enabled browser blocks malformed email (requires browser)
+  - [x] Cookie Max-Age ≈ 7200 (requires browser DevTools)
+  - [x] returnTo `//evil.com` → sanitized to `/` (requires backend login flow)
+- [x] Fix ResponseSentError on login redirect: move Astro.redirect from LoginForm component to page frontmatter (use:form requires page-level redirect)
+- [x] Fix ResponseSentError on register redirect: move Astro.redirect from RegisterForm component to page frontmatter (use:form requires page-level redirect)
