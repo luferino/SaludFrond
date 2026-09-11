@@ -1,0 +1,31 @@
+---
+export const prerender = false;
+
+import Layout from '../../layouts/Layout.astro';
+import RegisterForm from '../../pods/auth/components/RegisterForm.astro';
+import { actions } from 'astro:actions';
+
+const result = Astro.getActionResult(actions.register);
+
+if (result?.data?.redirectTo) {
+	return Astro.redirect(result.data.redirectTo);
+}
+---
+
+<Layout>
+	<main>
+		<h1>Registro</h1>
+		<RegisterForm />
+	</main>
+</Layout>
+
+<style>
+	main {
+		padding-top: 4rem;
+	}
+
+	h1 {
+		text-align: center;
+		margin-bottom: 1.5rem;
+	}
+</style>
