@@ -69,19 +69,22 @@ Register z-schema adds `email: z.string().min(1)` — presence only, mirroring u
 
 ## File Changes
 
-9 files, all Modify — estimated ±200 changed lines, well under the 400-line budget.
+12 files in change scope — 11 Modify + 1 Create — estimated ±250 changed lines, well under the 400-line budget. Implementation also removed `src/pods/odonto/odonto.astro` (out-of-scope garbage cleanup, committed separately; not part of the auth-contract-fixes surface).
 
-| File | Change |
-|---|---|
-| `src/shared/apiClient.ts` | Add `ApiError`; parse envelope on non-2xx; keep 401 `clearSession`; network → plain Error |
-| `src/pods/auth/actions/login.ts` | `LoginResponse {token}`; maxAge from `decodeJwt` + 7200 fallback; sanitizer rejects `//`; code-based error mapping |
-| `src/pods/auth/actions/register.ts` | email in input type + body; CONFLICT/BAD_REQUEST → message; `redirectTo: '/auth/login'`; drop substring matching |
-| `src/actions/index.ts` | register schema adds `email: z.string().min(1)` |
-| `src/pods/auth/components/RegisterForm.astro` | email input (`type="email"`, required); add `use:form` |
-| `src/pods/auth/components/LoginForm.astro` | add `use:form`; success → `Astro.redirect(result.data.returnTo)` |
-| `src/middleware.ts` | PUBLIC_PATHS drops `/login`; redirect → `/auth/login?returnTo=` |
-| `src/pages/index.astro` | redirect → `/auth/login?returnTo=/` |
-| `src/pages/logout.astro` | redirect → `/auth/login` |
+| File | Action | Change |
+|---|---|---|
+| `src/shared/apiClient.ts` | Modify | Add `ApiError`; parse envelope on non-2xx; keep 401 `clearSession`; network → plain Error |
+| `src/pods/auth/actions/login.ts` | Modify | `LoginResponse {token}`; maxAge from `decodeJwt` + 7200 fallback; sanitizer rejects `//`; code-based error mapping |
+| `src/pods/auth/actions/register.ts` | Modify | email in input type + body; CONFLICT/BAD_REQUEST → message; `redirectTo: '/auth/login'`; drop substring matching |
+| `src/actions/index.ts` | Modify | register schema adds `email: z.string().min(1)` |
+| `src/pods/auth/components/RegisterForm.astro` | Modify | email input (`type="email"`, required); add `use:form`; component-level redirect removed (moved to page) |
+| `src/pods/auth/components/LoginForm.astro` | Modify | add `use:form`; component-level redirect removed (moved to page) |
+| `src/pages/auth/login.astro` | Modify | page frontmatter: `Astro.getActionResult(actions.login)`; redirect to sanitized `returnTo` (use:form requires page-level redirect) |
+| `src/pages/auth/register.astro` | Modify | page frontmatter: `Astro.getActionResult(actions.register)`; redirect to `redirectTo` ('/auth/login') |
+| `src/env.d.ts` | Create | `use:form` JSX type augmentation required under TS strict (astro check 0 errors) |
+| `src/middleware.ts` | Modify | PUBLIC_PATHS drops `/login`; redirect → `/auth/login?returnTo=` |
+| `src/pages/index.astro` | Modify | redirect → `/auth/login?returnTo=/` |
+| `src/pages/logout.astro` | Modify | redirect → `/auth/login` |
 
 ## Interfaces / Contracts
 
@@ -105,13 +108,13 @@ class ApiError extends Error { status: number; code?: string; }
 
 ## Migration / Rollout
 
-No migration; frontend-only. Rollback via `git checkout` of the nine touched files.
+No migration; frontend-only. Rollback via `git checkout` of the eleven modified files, plus deletion of the one new file (`src/env.d.ts`). The `src/pods/odonto/odonto.astro` deletion is separate out-of-scope cleanup — restore it via `git checkout` if its removal is not desired.
 
 ## Risks
 
 - Low: a stale `/login` string could survive review — grep `['"]/login` after apply (5 dead references confirmed at design time).
 - Low: `use:form` JS path changes submission mechanics — covered by manual tests 1–2 with JS enabled.
-- Budget: negligible regression surface beyond the 9 small diffs.
+- Budget: negligible regression surface beyond the 12 small diffs (11 modify + 1 create).
 
 ## Open Questions
 
