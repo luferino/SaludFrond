@@ -1,8 +1,11 @@
 ---
 import { getSession } from '../shared/session';
+import { decodeJwt } from '../shared/jwt';
 
 const token = getSession(Astro.cookies);
 const isLoggedIn = token !== null;
+const payload = token ? decodeJwt(token) : null;
+const isAdmin = payload?.role === 'admin';
 ---
 
 <!doctype html>
@@ -19,12 +22,16 @@ const isLoggedIn = token !== null;
 		{isLoggedIn ? (
 			<header>
 				<nav>
+					{isAdmin && <a href="/students">Estudiantes</a>}
+					{isAdmin && <a href="/teachers">Profesores</a>}
+					{isAdmin && <a href="/patients">Pacientes</a>}
 					<a href="/logout">Salir</a>
 				</nav>
 			</header>
 		) : (
 			<header>
 				<nav>
+					<a href="/auth/login">Iniciar Sesión</a>
 					<a href="/auth/register">Registrarse</a>
 				</nav>
 			</header>
