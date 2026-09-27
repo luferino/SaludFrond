@@ -15,19 +15,23 @@ if (!payload || payload.role !== 'admin') {
 ---
 
 <Layout>
-	<main>
-		<h1>Registrar Paciente</h1>
+	<main aria-labelledby="patient-title">
+		<header class="intro">
+			<p class="eyebrow">Atención / Pacientes</p>
+			<h1 id="patient-title">Registrar paciente</h1>
+			<p>Completa los datos personales y de contacto para dar de alta al paciente.</p>
+		</header>
 		<PatientForm />
 	</main>
 </Layout>
 
 <style>
-	main {
-		padding-top: 4rem;
-	}
-
+	main { max-width: 1040px; min-width: 0; margin: 0 auto; }
+	.intro { margin-bottom: 2rem; }
+	.intro p { margin: 0.75rem 0; color: var(--muted); }
+	.eyebrow { font: 0.65rem/1.6 Consolas, monospace; letter-spacing: 0.1em; text-transform: uppercase; }
 	h1 {
-		text-align: center;
-		margin-bottom: 1.5rem;
+		margin: 0.5rem 0;
+		font: 400 clamp(2rem, 3vw, 2.75rem)/1.15 var(--serif);
 	}
 </style>
