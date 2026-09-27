@@ -23,5 +23,6 @@ export function decodeJwt(token: string): JwtPayload | null {
 export function isTokenValid(token: string): boolean {
 	const payload = decodeJwt(token);
 	if (!payload) return false;
-	return payload.exp > Date.now() / 1000;
+	return typeof payload.exp === 'number' && Number.isFinite(payload.exp)
+		&& payload.exp > Date.now() / 1000;
 }
