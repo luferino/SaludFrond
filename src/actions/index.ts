@@ -9,6 +9,7 @@ import {
 } from '../pods/auth/actions';
 import { handleCreateStudent } from '../pods/student/actions/students';
 import { handleCreateTeacher } from '../pods/teacher/actions/teachers';
+import { handleCreatePatient } from '../pods/paciente/actions/patients';
 
 export const server = {
 	login: defineAction({
@@ -72,5 +73,19 @@ export const server = {
 			celular: z.string().optional(),
 		}),
 		handler: handleCreateTeacher,
+	}),
+	createPatient: defineAction({
+		accept: 'form',
+		input: z.object({
+			documento: z.string().min(1),
+			nombres: z.string().min(1),
+			apellidos: z.string().min(1),
+			fecha_nacimiento: z.string().min(1),
+			email: z.string().min(1),
+			celular: z.string().min(1),
+			sexo: z.string().min(1),
+			direccion: z.string().min(1),
+		}),
+		handler: handleCreatePatient,
 	}),
 };

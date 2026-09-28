@@ -24,6 +24,7 @@ const isAdmin = payload?.role === 'admin';
 				<nav>
 					{isAdmin && <a href="/students">Estudiantes</a>}
 					{isAdmin && <a href="/teachers">Profesores</a>}
+					{isAdmin && <a href="/patients">Pacientes</a>}
 					<a href="/logout">Salir</a>
 				</nav>
 			</header>
