@@ -1,0 +1,24 @@
+---
+export const prerender = false;
+
+import Layout from '../../layouts/Layout.astro';
+import LoginForm from '../../pods/auth/components/LoginForm.astro';
+---
+
+<Layout>
+	<main>
+		<h1>Iniciar Sesión</h1>
+		<LoginForm />
+	</main>
+</Layout>
+
+<style>
+	main {
+		padding-top: 4rem;
+	}
+
+	h1 {
+		text-align: center;
+		margin-bottom: 1.5rem;
+	}
+</style>
