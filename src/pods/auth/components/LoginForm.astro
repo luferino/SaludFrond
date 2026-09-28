@@ -5,7 +5,7 @@ const result = Astro.getActionResult(actions.login);
 const returnTo = Astro.url.searchParams.get('returnTo') ?? '/';
 ---
 
-<form method="POST" action={actions.login}>
+<form method="POST" action={actions.login} use:form>
 	<input type="hidden" name="returnTo" value={returnTo} />
 
 	{result?.error && (
