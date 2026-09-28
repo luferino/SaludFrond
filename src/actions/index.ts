@@ -7,6 +7,7 @@ import {
 	handleForgotPassword,
 	handleResetPassword,
 } from '../pods/auth/actions';
+import { handleCreateStudent } from '../pods/student/actions/students';
 
 export const server = {
 	login: defineAction({
@@ -45,5 +46,18 @@ export const server = {
 			newPassword: z.string().min(10),
 		}),
 		handler: handleResetPassword,
+	}),
+	createStudent: defineAction({
+		accept: 'form',
+		input: z.object({
+			username: z.string().min(1),
+			password: z.string().min(10),
+			nombres: z.string().min(1),
+			apellidos: z.string().min(1),
+			codalumno: z.string().min(1),
+			email: z.string().optional(),
+			celular: z.string().optional(),
+		}),
+		handler: handleCreateStudent,
 	}),
 };
