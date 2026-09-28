@@ -1,0 +1,33 @@
+---
+export const prerender = false;
+
+import Layout from '../layouts/Layout.astro';
+import PatientForm from '../pods/paciente/components/form-paciente.astro';
+import { getSession } from '../shared/session';
+import { decodeJwt } from '../shared/jwt';
+
+const token = getSession(Astro.cookies);
+const payload = token ? decodeJwt(token) : null;
+
+if (!payload || payload.role !== 'admin') {
+	return Astro.redirect('/auth/login');
+}
+---
+
+<Layout>
+	<main>
+		<h1>Registrar Paciente</h1>
+		<PatientForm />
+	</main>
+</Layout>
+
+<style>
+	main {
+		padding-top: 4rem;
+	}
+
+	h1 {
+		text-align: center;
+		margin-bottom: 1.5rem;
+	}
+</style>
