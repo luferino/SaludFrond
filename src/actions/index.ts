@@ -8,6 +8,7 @@ import {
 	handleResetPassword,
 } from '../pods/auth/actions';
 import { handleCreateStudent } from '../pods/student/actions/students';
+import { handleCreateTeacher } from '../pods/teacher/actions/teachers';
 
 export const server = {
 	login: defineAction({
@@ -59,5 +60,17 @@ export const server = {
 			celular: z.string().optional(),
 		}),
 		handler: handleCreateStudent,
+	}),
+	createTeacher: defineAction({
+		accept: 'form',
+		input: z.object({
+			username: z.string().min(1),
+			password: z.string().min(10),
+			nombres: z.string().min(1),
+			apellidos: z.string().min(1),
+			email: z.string().optional(),
+			celular: z.string().optional(),
+		}),
+		handler: handleCreateTeacher,
 	}),
 };
