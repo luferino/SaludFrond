@@ -1,5 +1,6 @@
 import type { AstroCookies } from 'astro';
 import { ApiError, apiFetch } from '../../../shared/apiClient';
+import { birthDateError, parseBirthDate } from '../birth-date';
 
 interface PatientInput {
 	documento: string;
@@ -30,6 +31,9 @@ export async function handleCreatePatient(
 	input: PatientInput,
 	context: { cookies: AstroCookies },
 ) {
+	const birthDate = parseBirthDate(input.fecha_nacimiento);
+	if (!birthDate) return { success: false as const, error: birthDateError };
+
 	try {
 		const result = await apiFetch<PatientResponse>('/patients', {
 			method: 'POST',
@@ -37,7 +41,7 @@ export async function handleCreatePatient(
 				documento: input.documento,
 				nombres: input.nombres,
 				apellidos: input.apellidos,
-				fecha_nacimiento: input.fecha_nacimiento,
+				fecha_nacimiento: birthDate,
 				email: input.email,
 				celular: input.celular,
 				sexo: input.sexo,
