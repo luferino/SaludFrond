@@ -16,10 +16,16 @@ const isLoggedIn = token !== null;
 		<title>Salud Frontend</title>
 	</head>
 	<body>
-		{isLoggedIn && (
+		{isLoggedIn ? (
 			<header>
 				<nav>
 					<a href="/logout">Salir</a>
+				</nav>
+			</header>
+		) : (
+			<header>
+				<nav>
+					<a href="/auth/register">Registrarse</a>
 				</nav>
 			</header>
 		)}
