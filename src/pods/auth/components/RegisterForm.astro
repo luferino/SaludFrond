@@ -52,7 +52,7 @@ const errorMessage = result?.error?.message || result?.data?.error;
 		padding: clamp(1.25rem, 3vw, 2.25rem);
 		background: var(--paper);
 		border: 1px solid var(--line);
-		border-top: 5px solid #bac3b0;
+		border-top: 5px solid var(--sage);
 		border-radius: 0 12px 12px 12px;
 	}
 	form::before {
@@ -62,7 +62,7 @@ const errorMessage = result?.error?.message || result?.data?.error;
 		inset-inline-start: -1px;
 		width: min(45%, 14rem);
 		height: 1.5rem;
-		background: #bac3b0;
+		background: var(--sage);
 		border: 1px solid var(--line);
 		border-bottom: 0;
 		border-radius: 10px 18px 0 0;
@@ -87,9 +87,9 @@ const errorMessage = result?.error?.message || result?.data?.error;
 		min-width: 0;
 		min-height: 46px;
 		padding: 0.65rem 0.8rem;
-		border: 1px solid #a49985;
+		border: 1px solid var(--field-line);
 		border-radius: 6px;
-		background: #fffdf8;
+		background: var(--field);
 		color: var(--ink);
 		font: inherit;
 		font-size: 1rem;
@@ -115,7 +115,7 @@ const errorMessage = result?.error?.message || result?.data?.error;
 		font-weight: 600;
 		cursor: pointer;
 	}
-	button:hover { background: #843b28; }
+	button:hover { background: var(--rust-deep); }
 	.error, .success {
 		margin: 0;
 		padding: 1.25rem;
@@ -124,8 +124,8 @@ const errorMessage = result?.error?.message || result?.data?.error;
 		overflow-wrap: anywhere;
 		font-size: 0.875rem;
 	}
-	.error { color: #843b28; background: #fae8df; border-color: #b97560; }
-	.success { color: var(--ink); background: #e5eadf; border-color: #bac3b0; }
+	.error { color: var(--rust-deep); background: var(--rust-soft); border-color: var(--rust-line); }
+	.success { color: var(--ink); background: var(--sage-soft); border-color: var(--sage); }
 	@media (max-width: 960px) {
 		.field-grid { grid-template-columns: minmax(0, 1fr); }
 	}
