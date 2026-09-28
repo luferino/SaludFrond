@@ -1,0 +1,48 @@
+# openspec/config.yaml
+schema: spec-driven
+
+project: saludfrond
+
+context: |
+  Tech stack: Astro 7 (^7.0.6) + TypeScript (astro strict) + pnpm, Node >= 22.12.0
+  Architecture: Astro pages/layouts/components + feature pods under src/pods/{feature}
+  Backend: SaludBack (Express 5 + PostgreSQL, Clean Architecture) — frontend only, do not read backend code
+  Testing: no test runner configured (strict_tdd disabled)
+  Preflight decisions: interactive mode, openspec artifact store, ask-always PR strategy, 400-line review budget
+
+testing:
+  strict_tdd: false
+  test_command: ""            # no test runner installed — do not invent one
+  runner: none
+  unit: false
+  integration: false
+  e2e: false
+  coverage: false
+  type_check: "pnpm astro check"
+  lint: none
+  format: none
+
+rules:
+  proposal:
+    - Include intent, scope, and approach with rollback plan for risky changes
+  specs:
+    - Use Given/When/Then for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+  design:
+    - Document architecture decisions with rationale
+    - Follow the pod convention: src/pods/{feature}/ with pod-local components/
+  tasks:
+    - Group by phase, use hierarchical numbering
+    - Keep tasks completable in one session
+    - Keep changes within the 400-line review budget
+  apply:
+    - Follow existing code patterns
+    - PR strategy: ask-always (do not create or push PRs without user approval)
+    tdd: false                 # no test runner; strict TDD unavailable
+    test_command: ""
+  verify:
+    test_command: ""
+    build_command: "pnpm build"
+    coverage_threshold: 0
+  archive:
+    - Warn before merging destructive deltas
