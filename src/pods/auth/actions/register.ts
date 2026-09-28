@@ -1,8 +1,9 @@
 import type { AstroCookies } from 'astro';
-import { apiFetch } from '../../../shared/apiClient';
+import { ApiError, apiFetch } from '../../../shared/apiClient';
 
 interface RegisterInput {
 	username: string;
+	email: string;
 	password: string;
 }
 
@@ -13,26 +14,22 @@ export async function handleRegister(
 	try {
 		await apiFetch('/auth/register', {
 			method: 'POST',
-			body: { username: input.username, password: input.password },
+			body: {
+				username: input.username,
+				email: input.email,
+				password: input.password,
+			},
 			cookies: context.cookies,
 		});
 
-		return { success: true as const, redirectTo: '/login' };
+		return { success: true as const, redirectTo: '/auth/login' };
 	} catch (error) {
-		if (error instanceof Error) {
-			const msg = error.message;
-
-			if (msg.includes('409') || msg.toLowerCase().includes('duplicate')) {
-				return { success: false as const, error: 'El nombre de usuario ya está en uso' };
+		if (error instanceof ApiError) {
+			if (error.code === 'CONFLICT' || error.code === 'BAD_REQUEST') {
+				return { success: false as const, error: error.message };
 			}
-
-			if (msg.includes('400') || msg.toLowerCase().includes('validation')) {
-				return { success: false as const, error: msg || 'Datos inválidos' };
-			}
-
-			return { success: false as const, error: 'Service unavailable' };
+			return { success: false as const, error: `HTTP ${error.status}` };
 		}
-
 		return { success: false as const, error: 'Service unavailable' };
 	}
 }

@@ -4,5 +4,5 @@ export const prerender = false;
 import { clearSession } from '../shared/session';
 
 clearSession(Astro.cookies);
-return Astro.redirect('/login');
+return Astro.redirect('/auth/login');
 ---

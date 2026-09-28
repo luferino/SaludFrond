@@ -9,7 +9,7 @@ const token = getSession(Astro.cookies);
 const isAuthed = token !== null && isTokenValid(token);
 
 if (!isAuthed) {
-	return Astro.redirect('/login?returnTo=' + encodeURIComponent('/'));
+	return Astro.redirect('/auth/login?returnTo=' + encodeURIComponent('/'));
 }
 ---
 

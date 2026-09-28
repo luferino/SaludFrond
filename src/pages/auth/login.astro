@@ -3,6 +3,13 @@ export const prerender = false;
 
 import Layout from '../../layouts/Layout.astro';
 import LoginForm from '../../pods/auth/components/LoginForm.astro';
+import { actions } from 'astro:actions';
+
+const result = Astro.getActionResult(actions.login);
+
+if (result?.data?.returnTo) {
+	return Astro.redirect(result.data.returnTo);
+}
 ---
 
 <Layout>
