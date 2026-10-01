@@ -223,8 +223,8 @@ test('student scoped styles retain the approved flush-left folder, focus, and re
 	const styles = form.match(/<style>([\s\S]*?)<\/style>/)[1];
 	const panel = styles.match(/\bform\s*\{([^}]+)\}/)[1];
 	const tab = styles.match(/form::before\s*\{([^}]+)\}/)[1];
-	for (const rule of ['position: relative', 'margin-block-start: 3rem', 'background: var(--paper)', 'border-top: 5px solid #bac3b0', 'border-radius: 0 12px 12px 12px']) assert.ok(panel.includes(rule));
-	for (const rule of ["content: ''", 'inset-inline-start: -1px', 'inset-block-start: calc(-1.5rem - 5px)', 'width: min(45%, 14rem)', 'background: #bac3b0', 'pointer-events: none']) assert.ok(tab.includes(rule));
+	for (const rule of ['position: relative', 'margin-block-start: 3rem', 'background: var(--paper)', 'border-top: 5px solid var(--sage)', 'border-radius: 0 12px 12px 12px']) assert.ok(panel.includes(rule));
+	for (const rule of ["content: ''", 'inset-inline-start: -1px', 'inset-block-start: calc(-1.5rem - 5px)', 'width: min(45%, 14rem)', 'background: var(--sage)', 'pointer-events: none']) assert.ok(tab.includes(rule));
 	assert.match(styles, /input:focus-visible, button:focus-visible\s*\{[^}]*outline: 3px solid var\(--rust\)/);
 	assert.match(styles, /button\s*\{[^}]*background: var\(--rust\)/);
 	assert.match(styles, /@media \(max-width: 960px\)\s*\{\s*\.field-grid\s*\{ grid-template-columns: minmax\(0, 1fr\)/);

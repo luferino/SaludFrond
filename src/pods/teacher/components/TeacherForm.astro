@@ -75,7 +75,7 @@ const result = Astro.getActionResult(actions.createTeacher);
 		padding: clamp(1.25rem, 3vw, 2.25rem);
 		background: var(--paper);
 		border: 1px solid var(--line);
-		border-top: 5px solid #bac3b0;
+		border-top: 5px solid var(--sage);
 		border-radius: 0 12px 12px 12px;
 	}
 	form::before {
@@ -85,7 +85,7 @@ const result = Astro.getActionResult(actions.createTeacher);
 		inset-inline-start: -1px;
 		width: min(45%, 14rem);
 		height: 1.5rem;
-		background: #bac3b0;
+		background: var(--sage);
 		border: 1px solid var(--line);
 		border-bottom: 0;
 		border-radius: 10px 18px 0 0;
@@ -111,9 +111,9 @@ const result = Astro.getActionResult(actions.createTeacher);
 		min-width: 0;
 		min-height: 46px;
 		padding: 0.65rem 0.8rem;
-		border: 1px solid #a49985;
+		border: 1px solid var(--field-line);
 		border-radius: 6px;
-		background: #fffdf8;
+		background: var(--field);
 		color: var(--ink);
 		font: inherit;
 		font-size: 1rem;
@@ -140,10 +140,10 @@ const result = Astro.getActionResult(actions.createTeacher);
 		font-weight: 600;
 		cursor: pointer;
 	}
-	button:hover { background: #843b28; }
+	button:hover { background: var(--rust-deep); }
 	.error, .success { padding: 1.25rem; border: 1px solid var(--line); border-radius: 8px; overflow-wrap: anywhere; font-size: 0.875rem; }
-	.error { margin: 0; color: #843b28; background: #fae8df; border-color: #b97560; }
-	.success { color: var(--ink); background: #e5eadf; border-color: #bac3b0; }
+	.error { margin: 0; color: var(--rust-deep); background: var(--rust-soft); border-color: var(--rust-line); }
+	.success { color: var(--ink); background: var(--sage-soft); border-color: var(--sage); }
 	.success p { margin: 0 0 1rem; }
 	.success button { background: var(--paper); color: var(--rust); }
 	.success button:hover { background: var(--canvas); }

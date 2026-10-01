@@ -83,6 +83,14 @@ const pageTitle = pageTitles[currentPath] ?? 'Salud';
 		--canvas: #e8e0d1;
 		--line: #cfc3af;
 		--rust: #a84d34;
+		--rust-deep: #843b28;
+		--rust-soft: #fae8df;
+		--rust-line: #b97560;
+		--sage: #bac3b0;
+		--sage-soft: #e5eadf;
+		--sage-deep: #656f59;
+		--field: #fffdf8;
+		--field-line: #a49985;
 		--serif: Georgia, 'Times New Roman', serif;
 	}
 	:global(*), :global(*::before), :global(*::after) { box-sizing: border-box; }
@@ -166,7 +174,7 @@ const pageTitle = pageTitles[currentPath] ?? 'Salud';
 	}
 	.eyebrow { margin: 0 0 0.4rem; color: var(--muted); }
 	.page-title { margin: 0; font: 1.9rem/1.2 var(--serif); }
-	.session-badge { padding: 0.35rem 0.7rem; border: 1px solid #bac3b0; border-radius: 20px; background: #e5eadf; font-size: 0.75rem; }
+	.session-badge { padding: 0.35rem 0.7rem; border: 1px solid var(--sage); border-radius: 20px; background: var(--sage-soft); font-size: 0.75rem; }
 	.page-content { padding: clamp(1.25rem, 3vw, 3rem); overflow-wrap: anywhere; }
 	@media (max-width: 760px) {
 		.is-authenticated { grid-template-columns: minmax(0, 1fr); }
