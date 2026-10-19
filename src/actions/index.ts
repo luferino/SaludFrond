@@ -8,6 +8,7 @@ import {
 	handleResetPassword,
 } from '../pods/auth/actions';
 import { handleCreateSubject } from '../pods/subject/actions/subjects';
+import { handleCreateGroup } from '../pods/group/actions/groups';
 import { handleCreateStudent } from '../pods/student/actions/students';
 import { handleCreateTeacher } from '../pods/teacher/actions/teachers';
 import { handleCreatePatient } from '../pods/paciente/actions/patients';
@@ -54,6 +55,21 @@ export const server = {
 		accept: 'form',
 		input: z.object({ name: z.string().trim().min(1) }),
 		handler: handleCreateSubject,
+	}),
+	createGroup: defineAction({
+		accept: 'form',
+		input: z.object({
+			academic_year: z.preprocess(
+				(value) => typeof value === 'string' && /^[0-9]+$/.test(value) ? Number(value) : value,
+				z.number().int().min(1).max(2_147_483_647),
+			),
+			curriculum_semester: z.preprocess(
+				(value) => typeof value === 'string' && /^[0-9]+$/.test(value) ? Number(value) : value,
+				z.number().int().min(1).max(2_147_483_647),
+			),
+			name: z.string().trim().min(1),
+		}),
+		handler: handleCreateGroup,
 	}),
 	createStudent: defineAction({
 		accept: 'form',

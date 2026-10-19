@@ -3,9 +3,12 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
+import { z } from 'astro/zod';
 
 const root = new URL('../', import.meta.url);
 const apiPath = 'src/pods/group/api.ts';
+const actionPath = 'src/pods/group/actions/groups.ts';
+const registryPath = 'src/actions/index.ts';
 const pagePath = 'src/pages/groups.astro';
 const componentPath = 'src/pods/group/components/GroupList.astro';
 const source = (path) => readFile(new URL(path, root), 'utf8');
@@ -26,11 +29,11 @@ async function evaluate(path, options = {}) {
 	const sandbox = vm.createContext({
 		URL, URLSearchParams, Response, Error, Date, atob,
 		fetch: async (url, init) => {
-			requests.push({ url, ...init });
 			if (options.networkError) throw new Error('Offline');
-			return Response.json(options.response ?? { items: [sample()], limit: 50, offset: 0 }, {
-				status: options.status ?? 200,
-			});
+			const response = options.responses?.shift();
+			const status = response?.status ?? options.status ?? 200;
+			requests.push({ url, ...init, responseStatus: status });
+			return Response.json(response?.body ?? response ?? options.response ?? { items: [sample()], limit: 50, offset: 0 }, { status });
 		},
 		Astro: { cookies, url: new URL(options.url ?? 'https://frontend.invalid/groups'), redirect: (location) => ({ redirect: location }) },
 	});
@@ -44,6 +47,10 @@ async function evaluate(path, options = {}) {
 			initializeImportMeta: (meta) => { meta.env = { PUBLIC_API_URL: 'https://backend.invalid', PROD: false }; },
 		});
 		await module.link(async (specifier, parent) => {
+			if (specifier === 'astro:actions') return new vm.SyntheticModule(['actions', 'isInputError'], function () {
+				this.setExport('actions', { createGroup: 'createGroup' });
+				this.setExport('isInputError', (error) => Boolean(error?.fields));
+			}, { context: sandbox });
 			if (specifier.endsWith('.astro')) return new vm.SyntheticModule([], function () {}, { context: sandbox });
 			const resolved = new URL(specifier.endsWith('.ts') ? specifier : `${specifier}.ts`, parent.identifier);
 			return compile(await readFile(resolved, 'utf8'), resolved.href);
@@ -67,7 +74,119 @@ async function evaluateApi(options = {}) {
 	return { ...result, api: result.value };
 }
 
+async function evaluateRegistry() {
+	const names = {
+		'astro:actions': ['defineAction'],
+		'astro/zod': ['z'],
+		'../pods/auth/actions': ['handleLogin', 'handleLogout', 'handleRegister', 'handleForgotPassword', 'handleResetPassword'],
+		'../pods/subject/actions/subjects': ['handleCreateSubject'],
+		'../pods/group/actions/groups': ['handleCreateGroup'],
+		'../pods/student/actions/students': ['handleCreateStudent'],
+		'../pods/teacher/actions/teachers': ['handleCreateTeacher'],
+		'../pods/paciente/actions/patients': ['handleCreatePatient'],
+	};
+	const sandbox = vm.createContext({});
+	const code = await source(registryPath);
+	const output = ts.transpileModule(code, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
+	const module = new vm.SourceTextModule(output, { context: sandbox, identifier: new URL(registryPath, root).href });
+	await module.link(async (specifier) => new vm.SyntheticModule(names[specifier], function () {
+		for (const name of names[specifier]) this.setExport(name, name === 'z' ? z : name === 'defineAction' ? (definition) => definition : () => undefined);
+	}, { context: sandbox }));
+	await module.evaluate();
+	return module.namespace.server.createGroup;
+}
+
 const pagination = { limit: 7, offset: 14 };
+
+test('createGroup posts exactly the trimmed three-field payload with bearer auth and preserves cookies', async () => {
+	const created = {
+		id: 'group-201', academic_year: 2026, curriculum_semester: 8, name: 'Trayecto Norte',
+		created_by: 'backend-user', created_at: '2026-02-01T12:00:00Z',
+	};
+	const result = await evaluate(actionPath, { status: 201, response: created });
+	const group = await result.value.handleCreateGroup({
+		academic_year: 2026, curriculum_semester: 8, name: '  Trayecto Norte  ',
+	}, { cookies: result.cookies });
+	assert.deepEqual(plain(group), { success: true, group: created });
+	assert.equal(result.requests.length, 1);
+	assert.equal(result.requests[0].url, 'https://backend.invalid/groups');
+	assert.equal(result.requests[0].method, 'POST');
+	assert.equal(result.requests[0].responseStatus, 201);
+	assert.equal(result.requests[0].headers.Authorization, 'Bearer operator-token');
+	assert.equal(result.requests[0].headers['Content-Type'], 'application/json');
+	assert.deepEqual(JSON.parse(result.requests[0].body), {
+		academic_year: 2026, curriculum_semester: 8, name: 'Trayecto Norte',
+	});
+	assert.deepEqual(Object.keys(JSON.parse(result.requests[0].body)).sort(), ['academic_year', 'curriculum_semester', 'name']);
+	assert.equal(result.cookieState.value, 'operator-token');
+	assert.deepEqual(result.writes, []);
+});
+
+test('registered group schema preprocesses form values and enforces positive int32', async () => {
+	const action = await evaluateRegistry();
+	const schema = action.input;
+	assert.deepEqual(plain(schema.parse({ academic_year: '2025', curriculum_semester: '8', name: '  Nombre  ' })), {
+		academic_year: 2025, curriculum_semester: 8, name: 'Nombre',
+	});
+	assert.deepEqual(plain(schema.parse({ academic_year: '2147483647', curriculum_semester: '2147483647', name: ' Grupo ' })), {
+		academic_year: 2_147_483_647, curriculum_semester: 2_147_483_647, name: 'Grupo',
+	});
+	for (const invalid of ['', undefined, 'abc', '0', '-1', '1.5', '2147483648']) {
+		assert.equal(schema.safeParse({ academic_year: invalid, curriculum_semester: '8', name: 'Grupo' }).success, false);
+		assert.equal(schema.safeParse({ academic_year: '2025', curriculum_semester: invalid, name: 'Grupo' }).success, false);
+	}
+	assert.equal(schema.safeParse({ academic_year: '2025', curriculum_semester: '8', name: '  ' }).success, false);
+});
+
+test('create handler rejects invalid values before requests and maps backend outcomes safely', async () => {
+	const invalid = await evaluate(actionPath);
+	for (const value of [undefined, null, '', '8', 'abc', 0, -1, 1.5, 2_147_483_648, NaN]) {
+		for (const field of ['academic_year', 'curriculum_semester']) {
+			const input = { academic_year: 2025, curriculum_semester: 8, name: 'Grupo', [field]: value };
+			const response = await invalid.value.handleCreateGroup(input, { cookies: invalid.cookies });
+			assert.equal(response.success, false, `${field}: ${String(value)}`);
+		}
+	}
+	for (const name of [undefined, null, '', '   ', 42]) {
+		const response = await invalid.value.handleCreateGroup({ academic_year: 2025, curriculum_semester: 8, name }, { cookies: invalid.cookies });
+		assert.equal(response.success, false, `name: ${String(name)}`);
+	}
+	assert.equal(invalid.requests.length, 0);
+	for (const [status, phrase, clears] of [
+		[400, 'Revisá los datos', false], [401, 'Tu sesión venció', true], [403, 'no tiene permiso', false],
+		[409, 'año académico, semestre curricular y nombre exactos', false], [500, 'No se pudo crear el grupo', false],
+	]) {
+		const result = await evaluate(actionPath, { status, response: { error: { code: 'PRIVATE', message: 'Backend detail' } } });
+		const response = await result.value.handleCreateGroup({ academic_year: 2025, curriculum_semester: 8, name: ' Grupo ' }, { cookies: result.cookies });
+		assert.equal(response.success, false);
+		assert.match(response.error, new RegExp(phrase, 'i'));
+		assert.doesNotMatch(response.error, /PRIVATE|Backend detail/);
+		assert.equal(result.cookieState.value, clears ? undefined : 'operator-token');
+		assert.deepEqual(result.writes.map(([kind]) => kind), clears ? ['delete'] : []);
+	}
+	const offline = await evaluate(actionPath, { networkError: true });
+	const response = await offline.value.handleCreateGroup({ academic_year: 2025, curriculum_semester: 8, name: 'Grupo' }, { cookies: offline.cookies });
+	assert.equal(response.error, 'No se pudo conectar con el servicio. Probá de nuevo más tarde.');
+	assert.equal(offline.cookieState.value, 'operator-token');
+	assert.deepEqual(offline.writes, []);
+});
+
+test('409 feedback comes from the backend tuple and same-name creation remains allowed', async () => {
+	const result = await evaluate(actionPath, {
+		responses: [
+			{ status: 409, body: { error: { message: 'duplicate' } } },
+			{ status: 201, body: { id: 'group-new', academic_year: 2025, curriculum_semester: 8, name: 'Grupo', created_by: null, created_at: '2026-01-01' } },
+		],
+	});
+	const input = { academic_year: 2025, curriculum_semester: 8, name: 'Grupo' };
+	const conflict = await result.value.handleCreateGroup(input, { cookies: result.cookies });
+	const created = await result.value.handleCreateGroup(input, { cookies: result.cookies });
+	assert.match(conflict.error, /año académico, semestre curricular y nombre exactos/i);
+	assert.equal(created.success, true);
+	assert.equal(result.requests.length, 2);
+	assert.equal(result.requests[0].responseStatus, 409);
+	assert.equal(result.requests[1].responseStatus, 201);
+});
 
 test('listGroups sends an authenticated bounded GET and preserves backend identifying fields', async () => {
 	const result = await evaluateApi({ response: { items: [sample()], ...pagination } });

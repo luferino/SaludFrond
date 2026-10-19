@@ -10,6 +10,11 @@ export interface GroupSummary {
 	name: string;
 }
 
+export interface CreatedGroup extends GroupSummary {
+	created_by: string | null;
+	created_at: string;
+}
+
 export type GroupListResult =
 	| { state: 'success'; page: AcademicPage<GroupSummary> }
 	| { state: 'denied' }
@@ -48,4 +53,16 @@ export async function listGroups(
 		if (error instanceof ApiError && error.status === 401) throw error;
 		return { state: 'failed' };
 	}
+}
+
+/** Creates one group; authorization and creator attribution remain backend-owned. */
+export async function createGroup(
+	input: { academic_year: number; curriculum_semester: number; name: string },
+	cookies: AstroCookies,
+): Promise<CreatedGroup> {
+	return apiFetch<CreatedGroup>('/groups', {
+		method: 'POST',
+		body: input,
+		cookies,
+	});
 }
