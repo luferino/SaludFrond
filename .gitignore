@@ -29,3 +29,11 @@ pnpm-workspace.yaml
 .atl/
 # Local Pi runtime state
 .pi/
+
+# Local editor workspace files
+*.code-workspace
+
+# Local ODD and tooling working files
+odd/
+.codegraph/
+.worktrees/
