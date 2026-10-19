@@ -7,6 +7,21 @@ export interface SubjectSummary {
 	name: string;
 }
 
+export interface CreatedSubject {
+	id: string;
+	name: string;
+	created_by: string | null;
+	created_at: string;
+}
+
+export async function createSubject(name: string, cookies: AstroCookies): Promise<CreatedSubject> {
+	return apiFetch<CreatedSubject>('/subjects', {
+		method: 'POST',
+		body: { name: name.trim() },
+		cookies,
+	});
+}
+
 export type SubjectListResult =
 	| { state: 'success'; page: AcademicPage<SubjectSummary> }
 	| { state: 'denied' }

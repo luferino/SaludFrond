@@ -1,7 +1,9 @@
 ---
 export const prerender = false;
 
+import { actions } from 'astro:actions';
 import Layout from '../layouts/Layout.astro';
+import SubjectForm from '../pods/subject/components/SubjectForm.astro';
 import SubjectList from '../pods/subject/components/SubjectList.astro';
 import { listSubjects } from '../pods/subject/api';
 import type { SubjectSummary } from '../pods/subject/api';
@@ -12,6 +14,7 @@ if (!getSession(Astro.cookies)) {
 	return Astro.redirect('/auth/login?returnTo=%2Fsubjects');
 }
 
+const actionResult = Astro.getActionResult(actions.createSubject);
 let state: 'success' | 'denied' | 'failed' | 'invalid-pagination' = 'failed';
 let items: SubjectSummary[] = [];
 let limit = 50;
@@ -48,19 +51,24 @@ try {
 			<h1 id="subjects-title">Asignaturas</h1>
 			<p>Consultá las asignaturas disponibles en el catálogo académico.</p>
 		</header>
-		<SubjectList
-			state={state}
-			items={items}
-			limit={limit}
-			previousOffset={previousOffset}
-			nextOffset={nextOffset}
-			invalidMessage={invalidMessage}
-		/>
+		<div class="subjects-content">
+			<SubjectList
+				state={state}
+				items={items}
+				limit={limit}
+				previousOffset={previousOffset}
+				nextOffset={nextOffset}
+				invalidMessage={invalidMessage}
+			/>
+			<SubjectForm result={actionResult} />
+		</div>
 	</main>
 </Layout>
 
 <style>
 	main { max-width: 1280px; min-width: 0; margin: 0 auto; }
+	.subjects-content { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(17rem, 0.8fr); align-items: start; gap: 1.5rem; }
+	@media (max-width: 900px) { .subjects-content { grid-template-columns: minmax(0, 1fr); } }
 	.intro { margin-bottom: 2rem; }
 	.intro p { margin: 0.75rem 0; color: var(--muted); }
 	.eyebrow { font: 0.65rem/1.6 Consolas, monospace; letter-spacing: 0.1em; text-transform: uppercase; }

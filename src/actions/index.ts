@@ -7,6 +7,7 @@ import {
 	handleForgotPassword,
 	handleResetPassword,
 } from '../pods/auth/actions';
+import { handleCreateSubject } from '../pods/subject/actions/subjects';
 import { handleCreateStudent } from '../pods/student/actions/students';
 import { handleCreateTeacher } from '../pods/teacher/actions/teachers';
 import { handleCreatePatient } from '../pods/paciente/actions/patients';
@@ -48,6 +49,11 @@ export const server = {
 			newPassword: z.string().min(10),
 		}),
 		handler: handleResetPassword,
+	}),
+	createSubject: defineAction({
+		accept: 'form',
+		input: z.object({ name: z.string().trim().min(1) }),
+		handler: handleCreateSubject,
 	}),
 	createStudent: defineAction({
 		accept: 'form',
