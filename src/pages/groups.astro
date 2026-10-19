@@ -1,7 +1,9 @@
 ---
 export const prerender = false;
 
+import { actions } from 'astro:actions';
 import Layout from '../layouts/Layout.astro';
+import GroupForm from '../pods/group/components/GroupForm.astro';
 import GroupList from '../pods/group/components/GroupList.astro';
 import { listGroups } from '../pods/group/api';
 import type { GroupSummary } from '../pods/group/api';
@@ -12,6 +14,7 @@ if (!getSession(Astro.cookies)) {
 	return Astro.redirect('/auth/login?returnTo=%2Fgroups');
 }
 
+const actionResult = Astro.getActionResult(actions.createGroup);
 let state: 'success' | 'denied' | 'failed' | 'invalid-pagination' = 'failed';
 let items: GroupSummary[] = [];
 let limit = 50;
@@ -48,6 +51,7 @@ try {
 			<h1 id="groups-title">Grupos académicos</h1>
 			<p>Consultá los grupos disponibles en el catálogo académico.</p>
 		</header>
+		<GroupForm result={actionResult} />
 		<GroupList
 			state={state}
 			items={items}

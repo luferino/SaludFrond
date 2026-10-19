@@ -8,6 +8,7 @@ import { z } from 'astro/zod';
 const root = new URL('../', import.meta.url);
 const apiPath = 'src/pods/group/api.ts';
 const actionPath = 'src/pods/group/actions/groups.ts';
+const formPath = 'src/pods/group/components/GroupForm.astro';
 const registryPath = 'src/actions/index.ts';
 const pagePath = 'src/pages/groups.astro';
 const componentPath = 'src/pods/group/components/GroupList.astro';
@@ -18,7 +19,7 @@ const sample = (overrides = {}) => ({
 const plain = (value) => JSON.parse(JSON.stringify(value));
 
 async function evaluate(path, options = {}) {
-	const cookieState = { value: Object.hasOwn(options, 'token') ? options.token : 'operator-token' };
+	const cookieState = options.cookieState ?? { value: Object.hasOwn(options, 'token') ? options.token : 'operator-token' };
 	const writes = [];
 	const requests = [];
 	const cookies = {
@@ -35,7 +36,13 @@ async function evaluate(path, options = {}) {
 			requests.push({ url, ...init, responseStatus: status });
 			return Response.json(response?.body ?? response ?? options.response ?? { items: [sample()], limit: 50, offset: 0 }, { status });
 		},
-		Astro: { cookies, url: new URL(options.url ?? 'https://frontend.invalid/groups'), redirect: (location) => ({ redirect: location }) },
+		Astro: {
+			cookies,
+			props: {},
+			url: new URL(options.url ?? 'https://frontend.invalid/groups'),
+			getActionResult: () => options.actionResult,
+			redirect: (location) => ({ redirect: location }),
+		},
 	});
 	async function compile(code, identifier) {
 		const output = ts.transpileModule(code, {
@@ -61,7 +68,7 @@ async function evaluate(path, options = {}) {
 	if (path.endsWith('.astro')) {
 		const frontmatter = code.split('---')[1].replace(/^export const prerender[^\n]*\n/m, '');
 		const imports = frontmatter.match(/^import .*;\r?$/gm) ?? [];
-		code = `${imports.join('\n')}\nexport async function render() { ${frontmatter.replace(/^import .*;\r?$/gm, '')}\nreturn { state, items, limit, previousOffset, nextOffset, invalidMessage }; }`;
+		code = `${imports.join('\n')}\nexport async function render() { ${frontmatter.replace(/^import .*;\r?$/gm, '')}\nreturn { state, items, limit, previousOffset, nextOffset, invalidMessage, actionResult }; }`;
 	}
 	const module = await compile(code, new URL(path, root).href);
 	await module.evaluate();
@@ -72,6 +79,22 @@ async function evaluate(path, options = {}) {
 async function evaluateApi(options = {}) {
 	const result = await evaluate(apiPath, options);
 	return { ...result, api: result.value };
+}
+
+async function evaluateForm(actionResult) {
+	const code = await source(formPath);
+	const frontmatter = code.split('---')[1];
+	const imports = frontmatter.match(/^import .*;\r?$/gm) ?? [];
+	const body = `${imports.join('\n')}\nexport function render() { ${frontmatter.replace(/^import .*;\r?$/gm, '')}\nreturn { success, frameworkError, fieldErrors, feedback }; }`;
+	const output = ts.transpileModule(body, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
+	const sandbox = vm.createContext({ Astro: { props: { result: actionResult } } });
+	const module = new vm.SourceTextModule(output, { context: sandbox, identifier: new URL(formPath, root).href });
+	await module.link(async () => new vm.SyntheticModule(['actions', 'isInputError'], function () {
+		this.setExport('actions', { createGroup: 'createGroup' });
+		this.setExport('isInputError', (error) => Boolean(error?.fields));
+	}, { context: sandbox }));
+	await module.evaluate();
+	return module.namespace.render();
 }
 
 async function evaluateRegistry() {
@@ -309,6 +332,79 @@ test('listing presents safe distinct denial, failure and 401 session states', as
 	assert.deepEqual(expired.value, { redirect: '/auth/login?returnTo=%2Fgroups' });
 	assert.equal(expired.cookieState.value, undefined);
 	assert.deepEqual(plain(expired.writes), [['delete', 'session', { path: '/' }]]);
+});
+
+test('POST 201 identity survives independent GET 403 and 500 with the same session', async () => {
+	const created = {
+		id: 'group-created', academic_year: 2026, curriculum_semester: 8, name: 'Cohorte Norte',
+		created_by: 'backend-user', created_at: '2026-02-01T12:00:00Z',
+	};
+	for (const status of [403, 500]) {
+		const sessionToken = 'distinctive-group-session';
+		const post = await evaluate(actionPath, { status: 201, response: created, token: sessionToken });
+		const actionResult = { data: await post.value.handleCreateGroup({
+			academic_year: 2026, curriculum_semester: 8, name: ' Cohorte Norte ',
+		}, { cookies: post.cookies }) };
+		const page = await evaluate(pagePath, {
+			status, cookieState: post.cookieState, actionResult,
+			response: { error: { code: 'PRIVATE', message: 'Backend details' } },
+		});
+		assert.equal(page.value.state, status === 403 ? 'denied' : 'failed');
+		assert.equal(page.value.actionResult, actionResult);
+		assert.strictEqual(page.cookieState, post.cookieState);
+		assert.equal(page.cookieState.value, sessionToken);
+		assert.deepEqual(post.writes, []);
+		assert.deepEqual(page.writes, []);
+		assert.equal(post.requests.length, 1);
+		assert.equal(page.requests.length, 1);
+		assert.equal(page.requests[0].method, 'GET');
+		assert.equal(page.requests[0].headers.Authorization, `Bearer ${sessionToken}`);
+		assert.equal(page.cookieState.value, sessionToken);
+		const form = await evaluateForm(page.value.actionResult);
+		assert.deepEqual(plain(form.success), created);
+		assert.equal(form.feedback, undefined);
+	}
+});
+
+test('GET 200 and POST 403 remain independent and form displays framework and handler errors', async () => {
+	const sessionToken = 'distinctive-group-session';
+	const post = await evaluate(actionPath, { status: 403, response: { error: { message: 'forbidden' } }, token: sessionToken });
+	const actionResult = { data: await post.value.handleCreateGroup({
+		academic_year: 2025, curriculum_semester: 8, name: 'Grupo',
+	}, { cookies: post.cookies }) };
+	const list = await evaluate(pagePath, {
+		cookieState: post.cookieState,
+		response: { items: [sample()], limit: 50, offset: 0 },
+		actionResult,
+	});
+	assert.equal(list.value.state, 'success');
+	assert.strictEqual(list.cookieState, post.cookieState);
+	assert.equal(list.cookieState.value, sessionToken);
+	assert.deepEqual(post.writes, []);
+	assert.deepEqual(list.writes, []);
+	assert.equal(post.requests.length, 1);
+	assert.equal(post.requests[0].method, 'POST');
+	assert.equal(post.requests[0].responseStatus, 403);
+	assert.equal(list.requests.length, 1);
+	assert.equal(list.requests[0].method, 'GET');
+	assert.equal(list.requests[0].responseStatus, 200);
+	assert.equal(post.cookieState.value, sessionToken);
+	assert.equal((await evaluateForm(list.value.actionResult)).feedback, 'Tu sesión no tiene permiso para crear grupos académicos.');
+	const framework = await evaluateForm({ error: { message: 'Hay campos inválidos.', fields: { academic_year: ['Número inválido'] } } });
+	assert.equal(framework.feedback, 'Hay campos inválidos.');
+	assert.deepEqual(plain(framework.fieldErrors), { academic_year: ['Número inválido'] });
+});
+
+test('group form exposes labeled bounded fields, accessible feedback and created identity', async () => {
+	const pageSource = await source(pagePath);
+	assert.match(pageSource, /<GroupForm result={actionResult} \/>/);
+	const form = await source(formPath);
+	for (const text of ['Año académico', 'Semestre curricular', 'Nombre', 'min="1"', 'max="2147483647"', 'step="1"', 'role="status"', 'role="alert"', 'created_by', 'created_at', 'result?.data?.success ? result.data.group']) {
+		assert.ok(form.includes(text), `missing form contract: ${text}`);
+	}
+	assert.match(form, /fieldErrors\.academic_year/);
+	assert.match(form, /fieldErrors\.curriculum_semester/);
+	assert.match(form, /fieldErrors\.name/);
 });
 
 test('group list exposes Spanish labels, accessible states, bounded navigation and shared palette', async () => {
