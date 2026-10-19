@@ -1,0 +1,71 @@
+---
+export const prerender = false;
+
+import Layout from '../layouts/Layout.astro';
+import SubjectList from '../pods/subject/components/SubjectList.astro';
+import { listSubjects } from '../pods/subject/api';
+import type { SubjectSummary } from '../pods/subject/api';
+import { academicPaginationNavigation, parseAcademicPagination } from '../shared/academic-api';
+import { getSession } from '../shared/session';
+
+if (!getSession(Astro.cookies)) {
+	return Astro.redirect('/auth/login?returnTo=%2Fsubjects');
+}
+
+let state: 'success' | 'denied' | 'failed' | 'invalid-pagination' = 'failed';
+let items: SubjectSummary[] = [];
+let limit = 50;
+let previousOffset: number | null = null;
+let nextOffset: number | null = null;
+let invalidMessage = 'Revisá los parámetros de paginación.';
+
+try {
+	const pagination = parseAcademicPagination(Astro.url.searchParams);
+	limit = pagination.limit;
+	const result = await listSubjects(pagination, Astro.cookies);
+	state = result.state;
+	if (result.state === 'success') {
+		items = result.page.items;
+		({ previousOffset, nextOffset } = academicPaginationNavigation({
+			...pagination,
+			itemsLength: items.length,
+		}));
+	}
+} catch (error) {
+	if (error instanceof Error && error.message.includes('paginación')) {
+		state = 'invalid-pagination';
+		invalidMessage = error.message;
+	} else {
+		return Astro.redirect('/auth/login?returnTo=%2Fsubjects');
+	}
+}
+---
+
+<Layout>
+	<main aria-labelledby="subjects-title">
+		<header class="intro">
+			<p class="eyebrow">Gestión / Asignaturas</p>
+			<h1 id="subjects-title">Asignaturas</h1>
+			<p>Consultá las asignaturas disponibles en el catálogo académico.</p>
+		</header>
+		<SubjectList
+			state={state}
+			items={items}
+			limit={limit}
+			previousOffset={previousOffset}
+			nextOffset={nextOffset}
+			invalidMessage={invalidMessage}
+		/>
+	</main>
+</Layout>
+
+<style>
+	main { max-width: 1280px; min-width: 0; margin: 0 auto; }
+	.intro { margin-bottom: 2rem; }
+	.intro p { margin: 0.75rem 0; color: var(--muted); }
+	.eyebrow { font: 0.65rem/1.6 Consolas, monospace; letter-spacing: 0.1em; text-transform: uppercase; }
+	h1 {
+		margin: 0.5rem 0;
+		font: 400 clamp(2rem, 3vw, 2.75rem)/1.15 var(--serif);
+	}
+</style>

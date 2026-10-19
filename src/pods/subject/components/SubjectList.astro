@@ -1,0 +1,114 @@
+---
+import type { SubjectSummary } from '../api';
+
+interface Props {
+	state: 'success' | 'denied' | 'failed' | 'invalid-pagination';
+	items: SubjectSummary[];
+	limit: number;
+	previousOffset: number | null;
+	nextOffset: number | null;
+	invalidMessage: string;
+}
+
+const { state, items, limit, previousOffset, nextOffset, invalidMessage } = Astro.props;
+const pageHref = (next: number) => `/subjects?${new URLSearchParams({
+	limit: String(limit),
+	offset: String(next),
+})}`;
+---
+
+{state === 'denied' ? (
+	<section class="message denied" role="status" aria-labelledby="subjects-state-title">
+		<h2 id="subjects-state-title">Sin permiso para consultar</h2>
+		<p>Tu sesión no tiene acceso de lectura al catálogo de asignaturas.</p>
+	</section>
+) : state === 'failed' ? (
+	<section class="message error" role="alert" aria-labelledby="subjects-state-title">
+		<h2 id="subjects-state-title">No se pudo cargar el catálogo</h2>
+		<p>Ocurrió un problema al consultar las asignaturas. Probá de nuevo más tarde.</p>
+	</section>
+) : state === 'invalid-pagination' ? (
+	<section class="message error" role="alert" aria-labelledby="subjects-state-title">
+		<h2 id="subjects-state-title">Paginación no válida</h2>
+		<p>{invalidMessage}</p>
+		<a href="/subjects">Volver al inicio del catálogo</a>
+	</section>
+) : items.length === 0 ? (
+	<section class="message empty" role="status" aria-labelledby="subjects-state-title">
+		<h2 id="subjects-state-title">No hay asignaturas en esta página</h2>
+		<p>La consulta no devolvió asignaturas para esta página.</p>
+	</section>
+) : (
+	<section class="catalog" aria-label="Listado de asignaturas">
+		<ul class="subject-list">
+			{items.map((subject) => (
+				<li class="subject" data-subject-id={subject.id}>
+					<span class="subject-name">{subject.name}</span>
+				</li>
+			))}
+		</ul>
+	</section>
+)}
+
+{state === 'success' && (previousOffset !== null || nextOffset !== null) && (
+	<nav class="pagination" aria-label="Paginación de asignaturas">
+		{previousOffset !== null
+			? <a href={pageHref(previousOffset)} rel="prev">Página anterior</a>
+			: <span aria-disabled="true">Página anterior</span>}
+		{nextOffset !== null
+			? <a href={pageHref(nextOffset)} rel="next">Página siguiente</a>
+			: <span aria-disabled="true">Página siguiente</span>}
+	</nav>
+)}
+
+<style>
+	.catalog {
+		position: relative;
+		margin-block-start: 3rem;
+		padding: 1.5rem clamp(1rem, 3vw, 2rem);
+		border-top: 5px solid var(--sage);
+		border-radius: 0 12px 12px 12px;
+		background: var(--paper);
+	}
+	.catalog::before {
+		content: '';
+		position: absolute;
+		inset-inline-start: -1px;
+		inset-block-start: calc(-1.5rem - 5px);
+		width: min(45%, 14rem);
+		height: 1.5rem;
+		border-radius: 8px 8px 0 0;
+		background: var(--sage);
+		pointer-events: none;
+	}
+	.subject-list { display: grid; gap: 0.75rem; margin: 0; padding: 0; list-style: none; }
+	.subject {
+		min-width: 0;
+		padding: 1rem 1.1rem;
+		border: 1px solid var(--line);
+		border-radius: 8px;
+		background: var(--field);
+	}
+	.subject-name { font-weight: 600; overflow-wrap: anywhere; }
+	.message {
+		margin-block-start: 3rem;
+		padding: 1.25rem 1.5rem;
+		border-inline-start: 5px solid var(--sage-deep);
+		border-radius: 0 8px 8px 0;
+		background: var(--paper);
+	}
+	.message h2 { margin: 0; font: 1.35rem/1.3 var(--serif); }
+	.message p { margin: 0.65rem 0 0; color: var(--muted); }
+	.message a { display: inline-block; margin-block-start: 0.75rem; text-decoration: underline; text-underline-offset: 4px; }
+	.denied { border-inline-start-color: var(--rust); }
+	.error { border-inline-start-color: var(--rust); }
+	.pagination { display: flex; justify-content: space-between; gap: 1rem; margin-block-start: 1.5rem; }
+	.pagination a, .pagination span { padding: 0.6rem 0.9rem; border-radius: 6px; }
+	.pagination a { background: var(--rust); color: var(--field); }
+	.pagination a:hover { background: var(--rust-deep); }
+	.pagination span { color: var(--muted); }
+	@media (max-width: 480px) {
+		.pagination { align-items: stretch; flex-direction: column; }
+		.pagination a, .pagination span { text-align: center; }
+	}
+</style>
