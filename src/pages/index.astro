@@ -23,6 +23,9 @@ const modules = [
 	{ href: '/students', title: 'Estudiantes', description: 'Completa los datos necesarios para dar de alta a un estudiante.', label: 'Formación', tone: 'peach', visible: isAdmin },
 	{ href: '/teachers', title: 'Profesores', description: 'Accede al formulario de alta de profesores.', label: 'Equipo docente', tone: 'sand', visible: isAdmin },
 	{ href: '/auth/register', title: 'Usuarios', description: 'Crea una cuenta de estudiante sin cerrar tu sesión actual.', label: 'Acceso al sistema', tone: 'sand', visible: canRegister },
+	{ href: '/subjects', title: 'Asignaturas', description: 'Consulta el catálogo de asignaturas académicas.', label: 'Catálogo académico', tone: 'sage', visible: true, action: 'Explorar catálogo' },
+	{ href: '/groups', title: 'Grupos académicos', description: 'Consulta los grupos disponibles para la gestión académica.', label: 'Gestión académica', tone: 'peach', visible: true, action: 'Explorar catálogo' },
+	{ href: '/subject-groups', title: 'Asignaturas y grupos', description: 'Consulta y gestiona las asociaciones entre asignaturas y grupos.', label: 'Asociación académica', tone: 'sand', visible: true, action: 'Ver asociaciones' },
 ].filter((module) => module.visible);
 ---
 
@@ -46,7 +49,7 @@ const modules = [
 								<span class="eyebrow">{module.label}</span>
 								<h3>{module.title}</h3>
 								<p>{module.description}</p>
-								<span class="card-action">Abrir formulario <span aria-hidden="true">↗</span></span>
+								<span class="card-action">{module.action ?? 'Abrir formulario'} <span aria-hidden="true">↗</span></span>
 							</a>
 						))}
 					</div>

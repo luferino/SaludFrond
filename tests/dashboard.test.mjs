@@ -48,40 +48,65 @@ test('home keeps the session redirect for absent, malformed, and expired tokens'
 	}
 });
 
-test('home module links preserve admin gates and defensive registration permission hints', async () => {
+test('home preserves the original nonacademic visibility matrix and adds academic links for every valid session', async () => {
 	const cases = [
 		[valid, []],
 		[{ ...valid, role: 'admin' }, ['/patients', '/students', '/teachers']],
 		[{ ...valid, permissions: ['users:write'] }, ['/auth/register']],
 		[{ ...valid, role: 'admin', permissions: ['users:write'] }, ['/patients', '/students', '/teachers', '/auth/register']],
-		...[null, [], {}, 'users:write', ['users:read'], ['users:write', null]]
+		...[null, [], {}, 'users:write', ['users:read'], ['users:write', null], ['academic:read'], ['subjects:write']]
 			.map((permissions) => [{ ...valid, permissions }, []]),
+		[{ ...valid, role: 'student', permissions: ['subjects:read', 'groups:write'] }, []],
+		[{ ...valid, role: undefined, permissions: undefined }, []],
+		[{ ...valid, role: 'unknown' }, []],
 	];
+	const academic = ['/subjects', '/groups', '/subject-groups'];
 	for (const [payload, expected] of cases) {
 		const token = jwt(payload);
 		const home = await evaluate('src/pages/index.astro', ['modules', 'canRegister'], token);
-		const shell = await evaluate('src/layouts/Layout.astro', ['canRegister'], token);
-		assert.deepEqual(Array.from(home.modules, (module) => module.href), expected);
+		const shell = await evaluate('src/layouts/Layout.astro', ['canRegister', 'academicLinks'], token);
+		const homeLinks = Array.from(home.modules, (module) => module.href);
+		assert.deepEqual(homeLinks.filter((href) => !academic.includes(href)), expected);
+		assert.deepEqual(homeLinks.filter((href) => academic.includes(href)), academic);
+		const sidebarLinks = Array.from(shell.academicLinks, (link) => link.href);
+		assert.deepEqual(sidebarLinks, academic);
+		assert.equal(new Set(sidebarLinks).size, academic.length);
 		assert.equal(home.canRegister, shell.canRegister);
 	}
 });
 
-test('shell resolves known page titles and normalizes trailing slashes', async () => {
-	for (const [pathname, title] of [['/', 'Inicio'], ['/patients/', 'Pacientes'], ['/auth/register', 'Registrar usuario']]) {
-		const result = await evaluate('src/layouts/Layout.astro', ['pageTitle', 'currentPath'], jwt(valid), pathname);
+test('shell resolves academic titles and keeps exact active paths across query strings and trailing slashes', async () => {
+	for (const [pathname, title, path] of [
+		['/', 'Inicio', '/'], ['/patients/', 'Pacientes', '/patients'], ['/auth/register', 'Registrar usuario', '/auth/register'],
+		['/subjects?limit=20', 'Asignaturas', '/subjects'], ['/groups/', 'Grupos académicos', '/groups'],
+		['/subject-groups/?subject_id=abc', 'Asignaturas y grupos', '/subject-groups'],
+	]) {
+		const result = await evaluate('src/layouts/Layout.astro', ['pageTitle', 'currentPath', 'academicLinks'], jwt(valid), pathname);
 		assert.equal(result.pageTitle, title);
-		assert.equal(result.currentPath, pathname.replace(/\/$/, '') || '/');
+		assert.equal(result.currentPath, path);
+		assert.deepEqual(Array.from(result.academicLinks, (link) => link.href), ['/subjects', '/groups', '/subject-groups']);
+	}
+	for (const token of [undefined, 'invalid', jwt({ ...valid, exp: 1 })]) {
+		const anonymous = await evaluate('src/layouts/Layout.astro', ['academicLinks'], token);
+		assert.deepEqual(Array.from(anonymous.academicLinks), []);
 	}
 });
 
-test('templates wire real module links, an empty state, and keyboard navigation without new controls', async () => {
+test('templates expose authenticated academic navigation and cards without scripts or fetches', async () => {
 	const home = await source('src/pages/index.astro');
 	const shell = await source('src/layouts/Layout.astro');
 	assert.match(home, /modules\.map\(/);
 	assert.match(home, /href=\{module\.href\}/);
 	assert.match(home, /modules\.length > 0/);
 	assert.match(home, /No hay accesos de gestión disponibles/);
+	assert.match(home, /label: 'Catálogo académico'/);
+	assert.match(home, /label: 'Gestión académica'/);
+	assert.match(home, /label: 'Asociación académica'/);
+	assert.match(home, /<span class="card-action">\{module\.action \?\? 'Abrir formulario'/);
 	assert.doesNotMatch(home, /<form|<script|fetch\(/);
+	assert.match(shell, /\{academicLinks\.map\(/);
+	assert.match(shell, /<nav class="module-nav" aria-label="Principal">[\s\S]*academicLinks\.map/);
+	assert.match(shell, /aria-current=\{currentPath === link\.href \? 'page' : undefined\}/);
 	assert.match(shell, /href="#page-content"/);
 	assert.match(shell, /id="page-content"[^>]*tabindex="-1"/);
 	assert.match(shell, /aria-current=\{currentPath === '\/' \? 'page' : undefined\}/);

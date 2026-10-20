@@ -16,8 +16,14 @@ const pageTitles: Record<string, string> = {
 	'/patients': 'Pacientes', '/auth/register': 'Registrar usuario',
 	'/auth/login': 'Iniciar sesión', '/auth/forgot-password': 'Recuperar contraseña',
 	'/auth/reset-password': 'Restablecer contraseña',
+	'/subjects': 'Asignaturas', '/groups': 'Grupos académicos', '/subject-groups': 'Asignaturas y grupos',
 };
 const pageTitle = pageTitles[currentPath] ?? 'Salud';
+const academicLinks = isLoggedIn ? [
+	{ href: '/subjects', label: 'Asignaturas' },
+	{ href: '/groups', label: 'Grupos académicos' },
+	{ href: '/subject-groups', label: 'Asignaturas y grupos' },
+] : [];
 ---
 
 <!doctype html>
@@ -46,6 +52,9 @@ const pageTitle = pageTitles[currentPath] ?? 'Salud';
 							{isAdmin && <a href="/students" aria-current={currentPath === '/students' ? 'page' : undefined}>Estudiantes <span aria-hidden="true">↗</span></a>}
 							{isAdmin && <a href="/teachers" aria-current={currentPath === '/teachers' ? 'page' : undefined}>Profesores <span aria-hidden="true">↗</span></a>}
 							{isAdmin && <a href="/patients" aria-current={currentPath === '/patients' ? 'page' : undefined}>Pacientes <span aria-hidden="true">↗</span></a>}
+							{academicLinks.map((link) => (
+								<a href={link.href} aria-current={currentPath === link.href ? 'page' : undefined}>{link.label} <span aria-hidden="true">↗</span></a>
+							))}
 						</nav>
 						<nav class="account-nav" aria-label="Cuenta">
 							{canRegister && <a href="/auth/register">Registrar usuario</a>}
