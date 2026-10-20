@@ -10,9 +10,16 @@ interface Props {
 	subjects?: SubjectSummary[];
 	subjectCatalogState?: 'success' | 'denied' | 'failed' | 'invalid-pagination';
 	subjectCatalogMessage?: string;
+	subjectLimit?: number;
+	subjectOffset?: number;
+	subjectPreviousHref?: string | null;
+	subjectNextHref?: string | null;
+	listLimit?: number;
+	listOffset?: number;
+	listSubjectId?: string | null;
 }
 
-const { result, subjectId = '', academicGroupId = '', actionUrl, subjects = [], subjectCatalogState = 'failed', subjectCatalogMessage = 'No se pudo consultar el catálogo de asignaturas.' } = Astro.props;
+const { result, subjectId = '', academicGroupId = '', actionUrl, subjects = [], subjectCatalogState = 'failed', subjectCatalogMessage = 'No se pudo consultar el catálogo de asignaturas.', subjectLimit = 50, subjectOffset = 0, subjectPreviousHref, subjectNextHref, listLimit = 50, listOffset = 0, listSubjectId = null } = Astro.props;
 const fieldErrors = result?.error && isInputError(result.error) ? result.error.fields : {};
 const feedback = result?.error?.message ?? result?.data?.error;
 const success = result?.data?.success;
@@ -26,14 +33,14 @@ const visibleSubjects = subjects.some((item) => item.id === submittedSubjectId) 
 <section class="subject-group-form" aria-labelledby="subject-group-form-title">
 	<p class="eyebrow">Nueva asociación</p>
 	<h2 id="subject-group-form-title">Crear asociación académica</h2>
-	<p class="hint">Elegí una asignatura del catálogo o ingresá su UUID manualmente. Ingresá también el UUID del grupo académico. Crear la asociación no otorga habilitación.</p>
+	<p class="hint">Elegí una asignatura del catálogo o ingresá su UUID manualmente. Ingresá también el UUID del grupo académico. Es una opción avanzada; crear la asociación no otorga habilitación.</p>
 	{success && <p class="success" role="status">Asociación creada: asignatura <span class="identity">{submittedSubjectId}</span>, grupo académico <span class="identity">{submittedAcademicGroupId}</span>.</p>}
 	{feedback && <p class="error" role="alert">{feedback}</p>}
 	{subjectCatalogState === 'denied' && <p class="catalog-message" role="status">No tenés acceso de lectura al catálogo. Podés ingresar el UUID manualmente.</p>}
 	{subjectCatalogState === 'failed' && <p class="catalog-message" role="status">No se pudo cargar el catálogo. Podés ingresar el UUID manualmente.</p>}
 	{subjectCatalogState === 'invalid-pagination' && <p class="catalog-message" role="alert">{subjectCatalogMessage} Podés ingresar el UUID manualmente.</p>}
 	{subjectCatalogState === 'success' && subjects.length === 0 && <p class="catalog-message" role="status">No hay asignaturas en esta página del catálogo; podés ingresar un UUID manualmente.</p>}
-	<form method="POST" action={actionUrl ?? actions.createSubjectGroup}>
+	<form method="POST" action={actionUrl ?? actions.createSubjectGroup} aria-describedby="subject-group-uuid-hint" data-list-limit={listLimit} data-list-offset={listOffset} data-list-subject-id={listSubjectId ?? ''} data-subject-limit={subjectLimit} data-subject-offset={subjectOffset}>
 		{subjectCatalogState === 'success' && subjects.length > 0 && <div class="field">
 			<label for="subject-group-subject-choice">Asignatura del catálogo (opcional)</label>
 			<select id="subject-group-subject-choice" data-subject-choice disabled value={visibleSubjects.some((item) => item.id === submittedSubjectId) ? submittedSubjectId : ''}>
@@ -51,20 +58,40 @@ const visibleSubjects = subjects.some((item) => item.id === submittedSubjectId) 
 			<input id="subject-group-academic-group-id" name="academic_group_id" type="text" required value={submittedAcademicGroupId} autocomplete="off" aria-describedby="subject-group-uuid-hint subject-group-academic-group-error" />
 			{fieldErrors.academic_group_id && <p class="error" id="subject-group-academic-group-error" role="alert">{fieldErrors.academic_group_id.join(', ')}</p>}
 		</div>
-		<p class="hint" id="subject-group-uuid-hint">Copiá los identificadores UUID completos.</p>
+		<p class="hint" id="subject-group-uuid-hint">Copiá los identificadores UUID completos. Los borradores de UUID se envían en la URL y pueden quedar en el historial del navegador.</p>
 		<button type="submit">Crear asociación</button>
 	</form>
+	{subjectCatalogState === 'success' && <nav class="catalog-pages" aria-label="Páginas del catálogo de asignaturas">
+		{subjectPreviousHref && <button type="button" data-catalog-offset={Math.max(0, subjectOffset - subjectLimit)} disabled>Asignaturas anteriores</button>}
+		{subjectNextHref && <button type="button" data-catalog-offset={subjectOffset + subjectLimit} disabled>Más asignaturas</button>}
+		<noscript><p class="hint">La paginación necesita JavaScript; para continuar sin él, ingresá el UUID manualmente y creá la asociación.</p></noscript>
+	</nav>}
 </section>
 
 <script>
 const root = document.querySelector<HTMLElement>('.subject-group-form');
 const form = root?.querySelector<HTMLFormElement>('form');
 const subject = form?.querySelector<HTMLInputElement>('[name="subject_id"]');
-const subjectChoice = form?.querySelector<HTMLSelectElement>('[data-subject-choice]');
-if (subjectChoice && subject) {
-	subjectChoice.addEventListener('change', () => { subject.value = subjectChoice.value; });
-	subjectChoice.disabled = false;
+const group = form?.querySelector<HTMLInputElement>('[name="academic_group_id"]');
+const choice = form?.querySelector<HTMLSelectElement>('[data-subject-choice]');
+if (choice && subject) {
+	choice.addEventListener('change', () => { if (subject) subject.value = choice.value; });
+	choice.disabled = false;
 }
+root?.querySelectorAll<HTMLButtonElement>('[data-catalog-offset]').forEach((button) => {
+	button.addEventListener('click', () => {
+		if (!form || !subject || !group) return;
+		const params = new URLSearchParams({
+			limit: form.dataset.listLimit || '50', offset: form.dataset.listOffset || '0',
+			subject_limit: form.dataset.subjectLimit || '50', subject_offset: button.dataset.catalogOffset || '0',
+		});
+		if (form.dataset.listSubjectId) params.set('subject_id', form.dataset.listSubjectId);
+		params.set('draft_subject_id', subject.value);
+		params.set('draft_academic_group_id', group.value);
+		window.location.assign(new URL(`/subject-groups?${params}`, window.location.origin).href);
+	});
+	button.disabled = false;
+});
 </script>
 
 <style>
@@ -78,6 +105,10 @@ if (subjectChoice && subject) {
 	input:focus-visible, select:focus-visible, button:focus-visible { outline: 3px solid var(--rust); outline-offset: 3px; }
 	.hint { margin: 0 0 1rem; color: var(--muted); font-size: 0.8rem; }
 	button { min-height: 46px; justify-self: start; padding: 0.75rem 1.25rem; border: 1px solid var(--rust); border-radius: 6px; background: var(--rust); color: var(--paper); font: inherit; font-weight: 600; cursor: pointer; }
+	button:disabled { opacity: 0.6; cursor: not-allowed; }
+	.catalog-pages { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; margin-top: 1rem; }
+	.catalog-pages .hint { flex-basis: 100%; }
+	.catalog-message { padding: 0.75rem; background: var(--sage-soft); border-radius: 6px; }
 	.success, .error { margin: 0; padding: 1rem; border: 1px solid var(--line); border-radius: 8px; overflow-wrap: anywhere; }
 	.success { margin-bottom: 1rem; background: var(--sage-soft); border-color: var(--sage); }
 	.error { color: var(--rust-deep); background: var(--rust-soft); border-color: var(--rust-line); }
