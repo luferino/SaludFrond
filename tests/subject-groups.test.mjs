@@ -2,7 +2,14 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
+import { createRequire } from 'node:module';
+import { dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import ts from 'typescript';
+
+const require = createRequire(import.meta.url);
+const astroPackage = require.resolve('astro/package.json');
+const { ActionInputError, createActionsProxy, isInputError } = await import(pathToFileURL(join(dirname(astroPackage), 'dist/actions/runtime/client.js')).href);
 
 const root = new URL('../', import.meta.url);
 const apiPath = 'src/pods/subject-group/api.ts';
@@ -19,22 +26,27 @@ const association = (overrides = {}) => ({
 const plain = (value) => JSON.parse(JSON.stringify(value));
 
 async function evaluateApi(options = {}) {
-	const cookieState = { token: Object.hasOwn(options, 'token') ? options.token : 'operator-token' };
-	const writes = [];
+	const cookieState = options.cookieState ?? { token: Object.hasOwn(options, 'token') ? options.token : 'operator-token' };
+	const writes = cookieState.writes ?? [];
+	cookieState.writes = writes;
 	const requests = [];
 	const cookies = {
 		get: (name) => name === 'session' && cookieState.token ? { value: cookieState.token } : undefined,
 		set: (...args) => { writes.push(['set', ...args]); cookieState.token = args[1]; },
 		delete: (...args) => { writes.push(['delete', ...args]); cookieState.token = undefined; },
 	};
+	const actions = createActionsProxy({ handleAction: async () => ({ data: undefined, error: undefined }) });
 	const sandbox = vm.createContext({
 		URL, URLSearchParams, Response, Error, Date,
+		actions,
+		isInputError,
 		fetch: async (url, init) => {
-			const status = options.status ?? 200;
+			const isPost = init.method === 'POST';
+			const status = isPost ? (options.postStatus ?? 201) : (options.status ?? 200);
 			requests.push({ url, ...init, responseStatus: status });
 			if (options.networkError) throw new Error('Offline');
 			const params = new URL(url).searchParams;
-			const response = options.response ?? (status >= 400
+			const response = isPost ? (options.postResponse ?? association()) : options.response ?? (status >= 400
 				? { error: { code: status === 401 ? 'UNAUTHORIZED' : 'DENIED', message: 'Request failed' } }
 				: { items: [association()], limit: Number(params.get('limit')), offset: Number(params.get('offset')) });
 			return Response.json(response, { status });
@@ -68,7 +80,25 @@ async function evaluateApi(options = {}) {
 		if (dependency.status === 'linked') await dependency.evaluate();
 		return dependency.namespace;
 	}
-	return { api: module.namespace, cookies, cookieState, writes, requests, sandbox, loadModule };
+	return { api: module.namespace, actions, cookies, cookieState, writes, requests, sandbox, loadModule };
+}
+
+async function evaluateForm(props = {}) {
+	const componentUrl = new URL('../src/pods/subject-group/components/SubjectGroupForm.astro', import.meta.url);
+	const source = await readFile(componentUrl, 'utf8');
+	const frontmatter = source.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+	assert.ok(frontmatter, 'form has Astro frontmatter');
+	const parsed = ts.createSourceFile(componentUrl.pathname, frontmatter[1], ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+	const imports = parsed.statements.filter(ts.isImportDeclaration);
+	let code = frontmatter[1];
+	for (const statement of imports) code = code.replace(statement.getFullText(parsed), '');
+	const result = await evaluateApi();
+	result.sandbox.Astro = { props };
+	const output = ts.transpileModule(`${code}\nreturn { fieldErrors, feedback, success, submittedSubjectId, submittedAcademicGroupId, actionUrl: String(actionUrl ?? actions.createSubjectGroup) };`, {
+		compilerOptions: { module: ts.ModuleKind.None, target: ts.ScriptTarget.ES2022 },
+	}).outputText;
+	const value = await new vm.Script(`(() => { ${output} })()`).runInContext(result.sandbox);
+	return { ...value, source };
 }
 
 test('listSubjectGroups sends exact authenticated pagination and optional filter query', async () => {
@@ -210,6 +240,8 @@ async function evaluateRoute(query = '', options = {}) {
 		cookies: simulation.cookies,
 		url: new URL(`https://app.invalid/subject-groups${query ? `?${query}` : ''}`),
 		redirect: (url) => ({ redirected: url }),
+		getActionResult: () => options.actionResult,
+		request: options.request ?? new Request(`https://app.invalid/subject-groups${query ? `?${query}` : ''}`),
 	};
 	const routeCode = frontmatter[1];
 	const parsed = ts.createSourceFile(pageUrl.pathname, routeCode, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
@@ -220,6 +252,7 @@ async function evaluateRoute(query = '', options = {}) {
 		const clause = statement.importClause;
 		if (!clause || statement.getText(parsed).startsWith('import type ')) continue;
 		const specifier = statement.moduleSpecifier.text;
+		if (specifier === 'astro:actions') continue;
 		const moduleUrl = new URL(specifier, pageUrl);
 		const namespace = await simulation.loadModule(moduleUrl.href);
 		if (clause.name) simulation.sandbox[clause.name.text] = namespace.default;
@@ -232,7 +265,7 @@ async function evaluateRoute(query = '', options = {}) {
 	let code = routeCode;
 	for (const [start, end] of removals.sort((a, b) => b[0] - a[0])) code = code.slice(0, start) + code.slice(end);
 	code = code.replace(/^export const prerender = false;\s*$/m, '');
-	const output = ts.transpileModule(`${code}\nreturn { state, items, limit, offset, subjectId, previousHref, nextHref, invalidMessage };`, {
+	const output = ts.transpileModule(`${code}\nreturn { state, items, limit, offset, subjectId, previousHref, nextHref, invalidMessage, actionUrl, actionResult, recoveredSubjectId, recoveredAcademicGroupId };`, {
 		compilerOptions: { module: ts.ModuleKind.None, target: ts.ScriptTarget.ES2022 },
 	}).outputText;
 	const value = await new vm.Script(`(async () => { ${output} })()`).runInContext(simulation.sandbox);
@@ -311,11 +344,141 @@ test('actual API 403, 500 and network failures preserve cookies; 401 clears then
 	assert.deepEqual(plain(unauthorized.writes), [['delete', 'session', { path: '/' }]]);
 });
 
+test('real POST 201 identity survives independent GET denial with the same session state', async () => {
+	for (const status of [403, 500]) {
+		const cookieState = { token: 'u13-distinctive-session', writes: [] };
+		const post = await evaluateApi({ postStatus: 201, cookieState });
+		const handler = await post.loadModule(new URL('../src/pods/subject-group/actions/subject-groups.ts', import.meta.url).href);
+		const created = await handler.handleCreateSubjectGroup(
+			{ subject_id: subjectId, academic_group_id: groupId }, { cookies: post.cookies },
+		);
+		assert.equal(post.requests[0].method, 'POST');
+		assert.equal(post.requests[0].responseStatus, 201);
+		assert.equal(post.requests[0].headers.Authorization, 'Bearer u13-distinctive-session');
+		assert.deepEqual(JSON.parse(post.requests[0].body), { subject_id: subjectId, academic_group_id: groupId });
+		assert.equal(created.success, true);
+		const writesBeforeGet = [...post.writes];
+		const refreshed = await evaluateRoute('', {
+			status, response: { error: { message: 'Unavailable' } }, actionResult: { data: created },
+			cookieState: post.cookieState,
+		});
+		assert.strictEqual(refreshed.cookieState, post.cookieState);
+		assert.equal(refreshed.requests[0].responseStatus, status);
+		assert.deepEqual(refreshed.value.actionResult.data, created);
+		const form = await evaluateForm({ result: refreshed.value.actionResult });
+		assert.equal(form.success, true);
+		assert.equal(form.submittedSubjectId, subjectId);
+		assert.equal(form.submittedAcademicGroupId, groupId);
+		assert.equal(refreshed.cookieState.token, 'u13-distinctive-session');
+		assert.deepEqual(refreshed.writes, writesBeforeGet);
+	}
+});
+
+test('form frontmatter evaluates real action proxy, framework errors, and submitted identities', async () => {
+	const success = await evaluateForm({
+		result: { data: { success: true, subjectId, academicGroupId: groupId } },
+		subjectId: 'fallback-subject', academicGroupId: 'fallback-group',
+	});
+	assert.equal(success.submittedSubjectId, subjectId);
+	assert.equal(success.submittedAcademicGroupId, groupId);
+	assert.equal(success.success, true);
+	assert.equal(success.actionUrl, '?_action=createSubjectGroup');
+	const fields = await evaluateForm({ result: { error: new ActionInputError([
+		{ path: ['subject_id'], message: 'Invalid subject UUID' },
+		{ path: ['academic_group_id'], message: 'Invalid group UUID' },
+	]) } });
+	assert.deepEqual(plain(fields.fieldErrors), {
+		subject_id: ['Invalid subject UUID'], academic_group_id: ['Invalid group UUID'],
+	});
+	const frameworkError = new ActionInputError([{ path: ['subject_id'], message: 'Framework message' }]);
+	const precedence = await evaluateForm({ result: {
+		error: frameworkError,
+		data: { error: 'Handler message', subjectId, academicGroupId: groupId },
+	}, subjectId: 'fallback-subject', academicGroupId: 'fallback-group' });
+	assert.equal(precedence.feedback, frameworkError.message);
+	assert.equal(precedence.submittedSubjectId, subjectId);
+	assert.equal(precedence.submittedAcademicGroupId, groupId);
+});
+
+test('real POST 403 survives GET 200 with field feedback, identities, and the same session', async () => {
+	const cookieState = { token: 'u13-post-error-session', writes: [] };
+	const post = await evaluateApi({ postStatus: 403, cookieState });
+	const handler = await post.loadModule(new URL('../src/pods/subject-group/actions/subject-groups.ts', import.meta.url).href);
+	const failed = await handler.handleCreateSubjectGroup(
+		{ subject_id: subjectId, academic_group_id: groupId }, { cookies: post.cookies },
+	);
+	assert.equal(post.requests[0].method, 'POST');
+	assert.equal(post.requests[0].responseStatus, 403);
+	assert.deepEqual(JSON.parse(post.requests[0].body), { subject_id: subjectId, academic_group_id: groupId });
+	const writesBeforeGet = [...post.writes];
+	const refreshed = await evaluateRoute('', {
+		status: 200, response: { items: [], limit: 50, offset: 0 }, actionResult: { data: failed },
+		cookieState: post.cookieState,
+	});
+	assert.strictEqual(refreshed.cookieState, cookieState);
+	assert.equal(refreshed.value.state, 'success');
+	assert.deepEqual(refreshed.writes, writesBeforeGet);
+	const form = await evaluateForm({ result: { data: failed } });
+	assert.equal(form.submittedSubjectId, subjectId);
+	assert.equal(form.submittedAcademicGroupId, groupId);
+	assert.equal(form.feedback, failed.error);
+	assert.equal(cookieState.token, 'u13-post-error-session');
+});
+
+test('manual UUID feedback retains identities and framework field recovery safely', async () => {
+	const fresh = await evaluateRoute(`subject_id=${subjectId}`);
+	assert.equal(fresh.value.recoveredSubjectId, '');
+	assert.equal(fresh.value.recoveredAcademicGroupId, '');
+	const freshForm = await evaluateForm({ subjectId: fresh.value.recoveredSubjectId, academicGroupId: fresh.value.recoveredAcademicGroupId });
+	assert.equal(freshForm.submittedSubjectId, '');
+	assert.equal(freshForm.submittedAcademicGroupId, '');
+	const request = new Request('https://app.invalid/subject-groups', {
+		method: 'POST', body: new URLSearchParams({ subject_id: 'invalid-input', academic_group_id: groupId }),
+	});
+	const frameworkError = await evaluateRoute('', {
+		actionResult: { error: new ActionInputError([{ path: ['subject_id'], message: 'Invalid UUID' }]) }, request,
+	});
+	assert.equal(frameworkError.value.recoveredSubjectId, 'invalid-input');
+	assert.equal(frameworkError.value.recoveredAcademicGroupId, groupId);
+	const frameworkForm = await evaluateForm({
+		result: frameworkError.value.actionResult,
+		subjectId: frameworkError.value.recoveredSubjectId,
+		academicGroupId: frameworkError.value.recoveredAcademicGroupId,
+	});
+	assert.equal(frameworkForm.fieldErrors.subject_id[0], 'Invalid UUID');
+	assert.equal(frameworkForm.submittedSubjectId, 'invalid-input');
+	assert.equal(frameworkForm.submittedAcademicGroupId, groupId);
+});
+
+test('manual association creation UI is present without catalog requests or GET draft recovery', async () => {
+	const page = await readFile(new URL('../src/pages/subject-groups.astro', import.meta.url), 'utf8');
+	const form = await readFile(new URL('../src/pods/subject-group/components/SubjectGroupForm.astro', import.meta.url), 'utf8');
+	assert.match(page, /<SubjectGroupForm/);
+	assert.doesNotMatch(page, /listSubjects|listGroups|draft_subject_id|draft_academic_group_id/);
+	const filtered = await evaluateRoute(`limit=7&offset=14&subject_id=${subjectId}&_action=evil&redirect=https://evil.invalid`);
+	assert.equal(filtered.value.actionUrl, `/subject-groups?_action=createSubjectGroup&limit=7&offset=14&subject_id=${subjectId}`);
+	assert.doesNotMatch(filtered.value.actionUrl, /evil|redirect/);
+	for (const query of [
+		'limit=7&limit=8', 'limit=0', 'offset=10001',
+		`subject_id=${subjectId}&subject_id=${groupId}`, 'subject_id=invalid',
+	]) {
+		const invalid = await evaluateRoute(query);
+		assert.equal(invalid.value.actionUrl, '/subject-groups?_action=createSubjectGroup&limit=50&offset=0', query);
+		assert.doesNotMatch(invalid.value.actionUrl, /evil|redirect/);
+	}
+	assert.match(form, /name="subject_id"/);
+	assert.match(form, /name="academic_group_id"/);
+	assert.match(form, /UUID de asignatura/);
+	assert.match(form, /UUID de grupo académico/);
+	assert.doesNotMatch(form, /<select|catalog|draft_/i);
+});
+
 test('subject-group route retains listing-only Spanish markup and excludes deferred UI', async () => {
 	const source = (await readFile(new URL('../src/pages/subject-groups.astro', import.meta.url), 'utf8'));
 	assert.match(source, /<SubjectGroupList/);
 	assert.match(source, /<Layout>/);
 	assert.match(source, /Grupos por asignatura/);
 	assert.match(source, /Consultá las asociaciones registradas entre asignaturas y grupos académicos\./);
-	assert.doesNotMatch(source, /actions\.|SubjectGroupForm|listSubjects|listGroups|catalog|draft_|actionResult|recovered/);
+	assert.match(source, /<SubjectGroupForm/);
+	assert.doesNotMatch(source, /listSubjects|listGroups|catalog|draft_/);
 });

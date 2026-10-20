@@ -1,14 +1,35 @@
 ---
 export const prerender = false;
 
+import { actions, isInputError } from 'astro:actions';
 import Layout from '../layouts/Layout.astro';
+import SubjectGroupForm from '../pods/subject-group/components/SubjectGroupForm.astro';
 import SubjectGroupList from '../pods/subject-group/components/SubjectGroupList.astro';
 import { listSubjectGroups, parseSubjectGroupFilter, subjectGroupClearFilterHref, subjectGroupFilterHref, subjectGroupPageHref } from '../pods/subject-group/api';
 import type { SubjectGroupAssociation } from '../pods/subject-group/api';
 import { academicPaginationNavigation, parseAcademicPagination } from '../shared/academic-api';
 import { getSession } from '../shared/session';
 
-if (!getSession(Astro.cookies)) return Astro.redirect('/auth/login?returnTo=%2Fsubject-groups');
+const returnTo = '/auth/login?returnTo=%2Fsubject-groups';
+if (!getSession(Astro.cookies)) return Astro.redirect(returnTo);
+
+const actionResult = Astro.getActionResult(actions.createSubjectGroup);
+let recoveredSubjectId = '';
+let recoveredAcademicGroupId = '';
+if (actionResult?.data) {
+	recoveredSubjectId = actionResult.data.subjectId ?? '';
+	recoveredAcademicGroupId = actionResult.data.academicGroupId ?? '';
+} else if (actionResult?.error && isInputError(actionResult.error)) {
+	try {
+		const submitted = await Astro.request.clone().formData();
+		const subjectValue = submitted.get('subject_id');
+		const groupValue = submitted.get('academic_group_id');
+		recoveredSubjectId = typeof subjectValue === 'string' ? subjectValue : '';
+		recoveredAcademicGroupId = typeof groupValue === 'string' ? groupValue : '';
+	} catch {
+		// Framework input errors may not include a safely recoverable form body.
+	}
+}
 
 const search = Astro.url.searchParams;
 let state: 'success' | 'denied' | 'failed' | 'invalid-pagination' | 'invalid-filter' = 'failed';
@@ -19,13 +40,20 @@ let subjectId: string | null = null;
 let previousHref: string | null = null;
 let nextHref: string | null = null;
 let invalidMessage = 'Revisá los parámetros de consulta.';
-
+const actionParams = new URLSearchParams(actions.createSubjectGroup.toString().split('?')[1] ?? '');
+actionParams.set('limit', String(limit));
+actionParams.set('offset', String(offset));
+let actionUrl = `/subject-groups?${actionParams}`;
 try {
 	const pagination = parseAcademicPagination(search);
 	const filter = parseSubjectGroupFilter(search);
 	limit = pagination.limit;
 	offset = pagination.offset;
 	subjectId = filter.subjectId;
+	actionParams.set('limit', String(limit));
+	actionParams.set('offset', String(offset));
+	if (subjectId !== null) actionParams.set('subject_id', subjectId);
+	actionUrl = `/subject-groups?${actionParams}`;
 	const result = await listSubjectGroups(pagination, filter, Astro.cookies);
 	state = result.state;
 	if (result.state === 'success') {
@@ -42,7 +70,7 @@ try {
 		state = 'invalid-filter';
 		invalidMessage = error.message;
 	} else {
-		return Astro.redirect('/auth/login?returnTo=%2Fsubject-groups');
+		return Astro.redirect(returnTo);
 	}
 }
 
@@ -57,6 +85,7 @@ const clearFilterHref = subjectGroupClearFilterHref(search, limit);
 			<h1 id="subject-groups-title">Grupos por asignatura</h1>
 			<p>Consultá las asociaciones registradas entre asignaturas y grupos académicos.</p>
 		</header>
+		<SubjectGroupForm result={actionResult} subjectId={recoveredSubjectId} academicGroupId={recoveredAcademicGroupId} actionUrl={actionUrl} />
 		<SubjectGroupList
 			state={state}
 			items={items}
