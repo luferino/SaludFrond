@@ -9,6 +9,7 @@ import {
 } from '../pods/auth/actions';
 import { handleCreateSubject } from '../pods/subject/actions/subjects';
 import { handleCreateGroup } from '../pods/group/actions/groups';
+import { handleCreateSubjectGroup } from '../pods/subject-group/actions/subject-groups';
 import { handleCreateStudent } from '../pods/student/actions/students';
 import { handleCreateTeacher } from '../pods/teacher/actions/teachers';
 import { handleCreatePatient } from '../pods/paciente/actions/patients';
@@ -70,6 +71,14 @@ export const server = {
 			name: z.string().trim().min(1),
 		}),
 		handler: handleCreateGroup,
+	}),
+	createSubjectGroup: defineAction({
+		accept: 'form',
+		input: z.object({
+			subject_id: z.string().trim().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i),
+			academic_group_id: z.string().trim().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i),
+		}),
+		handler: handleCreateSubjectGroup,
 	}),
 	createStudent: defineAction({
 		accept: 'form',

@@ -18,6 +18,13 @@ export type SubjectGroupListResult =
 	| { state: 'denied' }
 	| { state: 'failed' };
 
+export interface CreatedSubjectGroup {
+	subject_id: string;
+	academic_group_id: string;
+	created_by: string | null;
+	created_at: string;
+}
+
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Parse the optional subject filter; repeated and explicitly blank values are invalid. */
@@ -78,6 +85,18 @@ function isAssociation(value: unknown): value is SubjectGroupAssociation {
 		&& typeof item.academic_group_id === 'string' && UUID_PATTERN.test(item.academic_group_id)
 		&& (item.created_by === null || (typeof item.created_by === 'string' && UUID_PATTERN.test(item.created_by)))
 		&& isIsoDateTime(item.created_at);
+}
+
+/** Fetches one backend-authoritative association page for the current session. */
+export async function createSubjectGroup(
+	input: { subject_id: string; academic_group_id: string },
+	cookies: AstroCookies,
+): Promise<CreatedSubjectGroup> {
+	return apiFetch<CreatedSubjectGroup>('/subject-groups', {
+		method: 'POST',
+		body: input,
+		cookies,
+	});
 }
 
 export async function listSubjectGroups(

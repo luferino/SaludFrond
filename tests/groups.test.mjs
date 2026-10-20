@@ -104,6 +104,7 @@ async function evaluateRegistry() {
 		'../pods/auth/actions': ['handleLogin', 'handleLogout', 'handleRegister', 'handleForgotPassword', 'handleResetPassword'],
 		'../pods/subject/actions/subjects': ['handleCreateSubject'],
 		'../pods/group/actions/groups': ['handleCreateGroup'],
+		'../pods/subject-group/actions/subject-groups': ['handleCreateSubjectGroup'],
 		'../pods/student/actions/students': ['handleCreateStudent'],
 		'../pods/teacher/actions/teachers': ['handleCreateTeacher'],
 		'../pods/paciente/actions/patients': ['handleCreatePatient'],
