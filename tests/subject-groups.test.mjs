@@ -141,3 +141,49 @@ test('401 propagates from apiFetch after clearing the session cookie', async () 
 	assert.equal(result.cookieState.token, undefined);
 	assert.deepEqual(plain(result.writes), [['delete', 'session', { path: '/' }]]);
 });
+
+test('association list component receives listing, filter, and navigation props', async () => {
+	const component = await readFile(new URL('../src/pods/subject-group/components/SubjectGroupList.astro', import.meta.url), 'utf8');
+	assert.match(component, /interface Props/);
+	for (const prop of ['state:', 'items:', 'limit:', 'offset:', 'subjectId:', 'filterHref:', 'clearFilterHref:', 'previousHref:', 'nextHref:', 'invalidMessage:']) {
+		assert.ok(component.includes(prop), `component accepts ${prop}`);
+	}
+	assert.match(component, /const \{ state, items, limit, offset, subjectId, filterHref, clearFilterHref, previousHref, nextHref, invalidMessage \} = Astro\.props/);
+});
+
+test('association filter applies and clears its allowlisted UUID filter accessibly', async () => {
+	const component = await readFile(new URL('../src/pods/subject-group/components/SubjectGroupList.astro', import.meta.url), 'utf8');
+	assert.match(component, /<form action="\/subject-groups" method="get">/);
+	assert.match(component, /name="limit" value=\{limit\}/);
+	assert.match(component, /name="subject_id"/);
+	assert.match(component, /value=\{subjectId \?\? ''\}/);
+	assert.match(component, /required/);
+	assert.match(component, /aria-describedby="subject-id-help"/);
+	assert.match(component, /Ingresá el UUID completo de la asignatura/);
+	assert.match(component, /<button type="submit">Aplicar filtro<\/button>/);
+	assert.match(component, /<a href=\{clearFilterHref\}>Limpiar filtro<\/a>/);
+	assert.match(component, /<code>\{association\.subject_id\}<\/code>/);
+	assert.match(component, /<code>\{association\.academic_group_id\}<\/code>/);
+});
+
+test('association list exposes accessible states and contract-filtered pagination', async () => {
+	const component = await readFile(new URL('../src/pods/subject-group/components/SubjectGroupList.astro', import.meta.url), 'utf8');
+	assert.match(component, /role="status"/);
+	assert.match(component, /role="alert"/);
+	assert.match(component, /aria-labelledby="state-title"/);
+	assert.match(component, /<nav class="pagination" aria-label="Paginación de asociaciones académicas">/);
+	assert.match(component, /href=\{previousHref\} rel="prev"/);
+	assert.match(component, /href=\{nextHref\} rel="next"/);
+	assert.match(component, /href=\{clearFilterHref\}/);
+});
+
+test('association list empty states remain neutral and use the academic palette without totals', async () => {
+	const component = await readFile(new URL('../src/pods/subject-group/components/SubjectGroupList.astro', import.meta.url), 'utf8');
+	assert.match(component, /No hay asociaciones en esta página/);
+	assert.match(component, /La consulta filtrada no devolvió asociaciones/);
+	assert.match(component, /var\(--paper\)/);
+	assert.match(component, /var\(--sage\)/);
+	assert.match(component, /var\(--rust\)/);
+	assert.match(component, /overflow-wrap: anywhere/);
+	assert.doesNotMatch(component, /total(?:es)?\s*(?:de|:|=)|created_by|created_at|association_id|habilitaciones/i);
+});
