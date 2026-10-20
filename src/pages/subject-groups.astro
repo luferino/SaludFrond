@@ -9,6 +9,8 @@ import { listSubjectGroups, parseSubjectGroupFilter, subjectGroupClearFilterHref
 import type { SubjectGroupAssociation } from '../pods/subject-group/api';
 import { listSubjects } from '../pods/subject/api';
 import type { SubjectSummary } from '../pods/subject/api';
+import { listGroups } from '../pods/group/api';
+import type { GroupSummary } from '../pods/group/api';
 import { academicPaginationNavigation, parseAcademicPagination } from '../shared/academic-api';
 import { getSession } from '../shared/session';
 
@@ -83,12 +85,22 @@ try {
 	}
 }
 
+let groupCatalogState: 'success' | 'denied' | 'failed' | 'invalid-pagination' = 'failed';
+let groups: GroupSummary[] = [];
+let groupLimit = 50;
+let groupOffset = 0;
+let groupPreviousHref: string | null = null;
+let groupNextHref: string | null = null;
+let groupCatalogMessage = 'No se pudo consultar el catálogo de grupos académicos.';
+
 let subjectCatalogState: 'success' | 'denied' | 'failed' | 'invalid-pagination' = 'failed';
 let subjects: SubjectSummary[] = [];
 let subjectLimit = 50;
 let subjectOffset = 0;
 let subjectPreviousHref: string | null = null;
 let subjectNextHref: string | null = null;
+let subjectPreviousOffset: number | null = null;
+let subjectNextOffset: number | null = null;
 let subjectCatalogMessage = 'No se pudo consultar el catálogo de asignaturas.';
 try {
 	const catalogParams = new URLSearchParams();
@@ -103,15 +115,8 @@ try {
 	if (result.state === 'success') {
 		subjects = result.page.items;
 		const navigation = academicPaginationNavigation({ ...pagination, itemsLength: subjects.length });
-		const href = (catalogOffset: number) => {
-			const params = new URLSearchParams({ limit: String(limit), offset: String(offset), subject_limit: String(pagination.limit), subject_offset: String(catalogOffset) });
-			if (subjectId !== null) params.set('subject_id', subjectId);
-			if (recoveredSubjectId) params.set('draft_subject_id', recoveredSubjectId);
-			if (recoveredAcademicGroupId) params.set('draft_academic_group_id', recoveredAcademicGroupId);
-			return `/subject-groups?${params}`;
-		};
-		subjectPreviousHref = navigation.previousOffset === null ? null : href(navigation.previousOffset);
-		subjectNextHref = navigation.nextOffset === null ? null : href(navigation.nextOffset);
+		subjectPreviousOffset = navigation.previousOffset;
+		subjectNextOffset = navigation.nextOffset;
 	}
 } catch (error) {
 	if (error instanceof Error && error.message.includes('paginación')) {
@@ -122,6 +127,54 @@ try {
 	}
 }
 
+try {
+	const catalogParams = new URLSearchParams();
+	for (const [source, target] of [['group_limit', 'limit'], ['group_offset', 'offset']] as const) {
+		for (const value of search.getAll(source)) catalogParams.append(target, value);
+	}
+	const pagination = parseAcademicPagination(catalogParams);
+	groupLimit = pagination.limit;
+	groupOffset = pagination.offset;
+	const result = await listGroups(pagination, Astro.cookies);
+	groupCatalogState = result.state;
+	if (result.state === 'success') {
+		groups = result.page.items;
+		const navigation = academicPaginationNavigation({ ...pagination, itemsLength: groups.length });
+		const href = (catalogOffset: number) => {
+			const params = new URLSearchParams({ limit: String(limit), offset: String(offset), subject_limit: String(subjectLimit), subject_offset: String(subjectOffset), group_limit: String(pagination.limit), group_offset: String(catalogOffset) });
+			if (subjectId !== null) params.set('subject_id', subjectId);
+			if (recoveredSubjectId) params.set('draft_subject_id', recoveredSubjectId);
+			if (recoveredAcademicGroupId) params.set('draft_academic_group_id', recoveredAcademicGroupId);
+			return `/subject-groups?${params}`;
+		};
+		groupPreviousHref = navigation.previousOffset === null ? null : href(navigation.previousOffset);
+		groupNextHref = navigation.nextOffset === null ? null : href(navigation.nextOffset);
+	}
+} catch (error) {
+	if (error instanceof Error && error.message.includes('paginación')) {
+		groupCatalogState = 'invalid-pagination';
+		groupCatalogMessage = error.message;
+	} else {
+		return Astro.redirect(returnTo);
+	}
+}
+
+if (subjectCatalogState === 'success') {
+	const subjectHref = (catalogOffset: number) => {
+		const params = new URLSearchParams({ limit: String(limit), offset: String(offset), subject_limit: String(subjectLimit), subject_offset: String(catalogOffset), group_limit: String(groupLimit), group_offset: String(groupOffset) });
+		if (subjectId !== null) params.set('subject_id', subjectId);
+		if (recoveredSubjectId) params.set('draft_subject_id', recoveredSubjectId);
+		if (recoveredAcademicGroupId) params.set('draft_academic_group_id', recoveredAcademicGroupId);
+		return `/subject-groups?${params}`;
+	};
+	subjectPreviousHref = subjectPreviousOffset === null ? null : subjectHref(subjectPreviousOffset);
+	subjectNextHref = subjectNextOffset === null ? null : subjectHref(subjectNextOffset);
+}
+
+actionParams.set('subject_limit', String(subjectLimit));
+actionParams.set('subject_offset', String(subjectOffset));
+actionParams.set('group_limit', String(groupLimit));
+actionParams.set('group_offset', String(groupOffset));
 const filterHref = subjectGroupFilterHref(search, subjectId ?? '', limit);
 const clearFilterHref = subjectGroupClearFilterHref(search, limit);
 const actionUrl = `/subject-groups?${actionParams.toString()}`;
@@ -134,7 +187,7 @@ const actionUrl = `/subject-groups?${actionParams.toString()}`;
 			<h1 id="subject-groups-title">Grupos por asignatura</h1>
 			<p>Consultá las asociaciones registradas entre asignaturas y grupos académicos.</p>
 		</header>
-		<SubjectGroupForm result={actionResult} subjectId={recoveredSubjectId} academicGroupId={recoveredAcademicGroupId} actionUrl={actionUrl} subjects={subjects} subjectCatalogState={subjectCatalogState} subjectCatalogMessage={subjectCatalogMessage} subjectLimit={subjectLimit} subjectOffset={subjectOffset} subjectPreviousHref={subjectPreviousHref} subjectNextHref={subjectNextHref} listLimit={limit} listOffset={offset} listSubjectId={subjectId} />
+		<SubjectGroupForm result={actionResult} subjectId={recoveredSubjectId} academicGroupId={recoveredAcademicGroupId} actionUrl={actionUrl} subjects={subjects} subjectCatalogState={subjectCatalogState} subjectCatalogMessage={subjectCatalogMessage} subjectLimit={subjectLimit} subjectOffset={subjectOffset} subjectPreviousHref={subjectPreviousHref} subjectNextHref={subjectNextHref} groups={groups} groupCatalogState={groupCatalogState} groupCatalogMessage={groupCatalogMessage} groupLimit={groupLimit} groupOffset={groupOffset} groupPreviousHref={groupPreviousHref} groupNextHref={groupNextHref} listLimit={limit} listOffset={offset} listSubjectId={subjectId} />
 		<SubjectGroupList
 			state={state}
 			items={items}

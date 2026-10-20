@@ -1,6 +1,7 @@
 ---
 import { actions, isInputError } from 'astro:actions';
 import type { SubjectSummary } from '../../subject/api';
+import type { GroupSummary } from '../../group/api';
 
 interface Props {
 	result?: { data?: { success?: boolean; subjectId?: string; academicGroupId?: string; error?: string }; error?: { message?: string; fields?: Record<string, string[]> } };
@@ -17,9 +18,16 @@ interface Props {
 	listLimit?: number;
 	listOffset?: number;
 	listSubjectId?: string | null;
+	groups?: GroupSummary[];
+	groupCatalogState?: 'success' | 'denied' | 'failed' | 'invalid-pagination';
+	groupCatalogMessage?: string;
+	groupLimit?: number;
+	groupOffset?: number;
+	groupPreviousHref?: string | null;
+	groupNextHref?: string | null;
 }
 
-const { result, subjectId = '', academicGroupId = '', actionUrl, subjects = [], subjectCatalogState = 'failed', subjectCatalogMessage = 'No se pudo consultar el catálogo de asignaturas.', subjectLimit = 50, subjectOffset = 0, subjectPreviousHref, subjectNextHref, listLimit = 50, listOffset = 0, listSubjectId = null } = Astro.props;
+const { result, subjectId = '', academicGroupId = '', actionUrl, subjects = [], subjectCatalogState = 'failed', subjectCatalogMessage = 'No se pudo consultar el catálogo de asignaturas.', subjectLimit = 50, subjectOffset = 0, subjectPreviousHref, subjectNextHref, groups = [], groupCatalogState = 'failed', groupCatalogMessage = 'No se pudo consultar el catálogo de grupos académicos.', groupLimit = 50, groupOffset = 0, groupPreviousHref, groupNextHref, listLimit = 50, listOffset = 0, listSubjectId = null } = Astro.props;
 const fieldErrors = result?.error && isInputError(result.error) ? result.error.fields : {};
 const feedback = result?.error?.message ?? result?.data?.error;
 const success = result?.data?.success;
@@ -28,6 +36,7 @@ const submittedAcademicGroupId = result?.data?.academicGroupId ?? academicGroupI
 const visibleSubjects = subjects.some((item) => item.id === submittedSubjectId) || !submittedSubjectId
 	? subjects
 	: [{ id: submittedSubjectId, name: 'Asignatura seleccionada fuera de esta página' }, ...subjects];
+const hasSubmittedGroup = groups.some((item) => item.id === submittedAcademicGroupId);
 ---
 
 <section class="subject-group-form" aria-labelledby="subject-group-form-title">
@@ -40,12 +49,24 @@ const visibleSubjects = subjects.some((item) => item.id === submittedSubjectId) 
 	{subjectCatalogState === 'failed' && <p class="catalog-message" role="status">No se pudo cargar el catálogo. Podés ingresar el UUID manualmente.</p>}
 	{subjectCatalogState === 'invalid-pagination' && <p class="catalog-message" role="alert">{subjectCatalogMessage} Podés ingresar el UUID manualmente.</p>}
 	{subjectCatalogState === 'success' && subjects.length === 0 && <p class="catalog-message" role="status">No hay asignaturas en esta página del catálogo; podés ingresar un UUID manualmente.</p>}
-	<form method="POST" action={actionUrl ?? actions.createSubjectGroup} aria-describedby="subject-group-uuid-hint" data-list-limit={listLimit} data-list-offset={listOffset} data-list-subject-id={listSubjectId ?? ''} data-subject-limit={subjectLimit} data-subject-offset={subjectOffset}>
+	<form method="POST" action={actionUrl ?? actions.createSubjectGroup} aria-describedby="subject-group-uuid-hint" data-list-limit={listLimit} data-list-offset={listOffset} data-list-subject-id={listSubjectId ?? ''} data-subject-limit={subjectLimit} data-subject-offset={subjectOffset} data-group-limit={groupLimit} data-group-offset={groupOffset}>
 		{subjectCatalogState === 'success' && subjects.length > 0 && <div class="field">
 			<label for="subject-group-subject-choice">Asignatura del catálogo (opcional)</label>
 			<select id="subject-group-subject-choice" data-subject-choice disabled value={visibleSubjects.some((item) => item.id === submittedSubjectId) ? submittedSubjectId : ''}>
 				<option value="" selected={!submittedSubjectId}>Elegir asignatura…</option>
 				{visibleSubjects.map((item) => <option value={item.id} selected={item.id === submittedSubjectId}>{item.name} — {item.id}</option>)}
+			</select>
+		</div>}
+		{groupCatalogState === 'denied' && <p class="catalog-message" role="status">No tenés acceso de lectura al catálogo de grupos académicos. Podés ingresar el UUID manualmente.</p>}
+		{groupCatalogState === 'failed' && <p class="catalog-message" role="status">No se pudo cargar el catálogo de grupos académicos. Podés ingresar el UUID manualmente.</p>}
+		{groupCatalogState === 'invalid-pagination' && <p class="catalog-message" role="alert">{groupCatalogMessage} Podés ingresar el UUID manualmente.</p>}
+		{groupCatalogState === 'success' && groups.length === 0 && <p class="catalog-message" role="status">No hay grupos académicos en esta página del catálogo; podés ingresar un UUID manualmente.</p>}
+		{groupCatalogState === 'success' && groups.length > 0 && <div class="field">
+			<label for="subject-group-group-choice">Grupo académico del catálogo (opcional)</label>
+			<select id="subject-group-group-choice" data-group-choice disabled value={hasSubmittedGroup ? submittedAcademicGroupId : ''}>
+				<option value="" selected={!submittedAcademicGroupId}>Elegir grupo académico…</option>
+				{!hasSubmittedGroup && submittedAcademicGroupId && <option value={submittedAcademicGroupId} selected>Grupo seleccionado fuera de esta página — {submittedAcademicGroupId}</option>}
+				{groups.map((item) => <option value={item.id} selected={item.id === submittedAcademicGroupId}>{item.academic_year} — {item.curriculum_semester} — {item.name} — {item.id}</option>)}
 			</select>
 		</div>}
 		<div class="field">
@@ -62,8 +83,13 @@ const visibleSubjects = subjects.some((item) => item.id === submittedSubjectId) 
 		<button type="submit">Crear asociación</button>
 	</form>
 	{subjectCatalogState === 'success' && <nav class="catalog-pages" aria-label="Páginas del catálogo de asignaturas">
-		{subjectPreviousHref && <button type="button" data-catalog-offset={Math.max(0, subjectOffset - subjectLimit)} disabled>Asignaturas anteriores</button>}
-		{subjectNextHref && <button type="button" data-catalog-offset={subjectOffset + subjectLimit} disabled>Más asignaturas</button>}
+		{subjectPreviousHref && <button type="button" data-catalog-kind="subject" data-catalog-offset={Math.max(0, subjectOffset - subjectLimit)} disabled>Asignaturas anteriores</button>}
+		{subjectNextHref && <button type="button" data-catalog-kind="subject" data-catalog-offset={subjectOffset + subjectLimit} disabled>Más asignaturas</button>}
+		<noscript><p class="hint">La paginación necesita JavaScript; para continuar sin él, ingresá el UUID manualmente y creá la asociación.</p></noscript>
+	</nav>}
+	{groupCatalogState === 'success' && <nav class="catalog-pages" aria-label="Páginas del catálogo de grupos académicos">
+		{groupPreviousHref && <button type="button" data-catalog-kind="group" data-catalog-offset={Math.max(0, groupOffset - groupLimit)} disabled>Grupos anteriores</button>}
+		{groupNextHref && <button type="button" data-catalog-kind="group" data-catalog-offset={groupOffset + groupLimit} disabled>Más grupos académicos</button>}
 		<noscript><p class="hint">La paginación necesita JavaScript; para continuar sin él, ingresá el UUID manualmente y creá la asociación.</p></noscript>
 	</nav>}
 </section>
@@ -73,18 +99,26 @@ const root = document.querySelector<HTMLElement>('.subject-group-form');
 const form = root?.querySelector<HTMLFormElement>('form');
 const subject = form?.querySelector<HTMLInputElement>('[name="subject_id"]');
 const group = form?.querySelector<HTMLInputElement>('[name="academic_group_id"]');
-const choice = form?.querySelector<HTMLSelectElement>('[data-subject-choice]');
-if (choice && subject) {
-	choice.addEventListener('change', () => { if (subject) subject.value = choice.value; });
-	choice.disabled = false;
+const subjectChoice = form?.querySelector<HTMLSelectElement>('[data-subject-choice]');
+const groupChoice = form?.querySelector<HTMLSelectElement>('[data-group-choice]');
+if (subjectChoice && subject) {
+	subjectChoice.addEventListener('change', () => { if (subject) subject.value = subjectChoice.value; });
+	subjectChoice.disabled = false;
+}
+if (groupChoice && group) {
+	groupChoice.addEventListener('change', () => { if (group) group.value = groupChoice.value; });
+	groupChoice.disabled = false;
 }
 root?.querySelectorAll<HTMLButtonElement>('[data-catalog-offset]').forEach((button) => {
 	button.addEventListener('click', () => {
 		if (!form || !subject || !group) return;
 		const params = new URLSearchParams({
 			limit: form.dataset.listLimit || '50', offset: form.dataset.listOffset || '0',
-			subject_limit: form.dataset.subjectLimit || '50', subject_offset: button.dataset.catalogOffset || '0',
+			subject_limit: form.dataset.subjectLimit || '50', subject_offset: form.dataset.subjectOffset || '0',
+			group_limit: form.dataset.groupLimit || '50', group_offset: form.dataset.groupOffset || '0',
 		});
+		if (button.dataset.catalogKind === 'subject') params.set('subject_offset', button.dataset.catalogOffset || '0');
+		if (button.dataset.catalogKind === 'group') params.set('group_offset', button.dataset.catalogOffset || '0');
 		if (form.dataset.listSubjectId) params.set('subject_id', form.dataset.listSubjectId);
 		params.set('draft_subject_id', subject.value);
 		params.set('draft_academic_group_id', group.value);
