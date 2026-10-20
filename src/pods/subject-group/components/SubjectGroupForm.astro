@@ -1,28 +1,46 @@
 ---
 import { actions, isInputError } from 'astro:actions';
+import type { SubjectSummary } from '../../subject/api';
 
 interface Props {
 	result?: { data?: { success?: boolean; subjectId?: string; academicGroupId?: string; error?: string }; error?: { message?: string; fields?: Record<string, string[]> } };
 	subjectId?: string;
 	academicGroupId?: string;
 	actionUrl?: string;
+	subjects?: SubjectSummary[];
+	subjectCatalogState?: 'success' | 'denied' | 'failed' | 'invalid-pagination';
+	subjectCatalogMessage?: string;
 }
 
-const { result, subjectId = '', academicGroupId = '', actionUrl } = Astro.props;
+const { result, subjectId = '', academicGroupId = '', actionUrl, subjects = [], subjectCatalogState = 'failed', subjectCatalogMessage = 'No se pudo consultar el catálogo de asignaturas.' } = Astro.props;
 const fieldErrors = result?.error && isInputError(result.error) ? result.error.fields : {};
 const feedback = result?.error?.message ?? result?.data?.error;
 const success = result?.data?.success;
 const submittedSubjectId = result?.data?.subjectId ?? subjectId;
 const submittedAcademicGroupId = result?.data?.academicGroupId ?? academicGroupId;
+const visibleSubjects = subjects.some((item) => item.id === submittedSubjectId) || !submittedSubjectId
+	? subjects
+	: [{ id: submittedSubjectId, name: 'Asignatura seleccionada fuera de esta página' }, ...subjects];
 ---
 
 <section class="subject-group-form" aria-labelledby="subject-group-form-title">
 	<p class="eyebrow">Nueva asociación</p>
 	<h2 id="subject-group-form-title">Crear asociación académica</h2>
-	<p class="hint">Ingresá manualmente los UUID completos de una asignatura y un grupo académico. Crear la asociación no otorga habilitación.</p>
+	<p class="hint">Elegí una asignatura del catálogo o ingresá su UUID manualmente. Ingresá también el UUID del grupo académico. Crear la asociación no otorga habilitación.</p>
 	{success && <p class="success" role="status">Asociación creada: asignatura <span class="identity">{submittedSubjectId}</span>, grupo académico <span class="identity">{submittedAcademicGroupId}</span>.</p>}
 	{feedback && <p class="error" role="alert">{feedback}</p>}
+	{subjectCatalogState === 'denied' && <p class="catalog-message" role="status">No tenés acceso de lectura al catálogo. Podés ingresar el UUID manualmente.</p>}
+	{subjectCatalogState === 'failed' && <p class="catalog-message" role="status">No se pudo cargar el catálogo. Podés ingresar el UUID manualmente.</p>}
+	{subjectCatalogState === 'invalid-pagination' && <p class="catalog-message" role="alert">{subjectCatalogMessage} Podés ingresar el UUID manualmente.</p>}
+	{subjectCatalogState === 'success' && subjects.length === 0 && <p class="catalog-message" role="status">No hay asignaturas en esta página del catálogo; podés ingresar un UUID manualmente.</p>}
 	<form method="POST" action={actionUrl ?? actions.createSubjectGroup}>
+		{subjectCatalogState === 'success' && subjects.length > 0 && <div class="field">
+			<label for="subject-group-subject-choice">Asignatura del catálogo (opcional)</label>
+			<select id="subject-group-subject-choice" data-subject-choice disabled value={visibleSubjects.some((item) => item.id === submittedSubjectId) ? submittedSubjectId : ''}>
+				<option value="" selected={!submittedSubjectId}>Elegir asignatura…</option>
+				{visibleSubjects.map((item) => <option value={item.id} selected={item.id === submittedSubjectId}>{item.name} — {item.id}</option>)}
+			</select>
+		</div>}
 		<div class="field">
 			<label for="subject-group-subject-id">UUID de asignatura <span aria-hidden="true">*</span></label>
 			<input id="subject-group-subject-id" name="subject_id" type="text" required value={submittedSubjectId} autocomplete="off" aria-describedby="subject-group-uuid-hint subject-group-subject-error" />
@@ -38,6 +56,17 @@ const submittedAcademicGroupId = result?.data?.academicGroupId ?? academicGroupI
 	</form>
 </section>
 
+<script>
+const root = document.querySelector<HTMLElement>('.subject-group-form');
+const form = root?.querySelector<HTMLFormElement>('form');
+const subject = form?.querySelector<HTMLInputElement>('[name="subject_id"]');
+const subjectChoice = form?.querySelector<HTMLSelectElement>('[data-subject-choice]');
+if (subjectChoice && subject) {
+	subjectChoice.addEventListener('change', () => { subject.value = subjectChoice.value; });
+	subjectChoice.disabled = false;
+}
+</script>
+
 <style>
 	.subject-group-form { min-width: 0; margin-bottom: 2rem; padding: clamp(1.25rem, 3vw, 2rem); border: 1px solid var(--line); border-top: 5px solid var(--sage); border-radius: 0 12px 12px 12px; background: var(--paper); }
 	.eyebrow { margin: 0 0 0.4rem; color: var(--rust); font: 0.7rem/1.6 Consolas, monospace; letter-spacing: 0.1em; text-transform: uppercase; }
@@ -45,8 +74,8 @@ const submittedAcademicGroupId = result?.data?.academicGroupId ?? academicGroupI
 	form { display: grid; gap: 1rem; }
 	.field { display: grid; gap: 0.4rem; min-width: 0; }
 	label { font-size: 0.875rem; font-weight: 600; }
-	input { width: 100%; min-width: 0; min-height: 46px; padding: 0.65rem 0.8rem; border: 1px solid var(--field-line); border-radius: 6px; background: var(--field); color: var(--ink); font: inherit; }
-	input:focus-visible, button:focus-visible { outline: 3px solid var(--rust); outline-offset: 3px; }
+	input, select { width: 100%; min-width: 0; min-height: 46px; padding: 0.65rem 0.8rem; border: 1px solid var(--field-line); border-radius: 6px; background: var(--field); color: var(--ink); font: inherit; }
+	input:focus-visible, select:focus-visible, button:focus-visible { outline: 3px solid var(--rust); outline-offset: 3px; }
 	.hint { margin: 0 0 1rem; color: var(--muted); font-size: 0.8rem; }
 	button { min-height: 46px; justify-self: start; padding: 0.75rem 1.25rem; border: 1px solid var(--rust); border-radius: 6px; background: var(--rust); color: var(--paper); font: inherit; font-weight: 600; cursor: pointer; }
 	.success, .error { margin: 0; padding: 1rem; border: 1px solid var(--line); border-radius: 8px; overflow-wrap: anywhere; }

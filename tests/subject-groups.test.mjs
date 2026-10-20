@@ -42,13 +42,21 @@ async function evaluateApi(options = {}) {
 		isInputError,
 		fetch: async (url, init) => {
 			const isPost = init.method === 'POST';
-			const status = isPost ? (options.postStatus ?? 201) : (options.status ?? 200);
+			const endpoint = new URL(url).pathname;
+			const isSubjectCatalog = endpoint === '/subjects' && !isPost;
+			const status = isPost ? (options.postStatus ?? 201)
+				: isSubjectCatalog ? (options.subjectStatus ?? options.status ?? 200)
+					: (options.associationStatus ?? options.status ?? 200);
 			requests.push({ url, ...init, responseStatus: status });
-			if (options.networkError) throw new Error('Offline');
+			if (options.networkError || (isSubjectCatalog && options.subjectNetworkError) || (!isSubjectCatalog && !isPost && options.associationNetworkError)) throw new Error('Offline');
 			const params = new URL(url).searchParams;
-			const response = isPost ? (options.postResponse ?? association()) : options.response ?? (status >= 400
-				? { error: { code: status === 401 ? 'UNAUTHORIZED' : 'DENIED', message: 'Request failed' } }
-				: { items: [association()], limit: Number(params.get('limit')), offset: Number(params.get('offset')) });
+			const response = isPost ? (options.postResponse ?? association()) : isSubjectCatalog
+				? options.subjectResponse ?? (status >= 400
+					? { error: { code: status === 401 ? 'UNAUTHORIZED' : 'DENIED', message: 'Request failed' } }
+					: { items: [], limit: Number(params.get('limit')), offset: Number(params.get('offset')) })
+				: options.response ?? (status >= 400
+					? { error: { code: status === 401 ? 'UNAUTHORIZED' : 'DENIED', message: 'Request failed' } }
+					: { items: [association()], limit: Number(params.get('limit')), offset: Number(params.get('offset')) });
 			return Response.json(response, { status });
 		},
 	});
@@ -94,7 +102,7 @@ async function evaluateForm(props = {}) {
 	for (const statement of imports) code = code.replace(statement.getFullText(parsed), '');
 	const result = await evaluateApi();
 	result.sandbox.Astro = { props };
-	const output = ts.transpileModule(`${code}\nreturn { fieldErrors, feedback, success, submittedSubjectId, submittedAcademicGroupId, actionUrl: String(actionUrl ?? actions.createSubjectGroup) };`, {
+	const output = ts.transpileModule(`${code}\nreturn { fieldErrors, feedback, success, submittedSubjectId, submittedAcademicGroupId, visibleSubjects, subjectCatalogState, subjectCatalogMessage, actionUrl: String(actionUrl ?? actions.createSubjectGroup) };`, {
 		compilerOptions: { module: ts.ModuleKind.None, target: ts.ScriptTarget.ES2022 },
 	}).outputText;
 	const value = await new vm.Script(`(() => { ${output} })()`).runInContext(result.sandbox);
@@ -230,6 +238,26 @@ test('association list empty states remain neutral and use the academic palette 
 	assert.doesNotMatch(component, /total(?:es)?\s*(?:de|:|=)|created_by|created_at|association_id|habilitaciones/i);
 });
 
+async function runSubjectSelectorScript({ withInput = true } = {}) {
+	const source = await readFile(new URL('../src/pods/subject-group/components/SubjectGroupForm.astro', import.meta.url), 'utf8');
+	const script = source.match(/<script>\s*([\s\S]*?)\s*<\/script>/)?.[1];
+	assert.ok(script, 'component has an executable client script');
+	let listener;
+	const subject = { value: 'manual-subject' };
+	const group = { value: 'manual-group' };
+	const choice = {
+		value: subjectId,
+		disabled: true,
+		addEventListener: (name, callback) => { assert.equal(name, 'change'); assert.equal(choice.disabled, true, 'bind before enabling'); listener = callback; },
+	};
+	const form = { querySelector: (selector) => selector.includes('subject-choice') ? choice : selector.includes('subject_id') ? (withInput ? subject : null) : group };
+	const root = { querySelector: () => form };
+	const context = vm.createContext({ document: { querySelector: () => root } });
+	const code = ts.transpileModule(script, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+	new vm.Script(code).runInContext(context);
+	return { subject, group, choice, get listener() { return listener; } };
+}
+
 async function evaluateRoute(query = '', options = {}) {
 	const pageUrl = new URL('../src/pages/subject-groups.astro', import.meta.url);
 	const source = await readFile(pageUrl, 'utf8');
@@ -265,19 +293,65 @@ async function evaluateRoute(query = '', options = {}) {
 	let code = routeCode;
 	for (const [start, end] of removals.sort((a, b) => b[0] - a[0])) code = code.slice(0, start) + code.slice(end);
 	code = code.replace(/^export const prerender = false;\s*$/m, '');
-	const output = ts.transpileModule(`${code}\nreturn { state, items, limit, offset, subjectId, previousHref, nextHref, invalidMessage, actionUrl, actionResult, recoveredSubjectId, recoveredAcademicGroupId };`, {
+	const output = ts.transpileModule(`${code}\nreturn { state, items, limit, offset, subjectId, previousHref, nextHref, invalidMessage, actionUrl, actionResult, recoveredSubjectId, recoveredAcademicGroupId, subjectCatalogState, subjects, subjectLimit, subjectOffset, subjectCatalogMessage };`, {
 		compilerOptions: { module: ts.ModuleKind.None, target: ts.ScriptTarget.ES2022 },
 	}).outputText;
 	const value = await new vm.Script(`(async () => { ${output} })()`).runInContext(simulation.sandbox);
 	return { source, value, ...simulation };
 }
 
+test('subject catalog uses independent bounded pagination and preserves association requests', async () => {
+	const subject = { id: subjectId, name: 'Álgebra' };
+	const result = await evaluateRoute('limit=7&offset=14&subject_limit=2&subject_offset=2', {
+		subjectResponse: { items: [subject], limit: 2, offset: 2 },
+		response: { items: [], limit: 7, offset: 14 },
+	});
+	assert.equal(result.value.state, 'success');
+	assert.equal(result.value.subjectCatalogState, 'success');
+	assert.deepEqual(plain(result.value.subjects), [subject]);
+	assert.deepEqual(result.requests.map(({ url, method }) => [url, method]), [
+		['https://backend.invalid/subjects?limit=2&offset=2', 'GET'],
+		['https://backend.invalid/subject-groups?limit=7&offset=14', 'GET'],
+	]);
+	assert.equal(result.requests[1].headers.Authorization, 'Bearer operator-token');
+	assert.deepEqual(result.writes, []);
+
+	for (const query of ['subject_limit=1&subject_limit=2', 'subject_offset=1&subject_offset=2', 'subject_limit=0', 'subject_offset=10001']) {
+		const invalid = await evaluateRoute(query);
+		assert.equal(invalid.value.subjectCatalogState, 'invalid-pagination', query);
+		assert.equal(invalid.requests.length, 1, 'invalid subject pagination skips only its own GET');
+		assert.equal(invalid.requests[0].url, 'https://backend.invalid/subject-groups?limit=50&offset=0');
+		assert.equal(invalid.value.actionUrl, '/subject-groups?_action=createSubjectGroup&limit=50&offset=0&subject_limit=50&subject_offset=0');
+	}
+	const invalidAssociation = await evaluateRoute('limit=1&limit=2&subject_limit=3');
+	assert.equal(invalidAssociation.value.state, 'invalid-pagination');
+	assert.equal(invalidAssociation.requests.length, 1);
+	assert.equal(invalidAssociation.requests[0].url, 'https://backend.invalid/subjects?limit=3&offset=0');
+});
+
+test('subject catalog denial, failure, empty, and malformed pages remain independent', async () => {
+	for (const [options, expected] of [
+		[{ subjectStatus: 403 }, 'denied'], [{ subjectStatus: 500 }, 'failed'],
+		[{ subjectNetworkError: true }, 'failed'],
+		[{ subjectResponse: { items: [{ id: 42, name: 'X' }], limit: 50, offset: 0 } }, 'failed'],
+	]) {
+		const result = await evaluateRoute('', options);
+		assert.equal(result.value.state, 'success');
+		assert.equal(result.value.subjectCatalogState, expected);
+		assert.deepEqual(result.requests.map(({ url }) => new URL(url).pathname), ['/subjects', '/subject-groups']);
+		assert.equal(result.cookieState.token, 'operator-token');
+		assert.deepEqual(result.writes, []);
+	}
+	const empty = await evaluateRoute('', { subjectResponse: { items: [], limit: 50, offset: 0 } });
+	assert.deepEqual(plain(empty.value.subjects), []);
+});
+
 test('route evaluator records the real authenticated GET and cookie lifecycle', async () => {
 	const result = await evaluateRoute();
-	assert.equal(result.requests.length, 1);
-	assert.equal(result.requests[0].url, 'https://backend.invalid/subject-groups?limit=50&offset=0');
-	assert.equal(result.requests[0].method, 'GET');
-	assert.equal(result.requests[0].headers.Authorization, 'Bearer operator-token');
+	assert.equal(result.requests.length, 2);
+	assert.equal(result.requests[1].url, 'https://backend.invalid/subject-groups?limit=50&offset=0');
+	assert.equal(result.requests[1].method, 'GET');
+	assert.equal(result.requests[1].headers.Authorization, 'Bearer operator-token');
 	assert.equal(result.cookieState.token, 'operator-token');
 	assert.deepEqual(result.writes, []);
 });
@@ -291,9 +365,9 @@ test('subject-group route uses real pagination, API filtering and allowlisted na
 	assert.equal(result.value.state, 'success');
 	assert.deepEqual([result.value.limit, result.value.offset, result.value.subjectId], [2, 2, uppercaseId]);
 	assert.deepEqual(plain(result.value.items), items);
-	assert.equal(result.requests.length, 1);
-	assert.equal(result.requests[0].url, `https://backend.invalid/subject-groups?limit=2&offset=2&subject_id=${uppercaseId}`);
-	assert.equal(result.requests[0].headers.Authorization, 'Bearer operator-token');
+	assert.equal(result.requests.length, 2);
+	assert.equal(result.requests[1].url, `https://backend.invalid/subject-groups?limit=2&offset=2&subject_id=${uppercaseId}`);
+	assert.equal(result.requests[1].headers.Authorization, 'Bearer operator-token');
 	assert.equal(result.value.previousHref, `/subject-groups?limit=2&offset=0&subject_id=${uppercaseId}`);
 	assert.equal(result.value.nextHref, `/subject-groups?limit=2&offset=4&subject_id=${uppercaseId}`);
 });
@@ -302,7 +376,9 @@ test('real pagination and filter helpers reject invalid, fractional, blank and r
 	for (const query of ['limit=0', 'limit=101', 'limit=1.5', 'limit=', 'limit=1&limit=2', 'offset=-1', 'offset=10001', 'offset=1.5', 'offset=', 'offset=1&offset=2', 'subject_id=', 'subject_id=bad', `subject_id=${subjectId}&subject_id=${groupId}`]) {
 		const result = await evaluateRoute(query);
 		assert.ok(['invalid-pagination', 'invalid-filter'].includes(result.value.state), query);
-		assert.equal(result.requests.length, 0, query);
+		const invalidSubjectPagination = /subject_(?:limit|offset)/.test(query);
+		assert.equal(result.requests.length, invalidSubjectPagination ? 0 : 1, query);
+		if (!invalidSubjectPagination) assert.equal(new URL(result.requests[0].url).pathname, '/subjects', query);
 		assert.deepEqual(result.writes, [], query);
 	}
 });
@@ -333,15 +409,27 @@ test('actual API 403, 500 and network failures preserve cookies; 401 clears then
 	for (const [options, state] of [[{ status: 403 }, 'denied'], [{ status: 500 }, 'failed'], [{ networkError: true }, 'failed']]) {
 		const result = await evaluateRoute('', options);
 		assert.equal(result.value.state, state);
-		assert.equal(result.requests.length, 1);
+		assert.equal(result.requests.length, 2);
+		assert.deepEqual(result.requests.map(({ url }) => new URL(url).pathname), ['/subjects', '/subject-groups']);
 		assert.equal(result.cookieState.token, 'operator-token');
 		assert.deepEqual(result.writes, []);
 	}
 	const unauthorized = await evaluateRoute('', { status: 401 });
 	assert.deepEqual(unauthorized.value, { redirected: '/auth/login?returnTo=%2Fsubject-groups' });
 	assert.equal(unauthorized.requests.length, 1);
+	assert.equal(new URL(unauthorized.requests[0].url).pathname, '/subjects');
 	assert.equal(unauthorized.cookieState.token, undefined);
 	assert.deepEqual(plain(unauthorized.writes), [['delete', 'session', { path: '/' }]]);
+});
+
+test('association 401 clears the session after an independent successful subject catalog GET', async () => {
+	const result = await evaluateRoute('', { subjectStatus: 200, associationStatus: 401 });
+	assert.deepEqual(result.value, { redirected: '/auth/login?returnTo=%2Fsubject-groups' });
+	assert.deepEqual(result.requests.map(({ url, responseStatus }) => [new URL(url).pathname, responseStatus]), [
+		['/subjects', 200], ['/subject-groups', 401],
+	]);
+	assert.equal(result.cookieState.token, undefined);
+	assert.deepEqual(plain(result.writes), [['delete', 'session', { path: '/' }]]);
 });
 
 test('real POST 201 identity survives independent GET denial with the same session state', async () => {
@@ -359,11 +447,14 @@ test('real POST 201 identity survives independent GET denial with the same sessi
 		assert.equal(created.success, true);
 		const writesBeforeGet = [...post.writes];
 		const refreshed = await evaluateRoute('', {
-			status, response: { error: { message: 'Unavailable' } }, actionResult: { data: created },
+			status, subjectStatus: status, response: { error: { message: 'Unavailable' } }, actionResult: { data: created },
 			cookieState: post.cookieState,
 		});
 		assert.strictEqual(refreshed.cookieState, post.cookieState);
-		assert.equal(refreshed.requests[0].responseStatus, status);
+		assert.deepEqual(refreshed.requests.map(({ url, responseStatus }) => [new URL(url).pathname, responseStatus]), [
+			['/subjects', status], ['/subject-groups', status],
+		]);
+		assert.equal(refreshed.value.subjectCatalogState, status === 403 ? 'denied' : 'failed');
 		assert.deepEqual(refreshed.value.actionResult.data, created);
 		const form = await evaluateForm({ result: refreshed.value.actionResult });
 		assert.equal(form.success, true);
@@ -372,6 +463,36 @@ test('real POST 201 identity survives independent GET denial with the same sessi
 		assert.equal(refreshed.cookieState.token, 'u13-distinctive-session');
 		assert.deepEqual(refreshed.writes, writesBeforeGet);
 	}
+});
+
+test('subject form props preserve catalog states, manual identity, and off-page selected identity', async () => {
+	const subject = { id: subjectId, name: 'Álgebra' };
+	const onPage = await evaluateForm({ subjects: [subject], subjectCatalogState: 'success', subjectId, academicGroupId: groupId });
+	assert.deepEqual(plain(onPage.visibleSubjects), [subject]);
+	assert.equal(onPage.submittedSubjectId, subjectId);
+	assert.equal(onPage.submittedAcademicGroupId, groupId);
+	const offPage = await evaluateForm({ subjects: [subject], subjectCatalogState: 'success', subjectId: creatorId, academicGroupId: groupId });
+	assert.deepEqual(plain(offPage.visibleSubjects), [
+		{ id: creatorId, name: 'Asignatura seleccionada fuera de esta página' }, subject,
+	]);
+	for (const state of ['denied', 'failed', 'invalid-pagination']) {
+		const form = await evaluateForm({ subjectCatalogState: state, subjectCatalogMessage: 'Parámetro inválido', subjectId: creatorId, academicGroupId: groupId });
+		assert.equal(form.subjectCatalogState, state);
+		assert.equal(form.submittedSubjectId, creatorId);
+		assert.equal(form.submittedAcademicGroupId, groupId);
+	}
+});
+
+test('subject selector script binds before enabling and updates only the submit subject input', async () => {
+	const fixture = await runSubjectSelectorScript();
+	assert.equal(fixture.choice.disabled, false);
+	assert.equal(typeof fixture.listener, 'function');
+	fixture.listener();
+	assert.equal(fixture.subject.value, subjectId);
+	assert.equal(fixture.group.value, 'manual-group');
+	const unbound = await runSubjectSelectorScript({ withInput: false });
+	assert.equal(unbound.choice.disabled, true);
+	assert.equal(unbound.listener, undefined);
 });
 
 test('form frontmatter evaluates real action proxy, framework errors, and submitted identities', async () => {
@@ -454,23 +575,27 @@ test('manual association creation UI is present without catalog requests or GET 
 	const page = await readFile(new URL('../src/pages/subject-groups.astro', import.meta.url), 'utf8');
 	const form = await readFile(new URL('../src/pods/subject-group/components/SubjectGroupForm.astro', import.meta.url), 'utf8');
 	assert.match(page, /<SubjectGroupForm/);
-	assert.doesNotMatch(page, /listSubjects|listGroups|draft_subject_id|draft_academic_group_id/);
+	assert.match(page, /listSubjects/);
+	assert.doesNotMatch(page, /listGroups|draft_subject_id|draft_academic_group_id/);
 	const filtered = await evaluateRoute(`limit=7&offset=14&subject_id=${subjectId}&_action=evil&redirect=https://evil.invalid`);
-	assert.equal(filtered.value.actionUrl, `/subject-groups?_action=createSubjectGroup&limit=7&offset=14&subject_id=${subjectId}`);
+	assert.equal(filtered.value.actionUrl, `/subject-groups?_action=createSubjectGroup&limit=7&offset=14&subject_limit=50&subject_offset=0&subject_id=${subjectId}`);
 	assert.doesNotMatch(filtered.value.actionUrl, /evil|redirect/);
 	for (const query of [
 		'limit=7&limit=8', 'limit=0', 'offset=10001',
 		`subject_id=${subjectId}&subject_id=${groupId}`, 'subject_id=invalid',
 	]) {
 		const invalid = await evaluateRoute(query);
-		assert.equal(invalid.value.actionUrl, '/subject-groups?_action=createSubjectGroup&limit=50&offset=0', query);
+		assert.equal(invalid.value.actionUrl, '/subject-groups?_action=createSubjectGroup&limit=50&offset=0&subject_limit=50&subject_offset=0', query);
 		assert.doesNotMatch(invalid.value.actionUrl, /evil|redirect/);
 	}
 	assert.match(form, /name="subject_id"/);
 	assert.match(form, /name="academic_group_id"/);
 	assert.match(form, /UUID de asignatura/);
 	assert.match(form, /UUID de grupo académico/);
-	assert.doesNotMatch(form, /<select|catalog|draft_/i);
+	assert.match(form, /data-subject-choice/);
+	assert.match(form, /disabled value=\{visibleSubjects/);
+	assert.match(form, /\{item\.name\} — \{item\.id\}/);
+	assert.doesNotMatch(form, /name="subject-group-subject-choice"|data-group-choice|draft_/i);
 });
 
 test('subject-group route retains listing-only Spanish markup and excludes deferred UI', async () => {
@@ -480,5 +605,5 @@ test('subject-group route retains listing-only Spanish markup and excludes defer
 	assert.match(source, /Grupos por asignatura/);
 	assert.match(source, /Consultá las asociaciones registradas entre asignaturas y grupos académicos\./);
 	assert.match(source, /<SubjectGroupForm/);
-	assert.doesNotMatch(source, /listSubjects|listGroups|catalog|draft_/);
+	assert.doesNotMatch(source, /listGroups|draft_/);
 });

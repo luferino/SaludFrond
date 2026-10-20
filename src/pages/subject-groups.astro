@@ -7,6 +7,8 @@ import SubjectGroupForm from '../pods/subject-group/components/SubjectGroupForm.
 import SubjectGroupList from '../pods/subject-group/components/SubjectGroupList.astro';
 import { listSubjectGroups, parseSubjectGroupFilter, subjectGroupClearFilterHref, subjectGroupFilterHref, subjectGroupPageHref } from '../pods/subject-group/api';
 import type { SubjectGroupAssociation } from '../pods/subject-group/api';
+import { listSubjects } from '../pods/subject/api';
+import type { SubjectSummary } from '../pods/subject/api';
 import { academicPaginationNavigation, parseAcademicPagination } from '../shared/academic-api';
 import { getSession } from '../shared/session';
 
@@ -40,9 +42,36 @@ let subjectId: string | null = null;
 let previousHref: string | null = null;
 let nextHref: string | null = null;
 let invalidMessage = 'Revisá los parámetros de consulta.';
+let subjectCatalogState: 'success' | 'denied' | 'failed' | 'invalid-pagination' = 'failed';
+let subjects: SubjectSummary[] = [];
+let subjectLimit = 50;
+let subjectOffset = 0;
+let subjectCatalogMessage = 'No se pudo consultar el catálogo de asignaturas.';
+try {
+	const subjectParams = new URLSearchParams();
+	for (const [source, target] of [['subject_limit', 'limit'], ['subject_offset', 'offset']] as const) {
+		for (const value of search.getAll(source)) subjectParams.append(target, value);
+	}
+	const pagination = parseAcademicPagination(subjectParams);
+	subjectLimit = pagination.limit;
+	subjectOffset = pagination.offset;
+	const result = await listSubjects(pagination, Astro.cookies);
+	subjectCatalogState = result.state;
+	if (result.state === 'success') subjects = result.page.items;
+} catch (error) {
+	if (error instanceof Error && error.message.includes('paginación')) {
+		subjectCatalogState = 'invalid-pagination';
+		subjectCatalogMessage = error.message;
+	} else {
+		return Astro.redirect(returnTo);
+	}
+}
+
 const actionParams = new URLSearchParams(actions.createSubjectGroup.toString().split('?')[1] ?? '');
 actionParams.set('limit', String(limit));
 actionParams.set('offset', String(offset));
+actionParams.set('subject_limit', String(subjectLimit));
+actionParams.set('subject_offset', String(subjectOffset));
 let actionUrl = `/subject-groups?${actionParams}`;
 try {
 	const pagination = parseAcademicPagination(search);
@@ -85,7 +114,7 @@ const clearFilterHref = subjectGroupClearFilterHref(search, limit);
 			<h1 id="subject-groups-title">Grupos por asignatura</h1>
 			<p>Consultá las asociaciones registradas entre asignaturas y grupos académicos.</p>
 		</header>
-		<SubjectGroupForm result={actionResult} subjectId={recoveredSubjectId} academicGroupId={recoveredAcademicGroupId} actionUrl={actionUrl} />
+		<SubjectGroupForm result={actionResult} subjectId={recoveredSubjectId} academicGroupId={recoveredAcademicGroupId} actionUrl={actionUrl} subjects={subjects} subjectCatalogState={subjectCatalogState} subjectCatalogMessage={subjectCatalogMessage} />
 		<SubjectGroupList
 			state={state}
 			items={items}
