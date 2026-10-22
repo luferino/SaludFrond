@@ -17,7 +17,7 @@ const pageTitles: Record<string, string> = {
 	'/auth/login': 'Iniciar sesión', '/auth/forgot-password': 'Recuperar contraseña',
 	'/auth/reset-password': 'Restablecer contraseña',
 	'/subjects': 'Asignaturas', '/groups': 'Grupos académicos', '/subject-groups': 'Asignaturas y grupos',
-	'/teacher-habilitations': 'Habilitaciones docentes',
+	'/teacher-habilitations': 'Habilitaciones docentes', '/student-habilitations': 'Habilitaciones de estudiantes',
 };
 const pageTitle = pageTitles[currentPath] ?? 'Salud';
 const academicLinks = isLoggedIn ? [
@@ -25,6 +25,7 @@ const academicLinks = isLoggedIn ? [
 	{ href: '/groups', label: 'Grupos académicos' },
 	{ href: '/subject-groups', label: 'Asignaturas y grupos' },
 	{ href: '/teacher-habilitations', label: 'Habilitaciones docentes' },
+	{ href: '/student-habilitations', label: 'Habilitaciones de estudiantes' },
 ] : [];
 ---
 

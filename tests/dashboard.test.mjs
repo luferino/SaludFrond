@@ -60,7 +60,7 @@ test('home preserves the original nonacademic visibility matrix and adds academi
 		[{ ...valid, role: undefined, permissions: undefined }, []],
 		[{ ...valid, role: 'unknown' }, []],
 	];
-	const academic = ['/subjects', '/groups', '/subject-groups', '/teacher-habilitations'];
+	const academic = ['/subjects', '/groups', '/subject-groups', '/teacher-habilitations', '/student-habilitations'];
 	for (const [payload, expected] of cases) {
 		const token = jwt(payload);
 		const home = await evaluate('src/pages/index.astro', ['modules', 'canRegister'], token);
@@ -81,11 +81,12 @@ test('shell resolves academic titles and keeps exact active paths across query s
 		['/subjects?limit=20', 'Asignaturas', '/subjects'], ['/groups/', 'Grupos académicos', '/groups'],
 		['/subject-groups/?subject_id=abc', 'Asignaturas y grupos', '/subject-groups'],
 		['/teacher-habilitations/', 'Habilitaciones docentes', '/teacher-habilitations'],
+		['/student-habilitations?status=revoked', 'Habilitaciones de estudiantes', '/student-habilitations'],
 	]) {
 		const result = await evaluate('src/layouts/Layout.astro', ['pageTitle', 'currentPath', 'academicLinks'], jwt(valid), pathname);
 		assert.equal(result.pageTitle, title);
 		assert.equal(result.currentPath, path);
-		assert.deepEqual(Array.from(result.academicLinks, (link) => link.href), ['/subjects', '/groups', '/subject-groups', '/teacher-habilitations']);
+		assert.deepEqual(Array.from(result.academicLinks, (link) => link.href), ['/subjects', '/groups', '/subject-groups', '/teacher-habilitations', '/student-habilitations']);
 	}
 	for (const token of [undefined, 'invalid', jwt({ ...valid, exp: 1 })]) {
 		const anonymous = await evaluate('src/layouts/Layout.astro', ['academicLinks'], token);

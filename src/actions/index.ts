@@ -14,10 +14,13 @@ import { handleCreateStudent } from '../pods/student/actions/students';
 import { handleCreateTeacher } from '../pods/teacher/actions/teachers';
 import { handleCreatePatient } from '../pods/paciente/actions/patients';
 import { activateTeacherHabilitation, revokeTeacherHabilitation } from '../pods/teacher-habilitation/actions';
+import { activateStudentHabilitation, revokeStudentHabilitation } from '../pods/student-habilitation/actions';
 
 export const server = {
 	activateTeacherHabilitation,
 	revokeTeacherHabilitation,
+	activateStudentHabilitation,
+	revokeStudentHabilitation,
 	login: defineAction({
 		accept: 'form',
 		input: z.object({
