@@ -1,0 +1,305 @@
+---
+export const prerender = false;
+
+import { actions } from 'astro:actions';
+import Layout from '../layouts/Layout.astro';
+import { listGroups } from '../pods/group/api';
+import type { GroupSummary } from '../pods/group/api';
+import { listSubjects } from '../pods/subject/api';
+import type { SubjectSummary } from '../pods/subject/api';
+import {
+	listLinkedSubjectGroups, listTeacherHabilitations, listTeacherProfiles,
+	parseCatalogPagination, parseCatalogSelection, parseContextSelection, parseTeacherHabilitationFilter,
+	teacherHabilitationNavigation,
+} from '../pods/teacher-habilitation/api';
+import type { LinkedSubjectGroup, TeacherHabilitationPeriod, TeacherProfile } from '../pods/teacher-habilitation/api';
+import { academicPaginationNavigation, parseAcademicPagination } from '../shared/academic-api';
+import { getSession } from '../shared/session';
+
+const returnTo = '/auth/login?returnTo=%2Fteacher-habilitations';
+if (!getSession(Astro.cookies)) return Astro.redirect(returnTo);
+const activationResult = Astro.getActionResult(actions.activateTeacherHabilitation);
+const revocationResult = Astro.getActionResult(actions.revokeTeacherHabilitation);
+const search = Astro.url.searchParams;
+let limit = 50;
+let offset = 0;
+let filter = { teacherId: null as string | null, subjectId: null as string | null, academicGroupId: null as string | null, status: null as 'active' | 'revoked' | null };
+let queryError = '';
+try {
+	({ limit, offset } = parseAcademicPagination(search));
+	const filters = new URLSearchParams();
+	for (const name of ['teacher_id', 'subject_id', 'academic_group_id', 'status']) {
+		const formName = `filter_${name}`;
+		const selected = search.getAll(formName);
+		const values = selected.length > 0 ? selected : (search.has('context') ? [] : search.getAll(name));
+		for (const value of values) filters.append(name, value);
+	}
+	filter = parseTeacherHabilitationFilter(filters);
+} catch (error) {
+	queryError = error instanceof Error ? error.message : 'Revisá los parámetros de consulta.';
+}
+
+let teacherPagination = { limit: 50, offset: 0 };
+let contextPagination = { limit: 50, offset: 0 };
+let subjectPagination = { limit: 50, offset: 0 };
+let groupPagination = { limit: 50, offset: 0 };
+let teachers: TeacherProfile[] = [];
+let contexts: LinkedSubjectGroup[] = [];
+let subjects: SubjectSummary[] = [];
+let groups: GroupSummary[] = [];
+let teacherState: 'success' | 'denied' | 'failed' = 'failed';
+let contextState: 'success' | 'denied' | 'failed' = 'failed';
+let subjectState: 'success' | 'denied' | 'failed' = 'failed';
+let groupState: 'success' | 'denied' | 'failed' = 'failed';
+let periods: TeacherHabilitationPeriod[] = [];
+let periodState: 'success' | 'denied' | 'failed' = 'failed';
+let previousOffset: number | null = null;
+let nextOffset: number | null = null;
+let selectedTeacher = '';
+let selectedContext = '';
+try {
+	teacherPagination = parseCatalogPagination(search, 'teacher');
+	contextPagination = parseCatalogPagination(search, 'context');
+	subjectPagination = parseCatalogPagination(search, 'subject');
+	groupPagination = parseCatalogPagination(search, 'group');
+	selectedTeacher = search.has('draft_teacher_id')
+		? parseCatalogSelection(search, 'draft_teacher_id')
+		: parseCatalogSelection(search, 'teacher_id');
+	selectedContext = search.has('draft_context')
+		? parseContextSelection(search, 'draft_context')
+		: parseContextSelection(search, 'context');
+} catch (error) {
+	queryError ||= error instanceof Error ? error.message : 'Revisá los parámetros de paginación del catálogo.';
+}
+try {
+	const [teacherResult, contextResult, subjectResult, groupResult] = await Promise.all([
+		listTeacherProfiles(teacherPagination, Astro.cookies),
+		listLinkedSubjectGroups(contextPagination, Astro.cookies),
+		listSubjects(subjectPagination, Astro.cookies),
+		listGroups(groupPagination, Astro.cookies),
+	]);
+	teacherState = teacherResult.state;
+	contextState = contextResult.state;
+	subjectState = subjectResult.state;
+	groupState = groupResult.state;
+	if (teacherResult.state === 'success') teachers = teacherResult.page.items;
+	if (contextResult.state === 'success') contexts = contextResult.page.items;
+	if (subjectResult.state === 'success') subjects = subjectResult.page.items;
+	if (groupResult.state === 'success') groups = groupResult.page.items;
+	if (!queryError) {
+		const result = await listTeacherHabilitations({ limit, offset }, filter, Astro.cookies);
+		periodState = result.state;
+		if (result.state === 'success') {
+			periods = result.page.items;
+			({ previousOffset, nextOffset } = teacherHabilitationNavigation({ limit, offset, itemsLength: periods.length }));
+		}
+	}
+} catch {
+	return Astro.redirect(returnTo);
+}
+
+const activationData = activationResult?.data as { success?: boolean; error?: string; period?: TeacherHabilitationPeriod } | undefined;
+const revocationData = revocationResult?.data as { success?: boolean; error?: string; id?: string; period?: TeacherHabilitationPeriod } | undefined;
+if (activationData?.period) {
+	selectedTeacher = activationData.period.teacher_id;
+	selectedContext = `${activationData.period.subject_id}:${activationData.period.academic_group_id}`;
+} else if (activationResult?.error || (activationData && !activationData.success)) {
+	try {
+		const submitted = await Astro.request.clone().formData();
+		const teacherValue = submitted.get('teacher_id');
+		const contextValue = submitted.get('context');
+		if (typeof teacherValue === 'string') selectedTeacher = teacherValue;
+		if (typeof contextValue === 'string') selectedContext = contextValue;
+	} catch { /* Keep the available catalog selection if framework input cannot be recovered. */ }
+}
+
+const paramsFor = (changes: Record<string, string> = {}) => {
+	const params = new URLSearchParams({ limit: String(limit), offset: String(offset), teacher_limit: String(teacherPagination.limit), teacher_offset: String(teacherPagination.offset), context_limit: String(contextPagination.limit), context_offset: String(contextPagination.offset), subject_limit: String(subjectPagination.limit), subject_offset: String(subjectPagination.offset), group_limit: String(groupPagination.limit), group_offset: String(groupPagination.offset) });
+	if (filter.teacherId) params.set('teacher_id', filter.teacherId);
+	if (filter.subjectId) params.set('subject_id', filter.subjectId);
+	if (filter.academicGroupId) params.set('academic_group_id', filter.academicGroupId);
+	if (filter.status) params.set('status', filter.status);
+	if (selectedTeacher) params.set('draft_teacher_id', selectedTeacher);
+	if (selectedContext) params.set('draft_context', selectedContext);
+	for (const [key, value] of Object.entries(changes)) params.set(key, value);
+	return `/teacher-habilitations?${params}`;
+};
+const teacherNavigation = academicPaginationNavigation({ ...teacherPagination, itemsLength: teachers.length });
+const contextNavigation = academicPaginationNavigation({ ...contextPagination, itemsLength: contexts.length });
+const subjectNavigation = academicPaginationNavigation({ ...subjectPagination, itemsLength: subjects.length });
+const groupNavigation = academicPaginationNavigation({ ...groupPagination, itemsLength: groups.length });
+const teacherLabel = (id: string) => {
+	const found = teachers.find((teacher) => teacher.id === id);
+	return found ? `${found.nombres} ${found.apellidos}` : 'Perfil fuera de esta página';
+};
+const subjectLabel = (id: string) => subjects.find((subject) => subject.id === id)?.name ?? 'Asignatura sin etiqueta disponible';
+const groupLabel = (id: string) => {
+	const found = groups.find((group) => group.id === id);
+	return found ? `${found.academic_year} · período ${found.curriculum_semester} · ${found.name}` : 'Grupo sin etiqueta disponible';
+};
+const contextValue = (item: LinkedSubjectGroup) => `${item.subject_id}:${item.academic_group_id}`;
+const contextLabel = (subjectId: string, groupId: string) => `${subjectLabel(subjectId)} — ${groupLabel(groupId)} (${subjectId} / ${groupId})`;
+---
+
+<Layout>
+	<main aria-labelledby="habilitation-title">
+		<header class="intro">
+			<p class="eyebrow">Gestión / Accesos académicos</p>
+			<h1 id="habilitation-title">Habilitaciones docentes</h1>
+			<p>Activá períodos de acceso para un perfil docente y un contexto vinculado. Cada activación crea un período histórico nuevo.</p>
+		</header>
+
+		<form class="habilitation-form" method="POST" action={actions.activateTeacherHabilitation}>
+		<section class="panel activation" aria-labelledby="activation-title">
+			<h2 id="activation-title">Activar habilitación</h2>
+			<p class="hint">La lectura de perfiles, contextos y períodos depende de permisos independientes. La autorización de escritura se verifica en el servidor; no se deduce del rol ni de estos catálogos.</p>
+			{teacherState === 'denied' && <p class="notice error" role="status">No tenés permiso de lectura para perfiles docentes. La activación requiere seleccionar un perfil del catálogo.</p>}
+			{contextState === 'denied' && <p class="notice error" role="status">No tenés permiso de lectura para contextos vinculados. No se puede seleccionar un contexto para activar.</p>}
+			{teacherState === 'failed' && <p class="notice error" role="status">No se pudo consultar el catálogo de perfiles docentes.</p>}
+			{contextState === 'failed' && <p class="notice error" role="status">No se pudo consultar el catálogo de contextos vinculados.</p>}
+			{activationData?.success && <p class="notice success" role="status">Habilitación activada para {teacherLabel(activationData.period!.teacher_id)}. Período: <code>{activationData.period!.id}</code>.</p>}
+			{activationData && !activationData.success && <p class="notice error" role="alert">{activationData.error}</p>}
+			{activationResult?.error && <p class="notice error" role="alert">{activationResult.error.message}</p>}
+			<div class="activation-fields">
+				<div class="field">
+					<label for="teacher-profile">Perfil docente</label>
+					<select id="teacher-profile" name="teacher_id" required disabled={teacherState !== 'success' || teachers.length === 0}>
+						<option value="">Elegí un perfil docente…</option>
+						{teachers.map((teacher) => <option value={teacher.id} selected={selectedTeacher === teacher.id}>{teacher.nombres} {teacher.apellidos} — {teacher.id}</option>)}
+						{selectedTeacher && !teachers.some((teacher) => teacher.id === selectedTeacher) && <option value={selectedTeacher} selected>Perfil seleccionado fuera de esta página — {selectedTeacher}</option>}
+					</select>
+				</div>
+				<div class="field">
+					<label for="teacher-context">Asignatura y grupo vinculados</label>
+					<select id="teacher-context" name="context" required disabled={contextState !== 'success' || contexts.length === 0}>
+						<option value="">Elegí un contexto vinculado…</option>
+						{contexts.map((item) => <option value={contextValue(item)} selected={selectedContext === contextValue(item)}>{contextLabel(item.subject_id, item.academic_group_id)}</option>)}
+						{selectedContext && !contexts.some((item) => contextValue(item) === selectedContext) && <option value={selectedContext} selected>Contexto seleccionado fuera de esta página — {selectedContext}</option>}
+					</select>
+				</div>
+			</div>
+			<button class="activate-button" type="submit" disabled={teacherState !== 'success' || contextState !== 'success' || teachers.length === 0 || contexts.length === 0}>Activar período</button>
+			<input type="hidden" name="limit" value={limit} />
+			<input type="hidden" name="offset" value={offset} />
+			<input type="hidden" name="teacher_limit" value={teacherPagination.limit} />
+			<input type="hidden" name="teacher_offset" value={teacherPagination.offset} />
+			<input type="hidden" name="context_limit" value={contextPagination.limit} />
+			<input type="hidden" name="context_offset" value={contextPagination.offset} />
+			<input type="hidden" name="subject_limit" value={subjectPagination.limit} />
+			<input type="hidden" name="subject_offset" value={subjectPagination.offset} />
+			<input type="hidden" name="group_limit" value={groupPagination.limit} />
+			<input type="hidden" name="group_offset" value={groupPagination.offset} />
+			{teacherState === 'success' && teacherNavigation.previousOffset !== null && <button type="submit" formmethod="GET" formaction="/teacher-habilitations" formnovalidate name="teacher_page" value="previous">Perfiles anteriores</button>}
+			{teacherState === 'success' && teacherNavigation.nextOffset !== null && <button type="submit" formmethod="GET" formaction="/teacher-habilitations" formnovalidate name="teacher_page" value="next">Más perfiles</button>}
+			{contextState === 'success' && contextNavigation.previousOffset !== null && <button type="submit" formmethod="GET" formaction="/teacher-habilitations" formnovalidate name="context_page" value="previous">Contextos anteriores</button>}
+			{contextState === 'success' && contextNavigation.nextOffset !== null && <button type="submit" formmethod="GET" formaction="/teacher-habilitations" formnovalidate name="context_page" value="next">Más contextos</button>}
+		</section>
+
+		<section class="panel filters" aria-labelledby="filter-title">
+			<h2 id="filter-title">Consultar períodos</h2>
+			{queryError && <p class="notice error" role="alert">{queryError} <a href="/teacher-habilitations">Volver a los valores iniciales</a></p>}
+			<div class="filter-fields">
+				<label for="filter-teacher">Perfil</label>
+				<select id="filter-teacher" name="filter_teacher_id"><option value="">Todos los perfiles</option>{teachers.map((teacher) => <option value={teacher.id} selected={filter.teacherId === teacher.id}>{teacher.nombres} {teacher.apellidos} — {teacher.id}</option>)}{filter.teacherId && !teachers.some((teacher) => teacher.id === filter.teacherId) && <option value={filter.teacherId} selected>Perfil seleccionado fuera de esta página — {filter.teacherId}</option>}</select>
+				<label for="filter-subject">Asignatura</label>
+				<select id="filter-subject" name="filter_subject_id"><option value="">Todas las asignaturas</option>{subjects.map((subject) => <option value={subject.id} selected={filter.subjectId === subject.id}>{subject.name} — {subject.id}</option>)}{filter.subjectId && !subjects.some((subject) => subject.id === filter.subjectId) && <option value={filter.subjectId} selected>Asignatura seleccionada fuera de esta página — {filter.subjectId}</option>}</select>
+				<label for="filter-group">Grupo académico</label>
+				<select id="filter-group" name="filter_academic_group_id"><option value="">Todos los grupos</option>{groups.map((group) => <option value={group.id} selected={filter.academicGroupId === group.id}>{group.academic_year} · período {group.curriculum_semester} · {group.name} — {group.id}</option>)}{filter.academicGroupId && !groups.some((group) => group.id === filter.academicGroupId) && <option value={filter.academicGroupId} selected>Grupo seleccionado fuera de esta página — {filter.academicGroupId}</option>}</select>
+				<label for="filter-status">Estado</label>
+				<select id="filter-status" name="filter_status"><option value="">Activos y revocados</option><option value="active" selected={filter.status === 'active'}>Activos</option><option value="revoked" selected={filter.status === 'revoked'}>Revocados</option></select>
+				<button type="submit" formmethod="GET" formaction="/teacher-habilitations" formnovalidate name="apply_filter" value="yes">Aplicar filtros</button>
+				{subjectState === 'success' && subjectNavigation.previousOffset !== null && <button type="submit" formmethod="GET" formaction="/teacher-habilitations" formnovalidate name="subject_page" value="previous">Asignaturas anteriores</button>}
+				{subjectState === 'success' && subjectNavigation.nextOffset !== null && <button type="submit" formmethod="GET" formaction="/teacher-habilitations" formnovalidate name="subject_page" value="next">Más asignaturas</button>}
+				{groupState === 'success' && groupNavigation.previousOffset !== null && <button type="submit" formmethod="GET" formaction="/teacher-habilitations" formnovalidate name="group_page" value="previous">Grupos anteriores</button>}
+				{groupState === 'success' && groupNavigation.nextOffset !== null && <button type="submit" formmethod="GET" formaction="/teacher-habilitations" formnovalidate name="group_page" value="next">Más grupos</button>}
+			</div>
+			{subjectState === 'denied' && <p class="hint" role="status">Sin permiso para leer asignaturas; los UUID seguirán visibles sin etiqueta.</p>}
+			{groupState === 'denied' && <p class="hint" role="status">Sin permiso para leer grupos; los UUID seguirán visibles sin etiqueta.</p>}
+		</section>
+		</form>
+
+		<section class="periods" aria-labelledby="periods-title">
+			<h2 id="periods-title">Períodos registrados</h2>
+			{periodState === 'denied' && <p class="notice error" role="status">No tenés permiso de lectura para consultar períodos de habilitación docente.</p>}
+			{periodState === 'failed' && !queryError && <p class="notice error" role="alert">No se pudieron cargar los períodos. Los filtros seleccionados se mantienen.</p>}
+			{queryError && <p class="notice error" role="status">No se consultaron períodos hasta corregir la búsqueda.</p>}
+			{periodState === 'success' && periods.length === 0 && <p class="notice" role="status">No hay períodos en esta página.</p>}
+			{periodState === 'success' && periods.length > 0 && <ul class="period-list">
+				{periods.map((period) => <li class="period">
+					<div class="period-heading"><h3>{period.revoked_at === null ? 'Período activo' : 'Período revocado'}</h3><code>{period.id}</code></div>
+					<dl>
+						<div><dt>Perfil docente</dt><dd>{teacherLabel(period.teacher_id)} — <code>{period.teacher_id}</code></dd></div>
+						<div><dt>Asignatura</dt><dd>{subjectLabel(period.subject_id)} — <code>{period.subject_id}</code></dd></div>
+						<div><dt>Grupo académico</dt><dd>{groupLabel(period.academic_group_id)} — <code>{period.academic_group_id}</code></dd></div>
+						<div><dt>Activado</dt><dd><time datetime={period.activated_at}>{period.activated_at}</time> · actor <code>{period.activated_by}</code></dd></div>
+						{period.revoked_at && <div><dt>Revocado</dt><dd><time datetime={period.revoked_at}>{period.revoked_at}</time> · actor <code>{period.revoked_by}</code></dd></div>}
+					</dl>
+					{period.revoked_at === null && <details class="revoke">
+						<summary>Revocar este período</summary>
+						<p>La revocación quita el acceso docente asociado a este período. No revoca períodos estudiantiles ni cierra asignaciones o documentos clínicos. La operación no se puede deshacer; una nueva habilitación crea otro período histórico.</p>
+						<form method="POST" action={actions.revokeTeacherHabilitation}>
+							<input type="hidden" name="id" value={period.id} />
+							<label class="confirm"><input type="checkbox" name="confirm" value="yes" required /> Confirmo que quiero revocar este período.</label>
+							<button type="submit" class="danger">Confirmar revocación</button>
+						</form>
+					</details>}
+				</li>)}
+			</ul>}
+			{revocationData?.success && <p class="notice success" role="status">Período revocado: <code>{revocationData.period!.id}</code>. Actor y hora registrados por el servidor.</p>}
+			{revocationData && !revocationData.success && <p class="notice error" role="alert">{revocationData.error}</p>}
+			{revocationResult?.error && <p class="notice error" role="alert">{revocationResult.error.message}</p>}
+			{periodState === 'success' && (previousOffset !== null || nextOffset !== null) && <nav class="pagination" aria-label="Paginación de períodos">
+				{previousOffset !== null ? <a rel="prev" href={paramsFor({ offset: String(previousOffset) })}>Página anterior</a> : <span aria-disabled="true">Página anterior</span>}
+				{nextOffset !== null ? <a rel="next" href={paramsFor({ offset: String(nextOffset) })}>Página siguiente</a> : <span aria-disabled="true">Página siguiente</span>}
+			</nav>}
+		</section>
+	</main>
+</Layout>
+
+<style>
+	main { max-width: 1180px; min-width: 0; margin: 0 auto; }
+	.intro { margin-bottom: 2rem; }
+	.intro p { margin: 0.75rem 0; color: var(--muted); }
+	.eyebrow { font: 0.65rem/1.6 Consolas, monospace; letter-spacing: 0.1em; text-transform: uppercase; }
+	h1 { margin: 0.5rem 0; font: 400 clamp(2rem, 3vw, 2.75rem)/1.15 var(--serif); }
+	.panel, .periods { margin-bottom: 2rem; padding: clamp(1rem, 3vw, 1.75rem); border: 1px solid var(--line); border-top: 5px solid var(--sage); border-radius: 0 12px 12px 12px; background: var(--paper); }
+	h2 { margin: 0 0 1rem; font: 1.45rem/1.3 var(--serif); }
+	.hint { color: var(--muted); }
+	form { display: grid; grid-template-columns: minmax(8rem, 1fr) minmax(0, 2fr); align-items: center; gap: 0.75rem; }
+	.habilitation-form { display: block; }
+	.activation-fields { display: grid; gap: 1rem; max-width: 48rem; }
+	.filter-fields { display: grid; grid-template-columns: minmax(8rem, 1fr) minmax(0, 2fr); align-items: center; gap: 0.75rem; }
+	label { font-weight: 600; }
+	select, input:not([type="checkbox"]) { width: 100%; min-width: 0; min-height: 44px; padding: 0.6rem 0.75rem; border: 1px solid var(--field-line); border-radius: 6px; background: var(--field); color: var(--ink); font: inherit; }
+	input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible, summary:focus-visible { outline: 3px solid var(--sage-deep); outline-offset: 3px; }
+	button, .pagination a, .catalog-pages a { width: fit-content; padding: 0.65rem 1rem; border: 0; border-radius: 6px; background: var(--rust); color: var(--field); font: inherit; font-weight: 600; text-decoration: none; cursor: pointer; }
+	button:hover, .pagination a:hover, .catalog-pages a:hover { background: var(--rust-deep); }
+	button:disabled { opacity: 0.55; cursor: not-allowed; }
+	.activation button { grid-column: 2; }
+	.catalog-pages, .pagination { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.75rem; margin-top: 1rem; }
+	.notice { padding: 0.9rem 1rem; border-inline-start: 4px solid var(--sage); border-radius: 0 6px 6px 0; background: var(--sage-soft); overflow-wrap: anywhere; }
+	.error, .danger { border-inline-start-color: var(--rust); }
+	.success { border-inline-start-color: var(--sage-deep); }
+	.period-list { display: grid; gap: 1rem; margin: 0; padding: 0; list-style: none; }
+	.period { min-width: 0; padding: 1.25rem; border: 1px solid var(--line); border-radius: 8px; background: var(--field); }
+	.period-heading { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.6rem; align-items: baseline; }
+	h3 { margin: 0; font: 1.2rem/1.3 var(--serif); }
+	dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.9rem; margin: 1rem 0; }
+	dl div { min-width: 0; }
+	dt { color: var(--muted); font-size: 0.85rem; font-weight: 600; }
+	dd { margin: 0.25rem 0 0; overflow-wrap: anywhere; }
+	code { color: var(--ink); font: 0.85rem/1.5 Consolas, monospace; overflow-wrap: anywhere; }
+	.revoke { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+	.revoke summary { width: fit-content; color: var(--rust-deep); font-weight: 700; cursor: pointer; }
+	.revoke p { max-width: 60rem; }
+	.revoke form { display: flex; flex-wrap: wrap; gap: 1rem; }
+	.confirm { display: flex; align-items: center; gap: 0.5rem; }
+	.confirm input { width: 1.15rem; height: 1.15rem; }
+	.danger { background: var(--rust-deep); }
+	@media (max-width: 650px) {
+		.filter-fields { grid-template-columns: minmax(0, 1fr); }
+		dl { grid-template-columns: minmax(0, 1fr); }
+		.pagination { flex-direction: column; }
+		.pagination a, .pagination span { text-align: center; }
+	}
+</style>

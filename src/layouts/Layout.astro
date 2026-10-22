@@ -17,12 +17,14 @@ const pageTitles: Record<string, string> = {
 	'/auth/login': 'Iniciar sesión', '/auth/forgot-password': 'Recuperar contraseña',
 	'/auth/reset-password': 'Restablecer contraseña',
 	'/subjects': 'Asignaturas', '/groups': 'Grupos académicos', '/subject-groups': 'Asignaturas y grupos',
+	'/teacher-habilitations': 'Habilitaciones docentes',
 };
 const pageTitle = pageTitles[currentPath] ?? 'Salud';
 const academicLinks = isLoggedIn ? [
 	{ href: '/subjects', label: 'Asignaturas' },
 	{ href: '/groups', label: 'Grupos académicos' },
 	{ href: '/subject-groups', label: 'Asignaturas y grupos' },
+	{ href: '/teacher-habilitations', label: 'Habilitaciones docentes' },
 ] : [];
 ---
 
