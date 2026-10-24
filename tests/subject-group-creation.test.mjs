@@ -67,6 +67,7 @@ async function evaluate(path, options = {}) {
 					'../pods/paciente/actions/patients': ['handleCreatePatient'],
 					'../pods/teacher-habilitation/actions': ['activateTeacherHabilitation', 'revokeTeacherHabilitation'],
 					'../pods/student-habilitation/actions': ['activateStudentHabilitation', 'revokeStudentHabilitation'],
+					'../pods/kinesiology-evaluation/actions/evaluations': ['handleCreateKinesiologyEvaluation', 'handleUpdateKinesiologyEvaluation'],
 				};
 				return new vm.SyntheticModule(exports[specifier], function () {
 					for (const name of exports[specifier]) this.setExport(name, () => undefined);

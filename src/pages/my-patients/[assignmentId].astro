@@ -1,0 +1,145 @@
+---
+export const prerender = false;
+import { actions } from 'astro:actions';
+import Layout from '../../layouts/Layout.astro';
+import { ApiError } from '../../shared/apiClient';
+import { listAssignedPatients, parseAssignmentPagination } from '../../pods/patient-assignment/api';
+import { actionHrefWithContext, listEvaluations, type Evaluation } from '../../pods/kinesiology-evaluation/api';
+
+const assignmentId = Astro.params.assignmentId ?? '';
+const decimalId = /^[1-9]\d{0,18}$/.test(assignmentId) && BigInt(assignmentId) <= 9223372036854775807n;
+const query = Astro.url.searchParams;
+let pagination = { limit: 50, offset: 0 };
+let assignment: Awaited<ReturnType<typeof listAssignedPatients>>['items'][number] | null = null;
+let drafts: Evaluation[] = [];
+let unavailable = false;
+let loadError = '';
+const result = Astro.getActionResult(actions.createKinesiologyEvaluation);
+if (result?.data?.success === false && /sesión venció/i.test(result.data.error)) {
+	return Astro.redirect(`/auth/login?returnTo=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`);
+}
+try {
+	pagination = parseAssignmentPagination(query);
+	if (!decimalId) unavailable = true;
+	else {
+		const page = await listAssignedPatients(pagination, Astro.cookies);
+		assignment = page.items.find((item) => item.id === assignmentId && item.ended_at === null) ?? null;
+		if (!assignment) unavailable = true;
+		else drafts = await listEvaluations({
+			patient_id: assignment.patient_id,
+			subject_id: assignment.subject_id,
+			academic_group_id: assignment.academic_group_id,
+		}, Astro.cookies);
+	}
+} catch (error) {
+	if (error instanceof ApiError && error.status === 401) {
+		return Astro.redirect(`/auth/login?returnTo=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`);
+	}
+	loadError = 'No se pudieron cargar las asignaciones y sus borradores. No se muestra una lista vacía porque el resultado no está disponible.';
+}
+if (result?.data?.success && assignment && decimalId) {
+	return Astro.redirect(`/kinesiology-evaluations/${result.data.evaluation.id}?assignment_id=${encodeURIComponent(assignment.id)}&limit=${pagination.limit}&offset=${pagination.offset}`);
+}
+const createHref = actionHrefWithContext(actions.createKinesiologyEvaluation.toString(), {
+	assignment_id: assignmentId,
+	limit: String(pagination.limit),
+	offset: String(pagination.offset),
+}, Astro.url.href);
+---
+<Layout>
+	<main class="clinical-page" aria-labelledby="title">
+		<p class="eyebrow"><a href="/my-patients">Mis pacientes asignados</a> / Ficha kinésica inicial</p>
+		{unavailable ? <section class="notice" role="status">
+			<h1 id="title">Asignación no disponible</h1>
+			<p>No se encontró esa asignación en esta página. Volvé a la lista para elegir el contexto vigente.</p>
+			<a class="button secondary" href="/my-patients">Volver a mis pacientes</a>
+		</section> : loadError ? <section class="notice error" role="alert">
+			<h1 id="title">No se pudo cargar la ficha</h1>
+			<p>{loadError}</p>
+			<a href="/my-patients">Volver a mis pacientes</a>
+		</section> : assignment ? <>
+			<header class="intro">
+				<div>
+					<h1 id="title">{assignment.apellidos}, {assignment.nombres}</h1>
+					<p>Documento: {assignment.documento}</p>
+					<p>Asignatura · <span class="identifier">{assignment.subject_id}</span><br />Grupo académico · <span class="identifier">{assignment.academic_group_id}</span></p>
+				</div>
+				<form method="POST" action={createHref} id="new-draft">
+					<input type="hidden" name="patient_id" value={assignment.patient_id} />
+					<input type="hidden" name="subject_id" value={assignment.subject_id} />
+					<input type="hidden" name="academic_group_id" value={assignment.academic_group_id} />
+					<input type="hidden" name="assignment_id" value={assignment.id} />
+					<input type="hidden" name="limit" value={pagination.limit} />
+					<input type="hidden" name="offset" value={pagination.offset} />
+					<input type="hidden" name="content" value="{}" />
+					<button class="button" type="submit">Crear nuevo borrador</button>
+					<p class="hint">Cada creación inicia un borrador nuevo y vacío.</p>
+				</form>
+			</header>
+			{result?.data?.success === false && <p class="error" role="alert">{result.data.error}</p>}
+			<section aria-labelledby="drafts-title">
+				<h2 id="drafts-title">Borradores de ficha inicial</h2>
+				{drafts.length ? <ul class="draft-list">{drafts.map((draft) => <li>
+					<a href={`/kinesiology-evaluations/${draft.id}?assignment_id=${assignment.id}&limit=${pagination.limit}&offset=${pagination.offset}`}>
+						Abrir borrador de ficha · actualizado {new Date(draft.updated_at).toLocaleDateString('es')}
+					</a>
+				</li>)}</ul> : <p>Todavía no hay borradores para esta asignación.</p>}
+			</section>
+		</> : null}
+	</main>
+	<script>
+		const form = document.querySelector<HTMLFormElement>('#new-draft');
+		form?.addEventListener('submit', () => {
+			const button = form.querySelector<HTMLButtonElement>('button[type="submit"]');
+			if (button) {
+				button.disabled = true;
+				button.textContent = 'Creando borrador…';
+			}
+		});
+	</script>
+</Layout>
+
+<style>
+	.clinical-page {
+		max-width: 58rem;
+		margin: 0 auto;
+		padding: 1.5rem 0 3rem;
+		color: var(--ink);
+	}
+	.eyebrow a { color: var(--rust-deep); text-decoration: underline; }
+	.intro {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 2rem;
+		margin: 1.25rem 0;
+		padding: 1.5rem;
+		background: var(--paper);
+		border: 1px solid var(--line);
+		border-radius: 0.75rem;
+	}
+	.intro p { line-height: 1.6; }
+	.identifier { overflow-wrap: anywhere; }
+	.button {
+		display: inline-block;
+		padding: 0.75rem 1rem;
+		border: 1px solid var(--rust-deep);
+		border-radius: 0.4rem;
+		background: var(--rust);
+		color: white;
+		font: inherit;
+		font-weight: 700;
+		cursor: pointer;
+	}
+	.button:disabled { opacity: 0.65; cursor: wait; }
+	.button.secondary { background: var(--sage-soft); color: var(--ink); border-color: var(--sage-deep); text-decoration: none; }
+	.hint { color: var(--muted); font-size: 0.85rem; }
+	.draft-list { padding: 0; list-style: none; }
+	.draft-list li { padding: 1rem; border-bottom: 1px solid var(--line); }
+	.draft-list a { color: var(--rust-deep); font-weight: 600; text-decoration: underline; text-underline-offset: 0.15em; }
+	.notice, .error { padding: 1rem; border: 1px solid var(--line); border-radius: 0.65rem; background: var(--paper); }
+	.error { border-color: var(--rust-line); background: var(--rust-soft); }
+	@media (max-width: 700px) {
+		.intro { align-items: stretch; flex-direction: column; gap: 1rem; }
+	}
+</style>

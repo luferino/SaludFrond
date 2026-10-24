@@ -110,6 +110,7 @@ async function evaluateRegistry() {
 		'../pods/paciente/actions/patients': ['handleCreatePatient'],
 		'../pods/teacher-habilitation/actions': ['activateTeacherHabilitation', 'revokeTeacherHabilitation'],
 		'../pods/student-habilitation/actions': ['activateStudentHabilitation', 'revokeStudentHabilitation'],
+		'../pods/kinesiology-evaluation/actions/evaluations': ['handleCreateKinesiologyEvaluation', 'handleUpdateKinesiologyEvaluation'],
 	};
 	const sandbox = vm.createContext({});
 	const code = await source(registryPath);

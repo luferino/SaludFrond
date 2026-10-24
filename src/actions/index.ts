@@ -15,6 +15,7 @@ import { handleCreateTeacher } from '../pods/teacher/actions/teachers';
 import { handleCreatePatient } from '../pods/paciente/actions/patients';
 import { activateTeacherHabilitation, revokeTeacherHabilitation } from '../pods/teacher-habilitation/actions';
 import { activateStudentHabilitation, revokeStudentHabilitation } from '../pods/student-habilitation/actions';
+import { handleCreateKinesiologyEvaluation, handleUpdateKinesiologyEvaluation } from '../pods/kinesiology-evaluation/actions/evaluations';
 
 export const server = {
 	activateTeacherHabilitation,
@@ -110,6 +111,31 @@ export const server = {
 			celular: z.string().optional(),
 		}),
 		handler: handleCreateTeacher,
+	}),
+	createKinesiologyEvaluation: defineAction({
+		accept: 'form',
+		input: z.object({
+			patient_id: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i),
+			subject_id: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i),
+			academic_group_id: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i),
+			assignment_id: z.string(), limit: z.string(), offset: z.string(), content: z.any(),
+		}).strict(),
+		handler: handleCreateKinesiologyEvaluation,
+	}),
+	updateKinesiologyEvaluation: defineAction({
+		accept: 'form',
+		input: z.object({
+			id: z.string().regex(/^[1-9]\d{0,18}$/), assignment_id: z.string(), limit: z.string(), offset: z.string(),
+			admission_date: z.string().optional(), admission_status: z.string().optional(), occupation: z.string().optional(),
+			referring_physician: z.string().optional(), 'antecedent-hta': z.string().optional(),
+			'antecedent-dbt': z.string().optional(), 'antecedent-diu': z.string().optional(),
+			'antecedent-sedentary_lifestyle': z.string().optional(), 'antecedent-pacemaker': z.string().optional(),
+			'antecedent-other': z.string().optional(), antecedents_keys: z.string().optional(), illness_history: z.string().optional(),
+			medical_diagnosis: z.string().optional(), kinesiology_diagnosis: z.string().optional(),
+			objectives: z.string().optional(), proposed_treatment: z.string().optional(),
+		}).catchall(z.string()),
+
+		handler: handleUpdateKinesiologyEvaluation,
 	}),
 	createPatient: defineAction({
 		accept: 'form',

@@ -1,0 +1,261 @@
+---
+export const prerender = false;
+import { actions, isInputError } from 'astro:actions';
+import Layout from '../../layouts/Layout.astro';
+import { ApiError } from '../../shared/apiClient';
+import { listAssignedPatients, parseAssignmentPagination } from '../../pods/patient-assignment/api';
+import { actionHrefWithContext, antecedentOptionState, getEvaluation, type Evaluation, type EvaluationContent } from '../../pods/kinesiology-evaluation/api';
+import { rawEvaluationContentFromForm } from '../../pods/kinesiology-evaluation/actions/evaluations';
+import { decodeJwt } from '../../shared/jwt';
+
+const id = Astro.params.id ?? '';
+const search = Astro.url.searchParams;
+const assignmentParams = search.getAll('assignment_id');
+const assignmentId = assignmentParams.length === 1 ? assignmentParams[0] : '';
+let limit = 50;
+let offset = 0;
+let evaluation: Evaluation | null = null;
+let patientLabel = '';
+let eligible = false;
+let unavailable = false;
+let loadError = '';
+const result = Astro.getActionResult(actions.updateKinesiologyEvaluation);
+let retainedContent: EvaluationContent | undefined = result?.data?.success === false ? result.data.content : undefined;
+let errorText = result?.data?.success === false ? result.data.error : '';
+if (result?.error) {
+	errorText = isInputError(result.error) ? 'Revisá los campos del formulario. Conservamos los valores enviados.' : result.error.message;
+	if (isInputError(result.error)) {
+		try {
+			const submitted = Object.fromEntries((await Astro.request.clone().formData()).entries());
+			retainedContent = rawEvaluationContentFromForm(submitted);
+		} catch { /* Some framework validation failures do not expose the submitted form body. */ }
+	}
+}
+if (/sesión venció/i.test(errorText)) {
+	return Astro.redirect(`/auth/login?returnTo=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`);
+}
+try {
+	const pagination = parseAssignmentPagination(search);
+	limit = pagination.limit;
+	offset = pagination.offset;
+	if (!/^[1-9]\d{0,18}$/.test(assignmentId) || BigInt(assignmentId) > 9223372036854775807n
+		|| !/^[1-9]\d{0,18}$/.test(id) || BigInt(id) > 9223372036854775807n) {
+		unavailable = true;
+	} else {
+		const page = await listAssignedPatients(pagination, Astro.cookies);
+		const assignment = page.items.find((item) => item.id === assignmentId && item.ended_at === null);
+		if (!assignment) unavailable = true;
+		else {
+			const record = await getEvaluation(id, Astro.cookies);
+			if (record.id !== id || record.patient_id !== assignment.patient_id
+				|| record.origin_subject_id !== assignment.subject_id || record.origin_group_id !== assignment.academic_group_id) {
+				unavailable = true;
+			} else {
+				evaluation = record;
+				patientLabel = record.patient
+					? `${record.patient.apellidos}, ${record.patient.nombres} · ${record.patient.documento}`
+					: 'Datos del paciente no disponibles';
+				const token = Astro.cookies.get('session')?.value;
+				const actor = token ? decodeJwt(token) : null;
+				const role = actor?.role === 'student' || actor?.role === 'estudiante';
+				const canWrite = Array.isArray(actor?.permissions)
+					&& actor.permissions.includes('kinesiology-evaluations:write');
+				eligible = record.status === 'draft' && actor?.sub === record.author_id && role && canWrite;
+			}
+		}
+	}
+} catch (error) {
+	if (error instanceof ApiError && error.status === 401) {
+		return Astro.redirect(`/auth/login?returnTo=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`);
+	}
+	loadError = 'No se pudo verificar esta ficha. Volvé a la lista antes de intentar otra acción.';
+}
+if (result?.data?.success && evaluation) {
+	return Astro.redirect(`/kinesiology-evaluations/${id}?assignment_id=${encodeURIComponent(assignmentId)}&limit=${limit}&offset=${offset}&saved=1`);
+}
+const contextHref = `/my-patients/${encodeURIComponent(assignmentId)}?limit=${limit}&offset=${offset}`;
+const actionHref = actionHrefWithContext(actions.updateKinesiologyEvaluation.toString(), {
+	assignment_id: assignmentId,
+	limit: String(limit),
+	offset: String(offset),
+}, Astro.url.href);
+const c = retainedContent ?? evaluation?.content ?? {};
+const antecedents = c.antecedents ?? {};
+const antecedentKeys = Object.keys(antecedents).join(',');
+const saved = search.getAll('saved').length === 1 && search.get('saved') === '1';
+const textFields = [
+	['admission_status', 'Estado al ingreso'], ['occupation', 'Ocupación'],
+	['referring_physician', 'Profesional que deriva'], ['illness_history', 'Historia de la enfermedad'],
+	['medical_diagnosis', 'Diagnóstico médico'], ['kinesiology_diagnosis', 'Diagnóstico kinésico'],
+	['objectives', 'Objetivos'], ['proposed_treatment', 'Tratamiento propuesto'],
+] as const;
+---
+<Layout>
+	<main class="clinical-page" aria-labelledby="title">
+		<p class="eyebrow"><a href={contextHref}>Volver a la ficha kinésica inicial</a></p>
+		{unavailable ? <section class="notice" role="status">
+			<h1 id="title">Ficha no disponible</h1>
+			<p>No se pudo confirmar que esta ficha pertenezca a la asignación seleccionada. Volvé a elegir el contexto vigente.</p>
+			<a class="button secondary" href="/my-patients">Volver a mis pacientes</a>
+		</section> : loadError ? <section class="notice error" role="alert">
+			<h1 id="title">No se pudo cargar la ficha</h1>
+			<p>{loadError}</p>
+			<a href={contextHref}>Volver a la asignación</a>
+		</section> : evaluation ? <>
+			<header>
+				<h1 id="title">Ficha kinésica inicial</h1>
+				<p class="patient">Paciente: {patientLabel}</p>
+				<p class="context">Asignatura · <span class="identifier">{evaluation.origin_subject_id}</span><br />Grupo académico · <span class="identifier">{evaluation.origin_group_id}</span></p>
+			</header>
+			{saved && <p class="success" role="status">Borrador guardado.</p>}
+			{errorText && <p class="notice error" role="alert">{errorText}</p>}
+			{!eligible && <p class="notice">Esta ficha se muestra en modo de solo lectura. Solo el autor de un borrador en una asignación vigente puede editarla; el servicio vuelve a comprobar los permisos al guardar.</p>}
+			{eligible && <p class="notice">Evitá editar este borrador al mismo tiempo que otra persona. El guardado reemplaza el contenido completo y no detecta cambios simultáneos.</p>}
+			<form method="POST" action={actionHref} id="evaluation-form">
+				<input type="hidden" name="id" value={evaluation.id} />
+				<input type="hidden" name="assignment_id" value={assignmentId} />
+				<input type="hidden" name="limit" value={limit} />
+				<input type="hidden" name="offset" value={offset} />
+				<input type="hidden" name="antecedents_keys" value={antecedentKeys} />
+				<fieldset disabled={!eligible}>
+					<legend>Datos de admisión</legend>
+					<label>Fecha de ingreso <input name="admission_date" type="date" value={c.admission_date ?? ''} /></label>
+					<label>Estado al ingreso <textarea name="admission_status">{c.admission_status ?? ''}</textarea></label>
+					<label>Ocupación <input name="occupation" value={c.occupation ?? ''} /></label>
+					<label>Profesional que deriva <input name="referring_physician" value={c.referring_physician ?? ''} /></label>
+				</fieldset>
+				<fieldset disabled={!eligible}>
+					<legend>Antecedentes clínicos</legend>
+					{(['hta', 'dbt', 'diu', 'sedentary_lifestyle', 'pacemaker'] as const).map((key) => {
+						const present = Object.hasOwn(antecedents, key);
+						const value = antecedents[key];
+						const selected = antecedentOptionState(value, present);
+						const labels = { hta: 'Hipertensión arterial', dbt: 'Diabetes', diu: 'Dispositivo intrauterino', sedentary_lifestyle: 'Sedentarismo', pacemaker: 'Marcapasos' };
+						return <label>{labels[key]} <select name={`antecedent-${key}`}>
+							<option value="" selected={selected.unrecorded}>Sin registrar</option>
+							<option value="unknown" selected={selected.unknown}>Sin determinar</option>
+							<option value="true" selected={selected.yes}>Sí</option>
+							<option value="false" selected={selected.no}>No</option>
+						</select></label>;
+					})}
+					<label>Otros antecedentes <textarea name="antecedent-other">{antecedents.other ?? ''}</textarea></label>
+				</fieldset>
+				<fieldset disabled={!eligible}>
+					<legend>Historia y evaluación</legend>
+					{(['illness_history', 'medical_diagnosis', 'kinesiology_diagnosis', 'objectives', 'proposed_treatment'] as const).map((key) => {
+						const labels = { illness_history: 'Historia de la enfermedad', medical_diagnosis: 'Diagnóstico médico', kinesiology_diagnosis: 'Diagnóstico kinésico', objectives: 'Objetivos', proposed_treatment: 'Tratamiento propuesto' };
+						return <label>{labels[key]} <textarea name={key}>{c[key] ?? ''}</textarea></label>;
+					})}
+				</fieldset>
+				<fieldset disabled={!eligible}>
+					<legend>Estudios complementarios</legend>
+					<div id="studies">
+						{(c.studies ?? []).map((study, index) => <div class="study-row">
+							<label>Tipo <input name={`study-type-${index}`} value={study.type} /></label>
+							<label>Descripción <textarea name={`study-description-${index}`}>{study.description}</textarea></label>
+							<label>Fecha <input name={`study-date-${index}`} type="date" value={study.date ?? ''} /></label>
+							<button class="remove-study" type="button" aria-label="Quitar estudio">Quitar estudio</button>
+						</div>)}
+					</div>
+					<button id="add-study" class="button secondary" type="button">Agregar estudio</button>
+				</fieldset>
+				{eligible && <button class="button" type="submit">Guardar borrador</button>}
+			</form>
+		</> : <section class="notice error" role="alert">
+			<h1 id="title">No se pudo cargar la ficha</h1>
+			<p>{errorText || 'Volvé a la asignación e intentá nuevamente.'}</p>
+			<a href={contextHref}>Volver a la asignación</a>
+		</section>}
+		{(unavailable || loadError) && retainedContent && <section class="preserved" aria-labelledby="preserved-title">
+			<h2 id="preserved-title">Valores del formulario conservados</h2>
+			{c.admission_date && <p><strong>Fecha de ingreso:</strong> {c.admission_date}</p>}
+			{textFields.map(([key, label]) => c[key] && <p><strong>{label}:</strong> {c[key]}</p>)}
+			{c.antecedents && <p><strong>Antecedentes:</strong> {Object.entries(c.antecedents).map(([key, value]) => `${key}: ${value === null ? 'sin determinar' : value}`).join(' · ')}</p>}
+			{c.studies?.map((study) => <p><strong>{study.type || 'Estudio incompleto'}:</strong> {study.description}{study.date ? ` · ${study.date}` : ''}</p>)}
+		</section>}
+	</main>
+	<script>
+		const studies = document.querySelector<HTMLElement>('#studies');
+		let rowIndex = studies?.querySelectorAll('.study-row').length ?? 0;
+		document.querySelector<HTMLButtonElement>('#add-study')?.addEventListener('click', () => {
+			if (!studies) return;
+			const row = document.createElement('div');
+			row.className = 'study-row';
+			row.innerHTML = `<label>Tipo <input name="study-type-${rowIndex}" /></label><label>Descripción <textarea name="study-description-${rowIndex}"></textarea></label><label>Fecha <input name="study-date-${rowIndex}" type="date" /></label><button class="remove-study" type="button" aria-label="Quitar estudio">Quitar estudio</button>`;
+			studies.append(row);
+			rowIndex++;
+		});
+		studies?.addEventListener('click', (event) => {
+			const target = event.target;
+			if (target instanceof Element && target.closest('.remove-study')) target.closest('.study-row')?.remove();
+		});
+	</script>
+</Layout>
+
+<style>
+	.clinical-page {
+		max-width: 58rem;
+		margin: 0 auto;
+		padding: 1.5rem 0 3rem;
+		color: var(--ink);
+	}
+	.eyebrow a { color: var(--rust-deep); text-decoration: underline; }
+	.patient { font-weight: 700; }
+	.context { line-height: 1.6; }
+	.identifier { overflow-wrap: anywhere; }
+	.notice, .success, .error, .preserved {
+		margin: 1rem 0;
+		padding: 1rem;
+		border: 1px solid var(--line);
+		border-radius: 0.65rem;
+		background: var(--paper);
+	}
+	.error { border-color: var(--rust-line); background: var(--rust-soft); }
+	.success { border-color: var(--sage); background: var(--sage-soft); }
+	fieldset {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 1rem;
+		margin: 1rem 0;
+		padding: 1.25rem;
+		border: 1px solid var(--line);
+		border-radius: 0.75rem;
+		background: var(--paper);
+	}
+	legend { padding: 0 0.5rem; font-weight: 700; }
+	label { display: grid; gap: 0.35rem; font-weight: 600; }
+	input, textarea, select {
+		min-width: 0;
+		padding: 0.65rem;
+		border: 1px solid var(--field-line);
+		border-radius: 0.35rem;
+		background: var(--field);
+		color: var(--ink);
+		font: inherit;
+	}
+	textarea { min-height: 5rem; resize: vertical; }
+	.button {
+		padding: 0.7rem 0.95rem;
+		border: 1px solid var(--rust-deep);
+		border-radius: 0.4rem;
+		background: var(--rust);
+		color: white;
+		font: inherit;
+		font-weight: 700;
+		cursor: pointer;
+	}
+	.button.secondary { border-color: var(--sage-deep); background: var(--sage-soft); color: var(--ink); }
+	.study-row {
+		display: grid;
+		grid-template-columns: minmax(8rem, 1fr) minmax(12rem, 2fr) minmax(9rem, 1fr) auto;
+		align-items: end;
+		gap: 0.75rem;
+		padding: 1rem 0;
+		border-bottom: 1px solid var(--line);
+	}
+	.remove-study { padding: 0.6rem; border: 1px solid var(--line); border-radius: 0.35rem; background: var(--sage-soft); color: var(--ink); cursor: pointer; }
+	@media (max-width: 760px) {
+		fieldset { grid-template-columns: minmax(0, 1fr); }
+		.study-row { grid-template-columns: minmax(0, 1fr); }
+	}
+</style>
