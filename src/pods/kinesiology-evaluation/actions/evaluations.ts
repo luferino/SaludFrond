@@ -41,10 +41,8 @@ export function rawEvaluationContentFromForm(input: Record<string, unknown>): Ev
 	for (const key of ANTECEDENTS) {
 		const value = input[`antecedent-${key}`];
 		if (!Object.hasOwn(input, `antecedent-${key}`)) continue;
-		if (value === '' || value === undefined) {
-			if (originalAntecedents.has(key)) rawAntecedents[key] = null;
-			continue;
-		}
+		// "Sin registrar" omits the key; explicit null comes only from "Sin determinar".
+		if (value === '' || value === undefined) continue;
 		rawAntecedents[key] = antecedent(value);
 	}
 	if (Object.hasOwn(input, 'antecedent-other') && (originalAntecedents.has('other')

@@ -278,6 +278,16 @@ test('native optional fields normalized to undefined still permit an empty draft
  assert.equal(result.writes.length, 0);
 });
 
+test('choosing unrecorded for a previously recorded antecedent removes it instead of saving null', async () => {
+ const input = { ...nativeFormInput(), 'antecedent-hta': '', 'antecedent-dbt': 'unknown', 'antecedent-diu': '', 'antecedent-sedentary_lifestyle': '', 'antecedent-pacemaker': '', antecedents_keys: 'hta,dbt' };
+ const result = await evaluate(actionPath);
+ const saved = await result.mod.namespace.handleUpdateKinesiologyEvaluation(input, { cookies: result.cookies });
+ assert.equal(saved.success, true);
+ const patches = result.requests.filter((request) => request.method === 'PATCH');
+ assert.equal(patches.length, 1);
+ assert.deepEqual(JSON.parse(patches[0].body).content.antecedents, { dbt: null });
+});
+
 test('native update preserves partial rows on validation errors and permits empty drafts', async () => {
  const partial = nativeFormInput();
  partial['study-description-0'] = '';
