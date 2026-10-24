@@ -3,6 +3,7 @@ export const prerender = false;
 
 import { actions } from 'astro:actions';
 import Layout from '../layouts/Layout.astro';
+import '../styles/academic-panels.css';
 import { listGroups } from '../pods/group/api';
 import type { GroupSummary } from '../pods/group/api';
 import { listSubjects } from '../pods/subject/api';
@@ -144,7 +145,7 @@ const contextLabel = (subjectId: string, groupId: string) => `${subjectLabel(sub
 ---
 
 <Layout>
-	<main aria-labelledby="habilitation-title">
+	<main class="academic-page" aria-labelledby="habilitation-title">
 		<header class="intro">
 			<p class="eyebrow">Gestión / Accesos académicos</p>
 			<h1 id="habilitation-title">Habilitaciones docentes</h1>

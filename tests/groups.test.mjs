@@ -58,7 +58,7 @@ async function evaluate(path, options = {}) {
 				this.setExport('actions', { createGroup: 'createGroup' });
 				this.setExport('isInputError', (error) => Boolean(error?.fields));
 			}, { context: sandbox });
-			if (specifier.endsWith('.astro')) return new vm.SyntheticModule([], function () {}, { context: sandbox });
+			if (specifier.endsWith('.astro') || specifier.endsWith('.css')) return new vm.SyntheticModule([], function () {}, { context: sandbox });
 			const resolved = new URL(specifier.endsWith('.ts') ? specifier : `${specifier}.ts`, parent.identifier);
 			return compile(await readFile(resolved, 'utf8'), resolved.href);
 		});

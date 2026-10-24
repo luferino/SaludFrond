@@ -103,7 +103,7 @@ async function evaluatePage(query = '', options = {}) {
 			await fixture.load('src/pods/teacher-habilitation/api.ts');
 			const actionModule = await fixture.load('src/pods/teacher-habilitation/actions.ts');
 			namespace = { actions: { activateTeacherHabilitation: actionModule.activateTeacherHabilitation, revokeTeacherHabilitation: actionModule.revokeTeacherHabilitation } };
-		} else if (specifier.endsWith('.astro')) namespace = { default: {} };
+		} else if (specifier.endsWith('.astro') || specifier.endsWith('.css')) namespace = { default: {} };
 		else {
 			const resolved = new URL(/\.(?:ts|astro)$/.test(specifier) ? specifier : `${specifier}.ts`, pageUrl);
 			namespace = await fixture.load(resolved.href);

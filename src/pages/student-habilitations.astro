@@ -2,6 +2,7 @@
 export const prerender = false;
 import { actions } from 'astro:actions';
 import Layout from '../layouts/Layout.astro';
+import '../styles/academic-panels.css';
 import {
  listStudents, listStudentHabilitations, parseStudentFilters, parseSelectorPagination, UUID_PATTERN,
 } from '../pods/student-habilitation/api';
@@ -141,7 +142,7 @@ const activationFeedback = activationResult?.error?.message ?? activationData?.e
 const revocationFeedback = revocationResult?.error?.message ?? revocationData?.error;
 ---
 <Layout>
- <main aria-labelledby="student-habilitations-title">
+ <main class="academic-page" aria-labelledby="student-habilitations-title">
   <header class="intro">
    <p class="eyebrow">Gestión / Habilitaciones académicas</p>
    <h1 id="student-habilitations-title">Habilitaciones de estudiantes</h1>

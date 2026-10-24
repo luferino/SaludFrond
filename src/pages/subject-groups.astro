@@ -3,6 +3,7 @@ export const prerender = false;
 
 import { actions, isInputError } from 'astro:actions';
 import Layout from '../layouts/Layout.astro';
+import '../styles/academic-panels.css';
 import SubjectGroupForm from '../pods/subject-group/components/SubjectGroupForm.astro';
 import SubjectGroupList from '../pods/subject-group/components/SubjectGroupList.astro';
 import { listSubjectGroups, parseSubjectGroupFilter, subjectGroupClearFilterHref, subjectGroupFilterHref, subjectGroupPageHref } from '../pods/subject-group/api';
@@ -181,7 +182,7 @@ const actionUrl = `/subject-groups?${actionParams.toString()}`;
 ---
 
 <Layout>
-	<main aria-labelledby="subject-groups-title">
+	<main class="academic-page" aria-labelledby="subject-groups-title">
 		<header class="intro">
 			<p class="eyebrow">Gestión / Asociaciones académicas</p>
 			<h1 id="subject-groups-title">Grupos por asignatura</h1>

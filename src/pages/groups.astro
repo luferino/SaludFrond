@@ -3,6 +3,7 @@ export const prerender = false;
 
 import { actions } from 'astro:actions';
 import Layout from '../layouts/Layout.astro';
+import '../styles/academic-panels.css';
 import GroupForm from '../pods/group/components/GroupForm.astro';
 import GroupList from '../pods/group/components/GroupList.astro';
 import { listGroups } from '../pods/group/api';
@@ -45,7 +46,7 @@ try {
 ---
 
 <Layout>
-	<main aria-labelledby="groups-title">
+	<main class="academic-page" aria-labelledby="groups-title">
 		<header class="intro">
 			<p class="eyebrow">Gestión / Grupos académicos</p>
 			<h1 id="groups-title">Grupos académicos</h1>

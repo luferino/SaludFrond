@@ -3,6 +3,7 @@ export const prerender = false;
 
 import { actions } from 'astro:actions';
 import Layout from '../layouts/Layout.astro';
+import '../styles/academic-panels.css';
 import SubjectForm from '../pods/subject/components/SubjectForm.astro';
 import SubjectList from '../pods/subject/components/SubjectList.astro';
 import { listSubjects } from '../pods/subject/api';
@@ -45,13 +46,14 @@ try {
 ---
 
 <Layout>
-	<main aria-labelledby="subjects-title">
+	<main class="academic-page" aria-labelledby="subjects-title">
 		<header class="intro">
 			<p class="eyebrow">Gestión / Asignaturas</p>
 			<h1 id="subjects-title">Asignaturas</h1>
 			<p>Consultá las asignaturas disponibles en el catálogo académico.</p>
 		</header>
 		<div class="subjects-content">
+			<div class="subject-results">
 			<SubjectList
 				state={state}
 				items={items}
@@ -60,6 +62,7 @@ try {
 				nextOffset={nextOffset}
 				invalidMessage={invalidMessage}
 			/>
+			</div>
 			<SubjectForm result={actionResult} />
 		</div>
 	</main>

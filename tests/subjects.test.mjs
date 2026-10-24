@@ -53,7 +53,7 @@ async function evaluate(path, options = {}) {
 		});
 		await module.link(async (specifier, parent) => {
 			if (specifier === 'astro:actions') return new vm.SyntheticModule(['actions'], function () { this.setExport('actions', { createSubject: '/_actions/createSubject' }); }, { context: sandbox });
-			if (specifier.endsWith('.astro')) return new vm.SyntheticModule([], function () {}, { context: sandbox });
+			if (specifier.endsWith('.astro') || specifier.endsWith('.css')) return new vm.SyntheticModule([], function () {}, { context: sandbox });
 			const resolved = new URL(specifier.endsWith('.ts') ? specifier : `${specifier}.ts`, parent.identifier);
 			return compile(await readFile(resolved, 'utf8'), resolved.href);
 		});
