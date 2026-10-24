@@ -128,7 +128,9 @@ test('student middleware, page, and navigation retain the session and admin gate
 		assert.equal(value.isLoggedIn, true);
 		assert.equal(value.pageTitle, 'Estudiantes');
 	}
-	assert.match(await source('src/layouts/Layout.astro'), /\{isAdmin && <a href="\/students"/);
+	const layout = await source('src/layouts/Layout.astro');
+	assert.match(layout, /const peopleLinks = isLoggedIn && isAdmin \? \[/);
+	assert.match(layout, /href: '\/students', label: 'Estudiantes'/);
 });
 
 const input = { username: 'STUDENT1', password: 'Password123', nombres: 'Ana', apellidos: 'Pérez', codalumno: 'A123' };

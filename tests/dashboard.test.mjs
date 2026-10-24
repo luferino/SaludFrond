@@ -43,12 +43,12 @@ async function evaluate(path, names, token, pathname = '/') {
 
 test('home keeps the session redirect for absent, malformed, and expired tokens', async () => {
 	for (const token of [undefined, 'invalid', jwt({ ...valid, exp: 1 })]) {
-		const result = await evaluate('src/pages/index.astro', ['modules'], token);
+		const result = await evaluate('src/pages/index.astro', ['isAuthed'], token);
 		assert.equal(result.redirect, '/auth/login?returnTo=%2F');
 	}
 });
 
-test('home preserves the original nonacademic visibility matrix and adds academic links for every valid session', async () => {
+test('sidebar preserves role and permission visibility for grouped navigation', async () => {
 	const cases = [
 		[valid, []],
 		[{ ...valid, role: 'admin' }, ['/patients', '/students', '/teachers']],
@@ -63,15 +63,13 @@ test('home preserves the original nonacademic visibility matrix and adds academi
 	const academic = ['/subjects', '/groups', '/subject-groups', '/teacher-habilitations', '/student-habilitations'];
 	for (const [payload, expected] of cases) {
 		const token = jwt(payload);
-		const home = await evaluate('src/pages/index.astro', ['modules', 'canRegister'], token);
-		const shell = await evaluate('src/layouts/Layout.astro', ['canRegister', 'academicLinks'], token);
-		const homeLinks = Array.from(home.modules, (module) => module.href);
-		assert.deepEqual(homeLinks.filter((href) => !academic.includes(href)), expected);
-		assert.deepEqual(homeLinks.filter((href) => academic.includes(href)), academic);
+		const shell = await evaluate('src/layouts/Layout.astro', ['canRegister', 'academicLinks', 'peopleLinks'], token);
+		const peopleLinks = Array.from(shell.peopleLinks, (link) => link.href);
+		assert.deepEqual(peopleLinks, expected.filter((href) => href !== '/auth/register'));
+		assert.equal(shell.canRegister, expected.includes('/auth/register'));
 		const sidebarLinks = Array.from(shell.academicLinks, (link) => link.href);
 		assert.deepEqual(sidebarLinks, academic);
 		assert.equal(new Set(sidebarLinks).size, academic.length);
-		assert.equal(home.canRegister, shell.canRegister);
 	}
 });
 
@@ -94,20 +92,22 @@ test('shell resolves academic titles and keeps exact active paths across query s
 	}
 });
 
-test('templates expose authenticated academic navigation and cards without scripts or fetches', async () => {
+test('home is a simple welcome without module cards or quick links', async () => {
 	const home = await source('src/pages/index.astro');
+	assert.match(home, /<h1 id="home-title">Bienvenido a Salud<\/h1>/);
+	assert.match(home, /menú de navegación/);
+	assert.doesNotMatch(home, /module-card|module-grid|session-panel|modules|<a\s|<form|<script|fetch\(/);
+});
+
+test('shell groups navigation and preserves active links and keyboard access', async () => {
 	const shell = await source('src/layouts/Layout.astro');
-	assert.match(home, /modules\.map\(/);
-	assert.match(home, /href=\{module\.href\}/);
-	assert.match(home, /modules\.length > 0/);
-	assert.match(home, /No hay accesos de gestión disponibles/);
-	assert.match(home, /label: 'Catálogo académico'/);
-	assert.match(home, /label: 'Gestión académica'/);
-	assert.match(home, /label: 'Asociación académica'/);
-	assert.match(home, /<span class="card-action">\{module\.action \?\? 'Abrir formulario'/);
-	assert.doesNotMatch(home, /<form|<script|fetch\(/);
+	assert.match(shell, /aria-label="Personas"/);
+	assert.match(shell, /aria-label="Académico"/);
+	assert.match(shell, /id="account-title">Cuenta/);
+	assert.match(shell, /peopleLinks\.length > 0/);
+	assert.match(shell, /\{canRegister && <a href="\/auth\/register"/);
 	assert.match(shell, /\{academicLinks\.map\(/);
-	assert.match(shell, /<nav class="module-nav" aria-label="Principal">[\s\S]*academicLinks\.map/);
+	assert.match(shell, /<nav class="module-nav" aria-label="Académico">[\s\S]*academicLinks\.map/);
 	assert.match(shell, /aria-current=\{currentPath === link\.href \? 'page' : undefined\}/);
 	assert.match(shell, /href="#page-content"/);
 	assert.match(shell, /id="page-content"[^>]*tabindex="-1"/);

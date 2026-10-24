@@ -61,6 +61,13 @@ test('login form preserves exactly two required inputs, the hidden returnTo fiel
 	assert.doesNotMatch(form, /<select|<textarea|<script|set:html/);
 });
 
+test('login hides the redundant access nav but keeps the brand and other public-page navigation', async () => {
+	const layout = await source('src/layouts/Layout.astro');
+	assert.match(layout, /currentPath !== '\/auth\/login' && \(\s*<nav class="account-nav" aria-label="Acceso">/);
+	assert.match(layout, /class="brand" href=\{isLoggedIn \? '\/' : '\/auth\/login'\}/);
+	assert.match(layout, /<a href="\/auth\/login">Iniciar Sesión<\/a>/);
+});
+
 test('login returnTo defaults to root and echoes the query string otherwise', async () => {
 	for (const [search, expected] of [['', '/'], ['?returnTo=%2Fstudents', '/students']]) {
 		const { returnTo } = await evaluate(formPath, ['returnTo'], {

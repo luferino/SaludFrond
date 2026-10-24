@@ -20,6 +20,11 @@ const pageTitles: Record<string, string> = {
 	'/teacher-habilitations': 'Habilitaciones docentes', '/student-habilitations': 'Habilitaciones de estudiantes',
 };
 const pageTitle = pageTitles[currentPath] ?? 'Salud';
+const peopleLinks = isLoggedIn && isAdmin ? [
+	{ href: '/patients', label: 'Pacientes' },
+	{ href: '/students', label: 'Estudiantes' },
+	{ href: '/teachers', label: 'Profesores' },
+] : [];
 const academicLinks = isLoggedIn ? [
 	{ href: '/subjects', label: 'Asignaturas' },
 	{ href: '/groups', label: 'Grupos académicos' },
@@ -52,20 +57,29 @@ const academicLinks = isLoggedIn ? [
 						<p class="nav-label">Tu espacio de trabajo</p>
 						<nav class="module-nav" aria-label="Principal">
 							<a href="/" aria-current={currentPath === '/' ? 'page' : undefined}>Inicio <span aria-hidden="true">↗</span></a>
-							{isAdmin && <a href="/students" aria-current={currentPath === '/students' ? 'page' : undefined}>Estudiantes <span aria-hidden="true">↗</span></a>}
-							{isAdmin && <a href="/teachers" aria-current={currentPath === '/teachers' ? 'page' : undefined}>Profesores <span aria-hidden="true">↗</span></a>}
-							{isAdmin && <a href="/patients" aria-current={currentPath === '/patients' ? 'page' : undefined}>Pacientes <span aria-hidden="true">↗</span></a>}
+						</nav>
+						{peopleLinks.length > 0 && <>
+							<p class="nav-label">Personas</p>
+							<nav class="module-nav" aria-label="Personas">
+								{peopleLinks.map((link) => (
+									<a href={link.href} aria-current={currentPath === link.href ? 'page' : undefined}>{link.label} <span aria-hidden="true">↗</span></a>
+								))}
+							</nav>
+						</>}
+						<p class="nav-label">Académico</p>
+						<nav class="module-nav" aria-label="Académico">
 							{academicLinks.map((link) => (
 								<a href={link.href} aria-current={currentPath === link.href ? 'page' : undefined}>{link.label} <span aria-hidden="true">↗</span></a>
 							))}
 						</nav>
-						<nav class="account-nav" aria-label="Cuenta">
+						<p class="nav-label" id="account-title">Cuenta</p>
+						<nav class="account-nav" aria-labelledby="account-title">
 							{canRegister && <a href="/auth/register">Registrar usuario</a>}
 							<a href="/logout">Salir <span aria-hidden="true">↗</span></a>
 						</nav>
 						<p class="sidebar-note">Un espacio para acompañar<br />y cuidar a las personas.</p>
 					</>
-				) : (
+				) : currentPath !== '/auth/login' && (
 					<nav class="account-nav" aria-label="Acceso">
 						<a href="/auth/login">Iniciar Sesión</a>
 					</nav>
@@ -75,7 +89,7 @@ const academicLinks = isLoggedIn ? [
 				<header class="workspace-header">
 					<div>
 						<p class="eyebrow">Sistema de salud / {pageTitle}</p>
-						<p class="page-title">{currentPath === '/' ? 'Bienvenido a Salud' : pageTitle}</p>
+						<p class="page-title">{pageTitle}</p>
 					</div>
 					{isLoggedIn && <span class="session-badge">Sesión activa</span>}
 				</header>
@@ -140,15 +154,15 @@ const academicLinks = isLoggedIn ? [
 	.brand-mark { color: var(--rust); font: 3rem/1 Georgia, serif; }
 	.brand small { display: block; margin-top: 0.45rem; font: 0.7rem/1.4 'Segoe UI', Arial, sans-serif; }
 	.nav-label, .eyebrow { font: 0.65rem/1.6 Consolas, monospace; letter-spacing: 0.1em; text-transform: uppercase; }
-	.nav-label { margin: 2rem 1.5rem 1.4rem; color: #d3cdbe; }
-	.module-nav { display: grid; gap: 1.5rem; padding: 0 1.25rem 2rem; }
+	.nav-label { margin: 1.25rem 1.5rem 1rem; color: #d3cdbe; }
+	.module-nav { display: grid; gap: 1.1rem; padding: 0 1.25rem 0.5rem; }
 	.module-nav a {
 		--folder: #e6d8bb;
 		position: relative;
 		display: flex;
 		justify-content: space-between;
 		gap: 0.5rem;
-		padding: 1rem;
+		padding: 0.65rem 0.85rem;
 		border-radius: 0 8px 8px 8px;
 		background: var(--folder);
 		color: var(--ink);
