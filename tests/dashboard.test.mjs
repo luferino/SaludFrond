@@ -63,9 +63,11 @@ test('sidebar preserves role and permission visibility for grouped navigation', 
 	const academic = ['/subjects', '/groups', '/subject-groups', '/teacher-habilitations', '/student-habilitations'];
 	for (const [payload, expected] of cases) {
 		const token = jwt(payload);
-		const shell = await evaluate('src/layouts/Layout.astro', ['canRegister', 'academicLinks', 'peopleLinks'], token);
+		const shell = await evaluate('src/layouts/Layout.astro', ['canRegister', 'academicLinks', 'peopleLinks', 'clinicalLinks'], token);
 		const peopleLinks = Array.from(shell.peopleLinks, (link) => link.href);
 		assert.deepEqual(peopleLinks, expected.filter((href) => href !== '/auth/register'));
+		const clinicalLinks = Array.from(shell.clinicalLinks, (link) => link.href);
+		assert.deepEqual(clinicalLinks, ['estudiante', 'student'].includes(String(payload?.role).toLowerCase()) ? ['/my-patients'] : []);
 		assert.equal(shell.canRegister, expected.includes('/auth/register'));
 		const sidebarLinks = Array.from(shell.academicLinks, (link) => link.href);
 		assert.deepEqual(sidebarLinks, academic);
@@ -80,6 +82,9 @@ test('shell resolves academic titles and keeps exact active paths across query s
 		['/subject-groups/?subject_id=abc', 'Asignaturas y grupos', '/subject-groups'],
 		['/teacher-habilitations/', 'Habilitaciones docentes', '/teacher-habilitations'],
 		['/student-habilitations?status=revoked', 'Habilitaciones de estudiantes', '/student-habilitations'],
+		['/my-patients?limit=50&offset=50', 'Mis pacientes asignados', '/my-patients'],
+		['/my-patients/123?limit=50', 'Mis pacientes asignados', '/my-patients/123'],
+		['/kinesiology-evaluations/abc?assignment_id=123', 'Evaluaciones kinésicas', '/kinesiology-evaluations/abc'],
 	]) {
 		const result = await evaluate('src/layouts/Layout.astro', ['pageTitle', 'currentPath', 'academicLinks'], jwt(valid), pathname);
 		assert.equal(result.pageTitle, title);
@@ -103,6 +108,7 @@ test('shell groups navigation and preserves active links and keyboard access', a
 	const shell = await source('src/layouts/Layout.astro');
 	assert.match(shell, /aria-label="Personas"/);
 	assert.match(shell, /aria-label="Académico"/);
+	assert.match(shell, /aria-label="Atención clínica"/);
 	assert.match(shell, /id="account-title">Cuenta/);
 	assert.match(shell, /peopleLinks\.length > 0/);
 	assert.match(shell, /\{canRegister && <a href="\/auth\/register"/);

@@ -19,12 +19,17 @@ const pageTitles: Record<string, string> = {
 	'/subjects': 'Asignaturas', '/groups': 'Grupos académicos', '/subject-groups': 'Asignaturas y grupos',
 	'/teacher-habilitations': 'Habilitaciones docentes', '/student-habilitations': 'Habilitaciones de estudiantes',
 };
-const pageTitle = pageTitles[currentPath] ?? 'Salud';
+const pageTitle = currentPath.startsWith('/my-patients') ? 'Mis pacientes asignados'
+	: currentPath.startsWith('/kinesiology-evaluations') ? 'Evaluaciones kinésicas'
+	: pageTitles[currentPath] ?? 'Salud';
 const peopleLinks = isLoggedIn && isAdmin ? [
 	{ href: '/patients', label: 'Pacientes' },
 	{ href: '/students', label: 'Estudiantes' },
 	{ href: '/teachers', label: 'Profesores' },
 ] : [];
+const clinicalLinks = isLoggedIn && ['estudiante', 'student'].includes(String(payload?.role).toLowerCase())
+	? [{ href: '/my-patients', label: 'Mis pacientes asignados' }]
+	: [];
 const academicLinks = isLoggedIn ? [
 	{ href: '/subjects', label: 'Asignaturas' },
 	{ href: '/groups', label: 'Grupos académicos' },
@@ -63,6 +68,14 @@ const academicLinks = isLoggedIn ? [
 							<nav class="module-nav" aria-label="Personas">
 								{peopleLinks.map((link) => (
 									<a href={link.href} aria-current={currentPath === link.href ? 'page' : undefined}>{link.label} <span aria-hidden="true">↗</span></a>
+								))}
+							</nav>
+						</>}
+						{clinicalLinks.length > 0 && <>
+							<p class="nav-label">Atención clínica</p>
+							<nav class="module-nav" aria-label="Atención clínica">
+								{clinicalLinks.map((link) => (
+									<a href={link.href} aria-current={currentPath.startsWith(link.href) ? 'page' : undefined}>{link.label} <span aria-hidden="true">↗</span></a>
 								))}
 							</nav>
 						</>}

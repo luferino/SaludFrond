@@ -1,0 +1,86 @@
+---
+export const prerender = false;
+
+import Layout from '../layouts/Layout.astro';
+import { ApiError } from '../shared/apiClient';
+import { listAssignedPatients, parseAssignmentPagination, type AssignedPatient } from '../pods/patient-assignment/api';
+
+let pagination = { limit: 50, offset: 0 };
+let items: AssignedPatient[] = [];
+let state: 'ok' | 'empty' | 'denied' | 'error' = 'ok';
+let message = '';
+try {
+	pagination = parseAssignmentPagination(Astro.url.searchParams);
+	const page = await listAssignedPatients(pagination, Astro.cookies);
+	items = page.items;
+	if (items.length === 0) state = 'empty';
+} catch (error) {
+	if (error instanceof ApiError && error.status === 401) return Astro.redirect('/auth/login');
+	if (error instanceof ApiError && error.status === 403) {
+		state = 'denied';
+		message = 'No tienes permiso para consultar esta lista.';
+	} else {
+		state = 'error';
+		message = 'No fue posible cargar tus pacientes asignados. Inténtalo de nuevo más tarde.';
+	}
+}
+const { limit, offset } = pagination;
+const previousOffset = offset > 0 ? Math.max(0, offset - limit) : null;
+const canAdvance = offset <= Number.MAX_SAFE_INTEGER - limit;
+const nextOffset = state === 'ok' && items.length === limit && canAdvance ? offset + limit : null;
+const pageLink = (value: number) => `/my-patients?limit=${limit}&offset=${value}`;
+---
+
+<Layout>
+	<main aria-labelledby="assigned-title">
+		<header class="intro">
+			<p class="eyebrow">Atención clínica / Asignaciones vigentes</p>
+			<h1 id="assigned-title">Mis pacientes asignados</h1>
+			<p>Consulta los pacientes que tienes asignados actualmente.</p>
+		</header>
+
+		{state === 'denied' || state === 'error' ? (
+			<section class="notice" role="alert"><h2>No se pudo mostrar la lista</h2><p>{message}</p></section>
+		) : state === 'empty' ? (
+			<section class="notice" role="status"><h2>Sin pacientes asignados</h2><p>Cuando tengas asignaciones vigentes, aparecerán aquí.</p></section>
+		) : (
+				<ul class="assignments" aria-label="Pacientes asignados">
+					{items.map((row) => (
+						<li class="assignment-card">
+							<a class="record-link" href={`/my-patients/${row.id}?limit=${limit}&offset=${offset}`}>
+								<span class="patient-name">{row.nombres} {row.apellidos}</span>
+								<span class="document">Documento: {row.documento}</span>
+								<span class="context">Asignatura <code>{row.subject_id}</code></span>
+								<span class="context">Grupo <code>{row.academic_group_id}</code></span>
+							</a>
+						</li>
+					))}
+				</ul>
+		)}
+		{state !== 'denied' && state !== 'error' && (previousOffset !== null || nextOffset !== null) && (
+			<nav class="pagination" aria-label="Paginación">
+				{previousOffset !== null && <a href={pageLink(previousOffset)}>← Anterior</a>}
+				{nextOffset !== null && <a href={pageLink(nextOffset)}>Siguiente →</a>}
+			</nav>
+		)}
+	</main>
+</Layout>
+
+<style>
+	main { max-width: 1040px; min-width: 0; margin: 0 auto; }
+	.intro { margin-bottom: 2rem; }
+	.intro p { margin: 0.75rem 0; color: var(--muted); }
+	.eyebrow { font: 0.65rem/1.6 Consolas, monospace; letter-spacing: 0.1em; text-transform: uppercase; }
+	h1 { margin: 0.5rem 0; font: 400 clamp(2rem, 3vw, 2.75rem)/1.15 var(--serif); }
+	.assignments { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 1rem; margin: 0; padding: 0; list-style: none; }
+	.assignment-card { min-width: 0; border: 1px solid var(--line); border-radius: 0 14px 14px 14px; background: var(--paper); }
+	.record-link { display: grid; gap: 0.5rem; height: 100%; padding: 1.25rem; }
+	.record-link:hover { background: var(--sage-soft); }
+	.patient-name { font: 1.4rem/1.25 var(--serif); }
+	.document, .context { color: var(--muted); }
+	code { overflow-wrap: anywhere; font-size: 0.8em; }
+	.pagination { display: flex; justify-content: space-between; gap: 1rem; margin-top: 1.5rem; }
+	.pagination a { padding: 0.65rem 0.9rem; border-radius: 5px; background: var(--sage-soft); font-weight: 600; }
+	.notice { padding: 1.5rem; border: 1px solid var(--line); border-radius: 0 12px 12px 12px; background: var(--paper); }
+	.notice h2 { margin-top: 0; font: 1.4rem var(--serif); }
+</style>
