@@ -25,7 +25,13 @@ let filters = { studentId: null as string | null, subjectId: null as string | nu
 let queryError = '';
 try {
  pagination = parseAcademicPagination(search);
- filters = parseStudentFilters(search);
+ const filterSearch = new URLSearchParams(search);
+ if (search.getAll('selector_page').length === 1) {
+  const draftFilterIds = search.getAll('filter_student_id');
+  filterSearch.delete('student_id');
+  for (const value of draftFilterIds) filterSearch.append('student_id', value);
+ }
+ filters = parseStudentFilters(filterSearch);
 } catch (error) { queryError = error instanceof Error ? error.message : 'Revisá los parámetros de consulta.'; }
 const catalogPagination = { student: { limit: 50, offset: 0 }, context: { limit: 50, offset: 0 }, subject: { limit: 50, offset: 0 }, group: { limit: 50, offset: 0 } };
 let catalogError = '';
@@ -53,8 +59,9 @@ const onePair = (name: string) => {
  const values = search.getAll(name);
  return values.length === 1 && new RegExp(`^${UUID_PATTERN.source.slice(1, -1)}\\|${UUID_PATTERN.source.slice(1, -1)}$`, 'i').test(values[0]) ? values[0] : '';
 };
-let selectedStudent = oneDraft('draft_student_id');
-let selectedPair = onePair('draft_context');
+const isSelectorNavigation = search.getAll('selector_page').length === 1;
+let selectedStudent = oneDraft('draft_student_id') || (isSelectorNavigation ? oneDraft('student_id') : '');
+let selectedPair = onePair('draft_context') || (isSelectorNavigation ? onePair('context_pair') : '');
 const activationData = activationResult?.data as { success?: boolean; error?: string; period?: StudentPeriod; draftStudentId?: string; draftContext?: string } | undefined;
 const revocationData = revocationResult?.data as { success?: boolean; error?: string; period?: StudentPeriod } | undefined;
 if (activationData) {
@@ -102,6 +109,9 @@ try {
  studentState = subjectState = groupState = contextState = 'failed';
  if (!queryError) periodState = 'failed';
 }
+const canActivate = studentState === 'success' && contextState === 'success'
+ && (students.length > 0 || Boolean(selectedStudent))
+ && (contexts.length > 0 || Boolean(selectedPair));
 const previous = academicPaginationNavigation({ ...pagination, itemsLength: periods.length });
 function paramsFor(changes: Record<string, string> = {}) {
  const params = new URLSearchParams(search);
@@ -156,21 +166,18 @@ const revocationFeedback = revocationResult?.error?.message ?? revocationData?.e
    {subjectState === 'failed' && <p role="status">No se pudieron cargar etiquetas de asignaturas; se mostrarán sus UUID.</p>}
    {groupState === 'denied' && <p role="status">No tenés permiso para leer etiquetas de grupos; se mostrarán sus UUID.</p>}
    {groupState === 'failed' && <p role="status">No se pudieron cargar etiquetas de grupos; se mostrarán sus UUID.</p>}
-   {studentState === 'success' && <form method="GET" action="/student-habilitations" class="selector-pages">
+   {studentState === 'success' ? <form method="POST" action={actions.activateStudentHabilitation}>
     <input type="hidden" name="limit" value={pagination.limit}/><input type="hidden" name="offset" value={pagination.offset}/>
-    {filters.studentId && <input type="hidden" name="student_id" value={filters.studentId}/>} {filters.subjectId && <input type="hidden" name="subject_id" value={filters.subjectId}/>} {filters.academicGroupId && <input type="hidden" name="academic_group_id" value={filters.academicGroupId}/>} {filters.status && <input type="hidden" name="status" value={filters.status}/>}
+    {filters.studentId && <input type="hidden" name="filter_student_id" value={filters.studentId}/>} {filters.subjectId && <input type="hidden" name="subject_id" value={filters.subjectId}/>} {filters.academicGroupId && <input type="hidden" name="academic_group_id" value={filters.academicGroupId}/>} {filters.status && <input type="hidden" name="status" value={filters.status}/>}
     {Object.entries(catalogPagination).map(([name, coordinates]) => <><input type="hidden" name={`${name}_limit`} value={coordinates.limit}/><input type="hidden" name={`${name}_offset`} value={coordinates.offset}/></>)}
-    <label for="draft-student">Estudiante</label><select id="draft-student" name="draft_student_id"><option value="">Elegí un estudiante…</option>{selectedStudent && !students.some((item) => item.id.toLowerCase() === selectedStudent.toLowerCase()) && <option value={selectedStudent} selected>{studentLabel(selectedStudent)} (selección conservada)</option>}{students.map((item) => <option value={item.id} selected={selectedStudent.toLowerCase() === item.id.toLowerCase()}>{studentLabel(item.id)}</option>)}</select>
-    <label for="draft-context">Contexto vinculado</label><select id="draft-context" name="draft_context"><option value="">Elegí asignatura y grupo…</option>{selectedPair && !contexts.some((item) => pairValue(item).toLowerCase() === selectedPair.toLowerCase()) && <option value={selectedPair} selected>{subjectLabel(selectedPair.split('|')[0])} · {groupLabel(selectedPair.split('|')[1])} (selección conservada)</option>}{contexts.map((item) => <option value={pairValue(item)} selected={selectedPair.toLowerCase() === pairValue(item).toLowerCase()}>{subjectLabel(item.subject_id)} · {groupLabel(item.academic_group_id)}</option>)}</select>
-    {studentNavigation.previousOffset !== null && <button name="selector_page" value={`student=${studentNavigation.previousOffset}`}>Estudiantes anteriores</button>}{studentNavigation.nextOffset !== null && <button name="selector_page" value={`student=${studentNavigation.nextOffset}`}>Más estudiantes</button>}
-    {contextNavigation.previousOffset !== null && <button name="selector_page" value={`context=${contextNavigation.previousOffset}`}>Contextos anteriores</button>}{contextNavigation.nextOffset !== null && <button name="selector_page" value={`context=${contextNavigation.nextOffset}`}>Más contextos</button>}
-    {subjectNavigation.previousOffset !== null && <button name="selector_page" value={`subject=${subjectNavigation.previousOffset}`}>Asignaturas anteriores</button>}{subjectNavigation.nextOffset !== null && <button name="selector_page" value={`subject=${subjectNavigation.nextOffset}`}>Más asignaturas para etiquetas</button>}
-    {groupNavigation.previousOffset !== null && <button name="selector_page" value={`group=${groupNavigation.previousOffset}`}>Grupos anteriores</button>}{groupNavigation.nextOffset !== null && <button name="selector_page" value={`group=${groupNavigation.nextOffset}`}>Más grupos para etiquetas</button>}
-   </form>}
-   {studentState === 'success' && contextState === 'success' && (students.length > 0 || Boolean(selectedStudent)) && (contexts.length > 0 || Boolean(selectedPair)) ? <form method="POST" action={actions.activateStudentHabilitation}>
     <label for="activate-student">Perfil estudiante</label><select id="activate-student" name="student_id" required><option value="">Elegí un estudiante…</option>{selectedStudent && !students.some((item) => item.id.toLowerCase() === selectedStudent.toLowerCase()) && <option value={selectedStudent} selected>{studentLabel(selectedStudent)} (selección conservada)</option>}{students.map((item) => <option value={item.id} selected={selectedStudent.toLowerCase() === item.id.toLowerCase()}>{studentLabel(item.id)}</option>)}</select>
     <label for="activate-context">Asignatura y grupo vinculados</label><select id="activate-context" name="context_pair" required><option value="">Elegí un contexto…</option>{selectedPair && !contexts.some((item) => pairValue(item).toLowerCase() === selectedPair.toLowerCase()) && <option value={selectedPair} selected>{subjectLabel(selectedPair.split('|')[0])} · {groupLabel(selectedPair.split('|')[1])} (selección conservada)</option>}{contexts.map((item) => <option value={pairValue(item)} selected={selectedPair.toLowerCase() === pairValue(item).toLowerCase()}>{subjectLabel(item.subject_id)} · {groupLabel(item.academic_group_id)}</option>)}</select>
-    <button type="submit">Activar período</button>
+    <p>La navegación de catálogos conserva estas elecciones; no necesitás activar el período para cambiar de página.</p>
+    {studentNavigation.previousOffset !== null && <button type="submit" formaction="/student-habilitations" formmethod="GET" formnovalidate name="selector_page" value={`student=${studentNavigation.previousOffset}`}>Estudiantes anteriores</button>}{studentNavigation.nextOffset !== null && <button type="submit" formaction="/student-habilitations" formmethod="GET" formnovalidate name="selector_page" value={`student=${studentNavigation.nextOffset}`}>Más estudiantes</button>}
+    {contextNavigation.previousOffset !== null && <button type="submit" formaction="/student-habilitations" formmethod="GET" formnovalidate name="selector_page" value={`context=${contextNavigation.previousOffset}`}>Contextos anteriores</button>}{contextNavigation.nextOffset !== null && <button type="submit" formaction="/student-habilitations" formmethod="GET" formnovalidate name="selector_page" value={`context=${contextNavigation.nextOffset}`}>Más contextos</button>}
+    {subjectNavigation.previousOffset !== null && <button type="submit" formaction="/student-habilitations" formmethod="GET" formnovalidate name="selector_page" value={`subject=${subjectNavigation.previousOffset}`}>Asignaturas anteriores</button>}{subjectNavigation.nextOffset !== null && <button type="submit" formaction="/student-habilitations" formmethod="GET" formnovalidate name="selector_page" value={`subject=${subjectNavigation.nextOffset}`}>Más asignaturas para etiquetas</button>}
+    {groupNavigation.previousOffset !== null && <button type="submit" formaction="/student-habilitations" formmethod="GET" formnovalidate name="selector_page" value={`group=${groupNavigation.previousOffset}`}>Grupos anteriores</button>}{groupNavigation.nextOffset !== null && <button type="submit" formaction="/student-habilitations" formmethod="GET" formnovalidate name="selector_page" value={`group=${groupNavigation.nextOffset}`}>Más grupos para etiquetas</button>}
+    {canActivate ? <button type="submit">Activar período</button> : <p role="status">La activación requiere perfiles y contextos vinculados disponibles en los catálogos.</p>}
    </form> : <p role="status">La activación requiere perfiles y contextos vinculados disponibles en los catálogos.</p>}
   </section>
 

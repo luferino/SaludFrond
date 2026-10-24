@@ -10,6 +10,7 @@ const source = (path) => readFile(new URL(path, root), 'utf8');
 const modulePath = 'src/pods/student-habilitation/api.ts';
 const actionsPath = 'src/pods/student-habilitation/actions.ts';
 const uuid = '10000000-0000-4000-8000-000000000021';
+const filterStudent = '10000000-0000-4000-8000-000000000022';
 const context = '10000000-0000-4000-8000-000000000041';
 const subject = '10000000-0000-4000-8000-000000000031';
 const period = { id: uuid, student_id: uuid, subject_id: subject, academic_group_id: context, activated_by: uuid, activated_at: '2026-01-01T00:00:00.000Z', revoked_by: null, revoked_at: null };
@@ -41,8 +42,24 @@ async function executePage(search = '', options = {}) {
   redirect: (to) => ({ redirect: to }), };
  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
  const transpiled = ts.transpileModule(page, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText.replace(/^export \{\};?$/m, '');
- const fn = new AsyncFunction('Astro', ...Object.keys(mock), `${transpiled}; return { periods, selectedStudent, selectedPair, queryError, catalogError, periodState, studentState, contextState, contextLength: contexts.length, paramsFor, activationFeedback };`);
+ const fn = new AsyncFunction('Astro', ...Object.keys(mock), `${transpiled}; return { periods, selectedStudent, selectedPair, queryError, catalogError, periodState, studentState, contextState, contextLength: contexts.length, canActivate: typeof canActivate === 'undefined' ? null : canActivate, paramsFor, activationFeedback };`);
  return { value: await fn(Astro, ...Object.values(mock)), requests };
+}
+
+function serializePageForm(formMarkup, fields, submitter) {
+ const names = new Set([...formMarkup.matchAll(/<(?:input|select)\b[^>]*\bname="([^"]+)"[^>]*>/g)].map(([, name]) => name));
+ const data = new FormData();
+ for (const [name, value] of Object.entries(fields)) {
+  const dynamicCatalogControl = /^(student|context|subject|group)_(limit|offset)$/.test(name) && formMarkup.includes('name={`${name}_limit`}');
+  assert.ok(names.has(name) || dynamicCatalogControl, `successful control ${name} belongs to the submitted form`);
+  data.append(name, value);
+ }
+ const button = [...formMarkup.matchAll(/<button\b[^>]*>/g)].map(([tag]) => tag).find((tag) => tag.includes(`name="${submitter.name}"`));
+ assert.ok(button, `submitter ${submitter.name} belongs to the submitted form`);
+ assert.match(button, /formmethod="GET"/);
+ assert.match(button, /formnovalidate/);
+ data.append(submitter.name, submitter.value);
+ return data;
 }
 
 async function load(path, options = {}) {
@@ -184,6 +201,34 @@ test('page preserves selected profile/context and all filters through catalog an
  assert.match(page, /selección conservada/);
  assert.match(page, /name="draft_student_id"/);
  assert.match(page, /name="draft_context"/);
+});
+
+test('catalog paging submits unsaved activation choices from the activation form without JavaScript', async () => {
+ const page = await source('src/pages/student-habilitations.astro');
+ const form = page.match(/<form method="POST" action=\{actions\.activateStudentHabilitation\}>([\s\S]*?)<\/form>/)?.[1] ?? '';
+ const submitted = serializePageForm(form, {
+  student_id: uuid, context_pair: `${subject}|${context}`, filter_student_id: filterStudent, subject_id: '', academic_group_id: '', status: '',
+  limit: '20', offset: '0', student_limit: '50', student_offset: '0', context_limit: '50', context_offset: '0', subject_limit: '50', subject_offset: '0', group_limit: '50', group_offset: '0',
+ }, { name: 'selector_page', value: 'context=50' });
+ const result = await executePage(new URLSearchParams(submitted).toString());
+ assert.equal(result.value.selectedStudent, uuid);
+ assert.equal(result.value.selectedPair, `${subject}|${context}`);
+ assert.equal(result.requests.find(([kind]) => kind === 'contexts')[1].offset, 50);
+ assert.equal(result.requests.find(([kind]) => kind === 'periods')[2].studentId, filterStudent, 'existing period filter remains separate from the activation draft');
+});
+
+test('activation availability requires successful nonempty student and context catalogs while catalog navigation remains available', async () => {
+ const allowed = await executePage();
+ assert.equal(allowed.value.canActivate, true);
+ for (const contextState of ['denied', 'failed']) {
+  const unavailable = await executePage('', { contextState });
+  assert.equal(unavailable.value.canActivate, false, `${contextState} contexts must disable activation`);
+ }
+ const empty = await executePage('', { emptyContext: true });
+ assert.equal(empty.value.canActivate, false, 'an empty context catalog must disable activation');
+ const page = await source('src/pages/student-habilitations.astro');
+ assert.match(page, /name="selector_page"/);
+ assert.match(page, /canActivate \? <button type="submit">Activar período<\/button> : <p role="status">La activación requiere perfiles y contextos vinculados disponibles en los catálogos\.<\/p>/);
 });
 
 test('selector navigation cannot overwrite duplicate original offsets before validation', async () => {
