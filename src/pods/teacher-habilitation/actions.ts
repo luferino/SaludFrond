@@ -5,6 +5,10 @@ import { createTeacherHabilitation, isTeacherHabilitationPeriod, revokeTeacherHa
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const uuidField = () => z.string().trim().regex(UUID);
+const contextField = () => {
+	const uuid = UUID.source.slice(1, -1);
+	return z.string().regex(new RegExp(`^${uuid}:${uuid}$`, 'i'));
+};
 
 function publicError(error: unknown): string {
 	if (error instanceof ApiError) {
@@ -19,7 +23,13 @@ function publicError(error: unknown): string {
 
 export async function handleActivateTeacherHabilitation(input: Record<string, unknown>, context: { cookies: import('astro').AstroCookies }) {
 	const teacherId = typeof input.teacher_id === 'string' ? input.teacher_id.trim() : '';
-	const [contextSubject, contextGroup] = typeof input.context === 'string' ? input.context.split(':') : [];
+	const hasContext = Object.prototype.hasOwnProperty.call(input, 'context');
+	const contextValue = typeof input.context === 'string' ? input.context : '';
+	const contextParts = contextValue ? contextValue.split(':') : [];
+	if (hasContext && (!contextValue || contextParts.length !== 2 || !contextParts.every((value) => UUID.test(value)))) {
+		return { success: false as const, error: 'Seleccioná un perfil docente y un contexto académico válidos.' };
+	}
+	const [contextSubject, contextGroup] = contextParts;
 	const subjectId = typeof input.subject_id === 'string' ? input.subject_id.trim() : (contextSubject ?? '');
 	const groupId = typeof input.academic_group_id === 'string' ? input.academic_group_id.trim() : (contextGroup ?? '');
 	if (![teacherId, subjectId, groupId].every((value) => UUID.test(value))) {
@@ -49,7 +59,7 @@ export async function handleRevokeTeacherHabilitation(input: Record<string, unkn
 
 export const activateTeacherHabilitation = defineAction({
 	accept: 'form',
-	input: z.object({ teacher_id: uuidField(), context: z.string().min(1) }),
+	input: z.object({ teacher_id: uuidField(), context: contextField() }),
 	handler: handleActivateTeacherHabilitation,
 });
 

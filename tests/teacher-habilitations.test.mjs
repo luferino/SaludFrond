@@ -424,6 +424,51 @@ test('filter submission shares current activation selections and preserves all i
 	assert.deepEqual([result.value.teacherPagination.offset, result.value.contextPagination.offset, new URL(result.requests.find(({ url }) => new URL(url).pathname === '/subjects').url).searchParams.get('offset'), new URL(result.requests.find(({ url }) => new URL(url).pathname === '/groups').url).searchParams.get('offset')], [20, 33, '48', '65']);
 });
 
+test('applying period filters resets only the period offset and preserves catalog coordinates', async () => {
+	const query = new URLSearchParams({
+		apply_filter: 'yes', teacher_id: teacherId, context: `${subjectId}:${groupId}`,
+		filter_teacher_id: groupId, filter_subject_id: subjectId, filter_academic_group_id: groupId, filter_status: 'active',
+		limit: '7', offset: '50', teacher_limit: '10', teacher_offset: '20', context_limit: '11', context_offset: '33', subject_limit: '12', subject_offset: '48', group_limit: '13', group_offset: '65',
+	}).toString();
+	const result = await evaluatePage(query);
+	assert.equal(result.value.filter.teacherId, groupId);
+	assert.equal(result.value.filter.subjectId, subjectId);
+	assert.equal(result.value.filter.academicGroupId, groupId);
+	assert.equal(result.value.filter.status, 'active');
+	assert.deepEqual([result.value.teacherPagination.offset, result.value.contextPagination.offset, new URL(result.requests.find(({ url }) => new URL(url).pathname === '/subjects').url).searchParams.get('offset'), new URL(result.requests.find(({ url }) => new URL(url).pathname === '/groups').url).searchParams.get('offset')], [20, 33, '48', '65']);
+	const periodUrl = new URL(result.requests.find(({ url }) => new URL(url).pathname === '/teacher-habilitations').url);
+	assert.equal(periodUrl.searchParams.get('offset'), '0');
+	assert.equal(periodUrl.searchParams.get('limit'), '7');
+});
+
+test('activation accepts uppercase and mixed-case UUIDs in the schema and handler', async () => {
+	const mixedSubject = subjectId.toUpperCase();
+	const mixedGroup = `${groupId.slice(0, 4).toUpperCase()}${groupId.slice(4)}`;
+	const fixture = await evaluate({ responses: { '/teacher-habilitations': period({ subject_id: mixedSubject, academic_group_id: mixedGroup }) } });
+	await fixture.load('src/pods/teacher-habilitation/api.ts');
+	const action = (await fixture.load('src/pods/teacher-habilitation/actions.ts')).activateTeacherHabilitation;
+	const input = { teacher_id: teacherId, context: `${mixedSubject}:${mixedGroup}` };
+	assert.equal(action.input.safeParse(input).success, true);
+	const result = await action.handler(input, { cookies: fixture.cookies });
+	assert.equal(result.success, true);
+	assert.equal(fixture.requests.length, 1);
+	assert.deepEqual(JSON.parse(fixture.requests[0].body), { teacher_id: teacherId, subject_id: mixedSubject, academic_group_id: mixedGroup });
+});
+
+test('activation context schema and handler reject trailing components even with valid direct IDs', async () => {
+	const fixture = await evaluate();
+	await fixture.load('src/pods/teacher-habilitation/api.ts');
+	const action = (await fixture.load('src/pods/teacher-habilitation/actions.ts')).activateTeacherHabilitation;
+	for (const context of [`${subjectId}:${groupId}:unexpected`, '', 42]) {
+		const input = { teacher_id: teacherId, context, subject_id: subjectId, academic_group_id: groupId };
+		assert.equal(action.input.safeParse(input).success, false);
+		const result = await action.handler(input, { cookies: fixture.cookies });
+		assert.equal(result.success, false);
+	}
+	assert.deepEqual(fixture.requests, []);
+	assert.deepEqual(fixture.cookieState.writes, []);
+});
+
 test('server-rendered page wires independent profile/context catalogs and never role-gates grants', async () => {
 	const page = await readFile(new URL('../src/pages/teacher-habilitations.astro', import.meta.url), 'utf8');
 	assert.match(page, /export const prerender = false/);

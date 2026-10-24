@@ -26,7 +26,9 @@ let offset = 0;
 let filter = { teacherId: null as string | null, subjectId: null as string | null, academicGroupId: null as string | null, status: null as 'active' | 'revoked' | null };
 let queryError = '';
 try {
-	({ limit, offset } = parseAcademicPagination(search));
+	const periodSearch = new URLSearchParams(search);
+	if (search.get('apply_filter') === 'yes') periodSearch.set('offset', '0');
+	({ limit, offset } = parseAcademicPagination(periodSearch));
 	const filters = new URLSearchParams();
 	for (const name of ['teacher_id', 'subject_id', 'academic_group_id', 'status']) {
 		const formName = `filter_${name}`;
