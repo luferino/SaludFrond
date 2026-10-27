@@ -14,6 +14,7 @@ const currentPath = Astro.url?.pathname.replace(/\/$/, '') || '/';
 const pageTitles: Record<string, string> = {
 	'/': 'Inicio', '/students': 'Estudiantes', '/teachers': 'Profesores',
 	'/patients': 'Pacientes', '/auth/register': 'Registrar usuario',
+	'/patient-availability': 'Disponibilidad de pacientes',
 	'/auth/login': 'Iniciar sesión', '/auth/forgot-password': 'Recuperar contraseña',
 	'/auth/reset-password': 'Restablecer contraseña',
 	'/subjects': 'Asignaturas', '/groups': 'Grupos académicos', '/subject-groups': 'Asignaturas y grupos',
@@ -24,6 +25,7 @@ const pageTitle = currentPath.startsWith('/my-patients') ? 'Mis pacientes asigna
 	: pageTitles[currentPath] ?? 'Salud';
 const peopleLinks = isLoggedIn && isAdmin ? [
 	{ href: '/patients', label: 'Pacientes' },
+	{ href: '/patient-availability', label: 'Disponibilidad de pacientes' },
 	{ href: '/students', label: 'Estudiantes' },
 	{ href: '/teachers', label: 'Profesores' },
 ] : [];

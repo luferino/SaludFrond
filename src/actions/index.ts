@@ -17,7 +17,12 @@ import { activateTeacherHabilitation, revokeTeacherHabilitation } from '../pods/
 import { activateStudentHabilitation, revokeStudentHabilitation } from '../pods/student-habilitation/actions';
 import { handleCreateKinesiologyEvaluation, handleUpdateKinesiologyEvaluation } from '../pods/kinesiology-evaluation/actions/evaluations';
 
+import { searchAvailablePatient, enablePatientAvailability, withdrawPatientAvailability } from '../pods/patient-availability/actions';
+
 export const server = {
+	searchAvailablePatient,
+	enablePatientAvailability,
+	withdrawPatientAvailability,
 	activateTeacherHabilitation,
 	revokeTeacherHabilitation,
 	activateStudentHabilitation,

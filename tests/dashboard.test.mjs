@@ -51,9 +51,9 @@ test('home keeps the session redirect for absent, malformed, and expired tokens'
 test('sidebar preserves role and permission visibility for grouped navigation', async () => {
 	const cases = [
 		[valid, []],
-		[{ ...valid, role: 'admin' }, ['/patients', '/students', '/teachers']],
+		[{ ...valid, role: 'admin' }, ['/patients', '/patient-availability', '/students', '/teachers']],
 		[{ ...valid, permissions: ['users:write'] }, ['/auth/register']],
-		[{ ...valid, role: 'admin', permissions: ['users:write'] }, ['/patients', '/students', '/teachers', '/auth/register']],
+		[{ ...valid, role: 'admin', permissions: ['users:write'] }, ['/patients', '/patient-availability', '/students', '/teachers', '/auth/register']],
 		...[null, [], {}, 'users:write', ['users:read'], ['users:write', null], ['academic:read'], ['subjects:write']]
 			.map((permissions) => [{ ...valid, permissions }, []]),
 		[{ ...valid, role: 'student', permissions: ['subjects:read', 'groups:write'] }, []],
