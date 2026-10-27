@@ -18,11 +18,13 @@ import { activateStudentHabilitation, revokeStudentHabilitation } from '../pods/
 import { handleCreateKinesiologyEvaluation, handleUpdateKinesiologyEvaluation } from '../pods/kinesiology-evaluation/actions/evaluations';
 
 import { searchAvailablePatient, enablePatientAvailability, withdrawPatientAvailability } from '../pods/patient-availability/actions';
+import { createTeacherAssignment } from '../pods/teacher-assignment/actions';
 
 export const server = {
 	searchAvailablePatient,
 	enablePatientAvailability,
 	withdrawPatientAvailability,
+	createTeacherAssignment,
 	activateTeacherHabilitation,
 	revokeTeacherHabilitation,
 	activateStudentHabilitation,

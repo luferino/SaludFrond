@@ -10,11 +10,14 @@ const isAdmin = payload?.role === 'admin';
 const canRegister = isLoggedIn && Array.isArray(payload?.permissions)
 	&& payload.permissions.every((permission) => typeof permission === 'string')
 	&& payload.permissions.includes('users:write');
+const canAssign = isLoggedIn && Array.isArray(payload?.permissions)
+	&& payload.permissions.every((permission) => typeof permission === 'string')
+	&& payload.permissions.includes('patient-assignments:write');
 const currentPath = Astro.url?.pathname.replace(/\/$/, '') || '/';
 const pageTitles: Record<string, string> = {
 	'/': 'Inicio', '/students': 'Estudiantes', '/teachers': 'Profesores',
 	'/patients': 'Pacientes', '/auth/register': 'Registrar usuario',
-	'/patient-availability': 'Disponibilidad de pacientes',
+	'/patient-availability': 'Disponibilidad de pacientes', '/teacher-assignments': 'Asignaciones de pacientes',
 	'/auth/login': 'Iniciar sesión', '/auth/forgot-password': 'Recuperar contraseña',
 	'/auth/reset-password': 'Restablecer contraseña',
 	'/subjects': 'Asignaturas', '/groups': 'Grupos académicos', '/subject-groups': 'Asignaturas y grupos',
@@ -38,6 +41,7 @@ const academicLinks = isLoggedIn ? [
 	{ href: '/subject-groups', label: 'Asignaturas y grupos' },
 	{ href: '/teacher-habilitations', label: 'Habilitaciones docentes' },
 	{ href: '/student-habilitations', label: 'Habilitaciones de estudiantes' },
+	...(canAssign ? [{ href: '/teacher-assignments', label: 'Asignaciones de pacientes' }] : []),
 ] : [];
 ---
 

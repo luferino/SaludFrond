@@ -68,6 +68,7 @@ async function evaluate(path, options = {}) {
 					'../pods/teacher-habilitation/actions': ['activateTeacherHabilitation', 'revokeTeacherHabilitation'],
 					'../pods/student-habilitation/actions': ['activateStudentHabilitation', 'revokeStudentHabilitation'],
 					'../pods/patient-availability/actions': ['searchAvailablePatient', 'enablePatientAvailability', 'withdrawPatientAvailability'],
+					'../pods/teacher-assignment/actions': ['createTeacherAssignment'],
 					'../pods/kinesiology-evaluation/actions/evaluations': ['handleCreateKinesiologyEvaluation', 'handleUpdateKinesiologyEvaluation'],
 				};
 				return new vm.SyntheticModule(exports[specifier], function () {

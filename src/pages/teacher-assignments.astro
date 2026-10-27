@@ -1,0 +1,137 @@
+---
+export const prerender = false;
+import { actions } from 'astro:actions';
+import Layout from '../layouts/Layout.astro';
+import { ApiError } from '../shared/apiClient';
+import { getSession } from '../shared/session';
+import { listAvailablePatients, listTeacherContexts, listTeacherStudents, parseTeacherAssignmentPagination } from '../pods/teacher-assignment/api';
+
+Astro.response.headers.set('Cache-Control', 'no-store');
+const token = getSession(Astro.cookies);
+if (!token) return Astro.redirect(`/auth/login?returnTo=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`);
+const action = Astro.getActionResult(actions.createTeacherAssignment);
+let errorText = action?.data?.success === false ? action.data.error : '';
+if (action?.error) errorText = action.error.message;
+if (action?.data?.success === false && /sesión venció/i.test(action.data.error)) return Astro.redirect(`/auth/login?returnTo=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`);
+if (action?.data?.success === true) {
+ const id = action.data.assignment.id;
+ return Astro.redirect(`/teacher-assignments?created=${encodeURIComponent(id)}`);
+}
+let submitted: Record<string,string> = {};
+if (action?.data?.success === false || action?.error) {
+ try { const form = await Astro.request.clone().formData(); submitted = Object.fromEntries([...form.entries()].filter((entry): entry is [string,string] => typeof entry[1] === 'string')); } catch { /* Framework validation may not expose submitted form values. */ }
+}
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+let queryError = '';
+let queryValid = true;
+let contextPage = { limit:50, offset:0 };
+let studentPage = { limit:50, offset:0 };
+let patientPage = { limit:50, offset:0 };
+let contexts: Awaited<ReturnType<typeof listTeacherContexts>>['items'] = [];
+let students: Awaited<ReturnType<typeof listTeacherStudents>>['items'] = [];
+let patients: Awaited<ReturnType<typeof listAvailablePatients>>['items'] = [];
+let contextsState = 'idle'; let studentsState = 'idle'; let patientsState = 'idle';
+const actionFailed = action?.data?.success === false || Boolean(action?.error);
+const submittedContextValid = UUID.test(submitted.subject_id ?? '') && UUID.test(submitted.academic_group_id ?? '');
+const queryContexts = Astro.url.searchParams.getAll('context');
+const currentContexts = Astro.url.searchParams.getAll('current_context');
+let selectedContext = actionFailed ? (submittedContextValid ? `${submitted.subject_id}:${submitted.academic_group_id}` : '') : queryContexts[0] ?? '';
+let preserveDependentPages = false;
+let selectedStudent = submitted.student_habilitation_id ?? '';
+let selectedPatient = submitted.patient_id ?? '';
+const pageFor = (prefix: string) => {
+ const params = new URLSearchParams();
+ for (const key of ['limit','offset']) {
+  const submittedValue = submitted[`${prefix}${key}`];
+  if (submittedValue !== undefined) params.append(key, submittedValue);
+  else for (const value of Astro.url.searchParams.getAll(`${prefix}${key}`)) params.append(key, value);
+ }
+ return parseTeacherAssignmentPagination(params);
+};
+try {
+ if (queryContexts.length > 1 || currentContexts.length > 1 || (selectedContext && (selectedContext.split(':').length !== 2 || !selectedContext.split(':').every((value) => UUID.test(value)))) || (currentContexts[0] && (currentContexts[0].split(':').length !== 2 || !currentContexts[0].split(':').every((value) => UUID.test(value))))) throw new Error('El contexto seleccionado no es válido.');
+ preserveDependentPages = currentContexts.length === 1 && currentContexts[0] === selectedContext;
+ const requestedContextPage = pageFor('');
+ const requestedStudentPage = pageFor('student_');
+ const requestedPatientPage = pageFor('patient_');
+ contextPage = requestedContextPage;
+ studentPage = actionFailed || preserveDependentPages ? requestedStudentPage : {limit:50,offset:0};
+ patientPage = actionFailed || preserveDependentPages ? requestedPatientPage : {limit:50,offset:0};
+} catch (error) {
+ queryValid = false; queryError = error instanceof Error ? error.message : 'Revisá los parámetros de consulta.';
+}
+const createdValues = Astro.url.searchParams.getAll('created');
+let createdId = '';
+if (createdValues.length > 1 || (createdValues.length === 1 && (!/^[1-9]\d{0,18}$/.test(createdValues[0]) || BigInt(createdValues[0]) > 9223372036854775807n))) {
+ queryValid = false; queryError = 'El identificador de confirmación no es válido.';
+} else createdId = createdValues[0] ?? '';
+if (queryValid) {
+ try { contexts = (await listTeacherContexts(contextPage, Astro.cookies)).items; contextsState = 'success'; }
+ catch (error) {
+  if (error instanceof ApiError && error.status === 401) return Astro.redirect(`/auth/login?returnTo=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`);
+  contextsState = error instanceof ApiError && error.status === 403 ? 'denied' : 'failed';
+ }
+}
+const contextParts = selectedContext.split(':');
+const contextValid = queryValid && contextsState === 'success' && contextParts.length === 2 && contexts.some((item) => item.subject_id === contextParts[0] && item.academic_group_id === contextParts[1]);
+if (contextValid) {
+ const [subjectId, groupId] = contextParts;
+ try { students = (await listTeacherStudents({ subject_id:subjectId, academic_group_id:groupId, ...studentPage }, Astro.cookies)).items; studentsState = 'success'; }
+ catch (error) {
+  if (error instanceof ApiError && error.status === 401) return Astro.redirect(`/auth/login?returnTo=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`);
+  studentsState = error instanceof ApiError && error.status === 403 ? 'denied' : 'failed';
+ }
+ if (studentsState !== 'unauthorized') {
+  try { patients = (await listAvailablePatients({ subject_id:subjectId, academic_group_id:groupId, ...patientPage }, Astro.cookies)).items; patientsState = 'success'; }
+  catch (error) {
+   if (error instanceof ApiError && error.status === 401) return Astro.redirect(`/auth/login?returnTo=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`);
+   patientsState = error instanceof ApiError && error.status === 403 ? 'denied' : 'failed';
+  }
+ }
+} else if (!submittedContextValid) { selectedStudent = ''; selectedPatient = ''; }
+const coordinates = (context: {limit:number;offset:number}, student: {limit:number;offset:number}, patient: {limit:number;offset:number}) => ({contextLimit:context.limit,contextOffset:context.offset,studentLimit:student.limit,studentOffset:student.offset,patientLimit:patient.limit,patientOffset:patient.offset});
+const nav = (name:string, offset:number, limit:number, context:string, current = coordinates(contextPage,studentPage,patientPage)) => {
+ const params = new URLSearchParams(); if (context) params.set('context',context); params.set('current_context',context);
+ const pages = { context: {limit:current.contextLimit,offset:current.contextOffset}, student: {limit:current.studentLimit,offset:current.studentOffset}, patient: {limit:current.patientLimit,offset:current.patientOffset} };
+ const target = name === '' ? 'context' : name.startsWith('student_') ? 'student' : 'patient';
+ pages[target] = {limit,offset};
+ for (const [key,page] of Object.entries(pages)) { params.set(key === 'context' ? 'limit' : `${key}_limit`,String(page.limit)); params.set(key === 'context' ? 'offset' : `${key}_offset`,String(page.offset)); }
+ return `?${params}`;
+};
+const showPrevious = (page:{offset:number}) => page.offset > 0;
+const showNext = (page:{offset:number;limit:number}, itemsLength:number) => itemsLength === page.limit && page.offset + page.limit <= 10000;
+const optionLabel = (name:string, surname:string) => `${name} ${surname}`;
+---
+<Layout>
+ <main aria-labelledby="assignment-title">
+  <header><p class="eyebrow">Gestión / Asignaciones</p><h1 id="assignment-title">Crear asignación de paciente</h1><p>Elegí un contexto docente activo y seleccioná un estudiante habilitado y un paciente disponible.</p></header>
+  {queryError && <p role="alert">{queryError}</p>}
+  {createdId && <p role="status">Asignación creada correctamente (#{createdId}).</p>}
+  <section aria-labelledby="context-title"><h2 id="context-title">Contexto académico</h2>
+   {contextsState === 'unauthorized' ? <p role="alert">Tu sesión venció. Iniciá sesión nuevamente.</p> : contextsState === 'denied' ? <p role="alert">No tenés permiso para consultar tus contextos docentes.</p> : contextsState === 'failed' ? <p role="alert">No se pudieron cargar los contextos docentes.</p> : contextsState === 'idle' ? <p>Revisá los parámetros para cargar contextos.</p> : contexts.length === 0 ? <><p>No hay contextos docentes activos disponibles.</p><nav aria-label="Paginación de contextos">{showPrevious(contextPage) && <a href={nav('',Math.max(0,contextPage.offset-contextPage.limit),contextPage.limit,selectedContext)}>Anterior</a>}</nav></> : <form method="GET" action="/teacher-assignments">
+    <input type="hidden" name="limit" value={contextPage.limit} /><input type="hidden" name="offset" value={contextPage.offset} />
+    <input type="hidden" name="current_context" value={selectedContext} />
+    <input type="hidden" name="student_limit" value={studentPage.limit} /><input type="hidden" name="student_offset" value={studentPage.offset} />
+    <input type="hidden" name="patient_limit" value={patientPage.limit} /><input type="hidden" name="patient_offset" value={patientPage.offset} />
+    <label for="context">Contexto</label><select id="context" name="context" required><option value="">Elegí contexto…</option>{contexts.map((item) => { const value = `${item.subject_id}:${item.academic_group_id}`; return <option value={value} selected={selectedContext===value}>{item.subject_name} — {item.academic_group_name} ({item.academic_year}, semestre {item.curriculum_semester})</option>; })}</select>
+    <button type="submit">Cargar estudiantes y pacientes</button>
+    <nav aria-label="Paginación de contextos">{showPrevious(contextPage) && <a href={nav('',Math.max(0,contextPage.offset-contextPage.limit),contextPage.limit,selectedContext)}>Anterior</a>} {showNext(contextPage,contexts.length) && <a href={nav('',contextPage.offset+contextPage.limit,contextPage.limit,selectedContext)}>Siguiente</a>}</nav>
+   </form>}
+  </section>
+  {queryValid && contextValid && <section aria-labelledby="selection-title"><h2 id="selection-title">Estudiante y paciente</h2>
+   <form method="POST" action={actions.createTeacherAssignment}>
+    <input type="hidden" name="subject_id" value={contextParts[0]} /><input type="hidden" name="academic_group_id" value={contextParts[1]} />
+    <input type="hidden" name="limit" value={contextPage.limit} /><input type="hidden" name="offset" value={contextPage.offset} />
+    <input type="hidden" name="student_limit" value={studentPage.limit} /><input type="hidden" name="student_offset" value={studentPage.offset} />
+    <input type="hidden" name="patient_limit" value={patientPage.limit} /><input type="hidden" name="patient_offset" value={patientPage.offset} />
+    {studentsState === 'unauthorized' ? <p role="alert">Tu sesión venció. Iniciá sesión nuevamente.</p> : studentsState === 'denied' ? <p role="alert">No tenés permiso para consultar estudiantes habilitados.</p> : studentsState === 'failed' ? <p role="alert">No se pudieron cargar los estudiantes habilitados.</p> : students.length === 0 ? <><p>No hay estudiantes habilitados en este contexto.</p><nav aria-label="Paginación de estudiantes">{showPrevious(studentPage) && <a href={nav('student_',Math.max(0,studentPage.offset-studentPage.limit),studentPage.limit,selectedContext)}>Anterior</a>}</nav></> : <div><label for="student">Estudiante habilitado</label><select id="student" name="student_habilitation_id" required><option value="">Elegí estudiante…</option>{students.map((item) => <option value={item.student_habilitation_id} selected={selectedStudent===item.student_habilitation_id}>{optionLabel(item.nombres,item.apellidos)}</option>)}</select><nav aria-label="Paginación de estudiantes">{showPrevious(studentPage) && <a href={nav('student_',Math.max(0,studentPage.offset-studentPage.limit),studentPage.limit,selectedContext)}>Anterior</a>} {showNext(studentPage,students.length) && <a href={nav('student_',studentPage.offset+studentPage.limit,studentPage.limit,selectedContext)}>Siguiente</a>}</nav></div>}
+    {patientsState === 'unauthorized' ? <p role="alert">Tu sesión venció. Iniciá sesión nuevamente.</p> : patientsState === 'denied' ? <p role="alert">No tenés permiso para consultar pacientes disponibles.</p> : patientsState === 'failed' ? <p role="alert">No se pudieron cargar los pacientes disponibles.</p> : patients.length === 0 ? <><p>No hay pacientes disponibles en este contexto.</p><nav aria-label="Paginación de pacientes">{showPrevious(patientPage) && <a href={nav('patient_',Math.max(0,patientPage.offset-patientPage.limit),patientPage.limit,selectedContext)}>Anterior</a>}</nav></> : <div><label for="patient">Paciente disponible</label><select id="patient" name="patient_id" required><option value="">Elegí paciente…</option>{patients.map((item) => <option value={item.patient_id} selected={selectedPatient===item.patient_id}>{optionLabel(item.nombres,item.apellidos)}</option>)}</select><nav aria-label="Paginación de pacientes">{showPrevious(patientPage) && <a href={nav('patient_',Math.max(0,patientPage.offset-patientPage.limit),patientPage.limit,selectedContext)}>Anterior</a>} {showNext(patientPage,patients.length) && <a href={nav('patient_',patientPage.offset+patientPage.limit,patientPage.limit,selectedContext)}>Siguiente</a>}</nav></div>}
+    <button type="submit" disabled={studentsState!=='success'||patientsState!=='success'||students.length===0||patients.length===0}>Crear asignación</button>
+   </form>
+  </section>}
+  {errorText && <p role="alert">{errorText}</p>}
+ </main>
+</Layout>
+<style>
+ main{max-width:900px;margin:0 auto}header{margin-bottom:2rem}header p{color:var(--muted)}.eyebrow{font:0.65rem/1.6 Consolas,monospace;letter-spacing:.1em;text-transform:uppercase}h1{font:400 clamp(2rem,3vw,2.75rem)/1.15 var(--serif)}section{margin:2rem 0;padding:1.5rem;border:1px solid var(--line);border-radius:.75rem;background:var(--paper)}form,div{display:grid;gap:.75rem}label{font-weight:600}select,button{font:inherit;padding:.65rem}nav{display:flex;gap:1rem}a{color:var(--sage)}
+</style>

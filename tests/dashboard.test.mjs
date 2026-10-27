@@ -97,6 +97,18 @@ test('shell resolves academic titles and keeps exact active paths across query s
 	}
 });
 
+test('availability and assignment navigation uses existing admin gate and permission hints without changing clinical links', async () => {
+	for (const [permissions, visible] of [[['patient-assignments:write'], true], [[], false], [['patient-assignments:write', null], false], ['patient-assignments:write', false]]) {
+		const shell = await evaluate('src/layouts/Layout.astro', ['academicLinks', 'clinicalLinks'], jwt({ ...valid, permissions }));
+		assert.equal(Array.from(shell.academicLinks, (link) => link.href).includes('/teacher-assignments'), visible);
+		assert.deepEqual(Array.from(shell.clinicalLinks, (link) => link.href), ['/my-patients']);
+	}
+	for (const [pathname, title] of [['/patient-availability', 'Disponibilidad de pacientes'], ['/teacher-assignments', 'Asignaciones de pacientes']]) {
+		const shell = await evaluate('src/layouts/Layout.astro', ['pageTitle'], jwt(valid), pathname);
+		assert.equal(shell.pageTitle, title);
+	}
+});
+
 test('home is a simple welcome without module cards or quick links', async () => {
 	const home = await source('src/pages/index.astro');
 	assert.match(home, /<h1 id="home-title">Bienvenido a Salud<\/h1>/);
