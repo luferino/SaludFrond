@@ -112,6 +112,7 @@ async function evaluateRegistry() {
 		'../pods/student-habilitation/actions': ['activateStudentHabilitation', 'revokeStudentHabilitation'],
 		'../pods/patient-availability/actions': ['searchAvailablePatient', 'enablePatientAvailability', 'withdrawPatientAvailability'],
 		'../pods/teacher-assignment/actions': ['createTeacherAssignment'],
+		'../pods/teacher-clinical/actions/consent': ['handleRecordTeacherConsent'],
 		'../pods/kinesiology-evaluation/actions/evaluations': ['handleCreateKinesiologyEvaluation', 'handleUpdateKinesiologyEvaluation'],
 	};
 	const sandbox = vm.createContext({});

@@ -71,6 +71,74 @@ test('origin parser rejects every cross-context provenance field for all statuse
  }
 });
 
+test('consent validates pending/verified envelopes, exact IDs and calendar dates without invented restrictions', async () => {
+ const evidence = { id, paper_signature_date: '2099-12-31', verified_by: patient, verified_at: '2026-01-01T00:00:00Z' };
+ const api = await compile(async () => Response.json({ evaluation_id: id, status: 'verified', evidence }));
+ assert.equal((await api.getConsent(id, cookies)).evidence.paper_signature_date, '2099-12-31');
+ for (const date of ['2024-02-29', '2099-12-31', '1900-01-01']) assert.equal(api.validPaperDate(date), true);
+ for (const date of ['2025-02-29', '2026-04-31', '2026-1-01', '']) assert.equal(api.validPaperDate(date), false);
+ for (const value of [
+  { evaluation_id: id, status: 'pending', evidence },
+  { evaluation_id: id, status: 'verified', evidence: null },
+  { evaluation_id: 9, status: 'pending', evidence: null },
+  { evaluation_id: id, status: 'verified', evidence: { ...evidence, id: 9 } },
+ ]) {
+  const bad = await compile(async () => Response.json(value));
+  await assert.rejects(bad.getConsent(id, cookies));
+ }
+});
+
+const teacherCookies = (permissions, role = 'teacher') => ({ get: () => ({ value: `header.${Buffer.from(JSON.stringify({ role, permissions, exp: 9999999999 })).toString('base64url')}.signature` }), delete() {} });
+test('consent action checks separate teacher verify grant, exact origin and origin-only consent before one append', async () => {
+ const input = { id, ...context, paper_signature_date: '2099-12-31' };
+ const requests = [];
+ const evidence = { id, paper_signature_date: input.paper_signature_date, verified_by: patient, verified_at: '2026-01-01T00:00:00Z' };
+ const api = await compile(async (url, init) => {
+  requests.push([url, init]);
+  if (init.method === 'POST') return Response.json({ evaluation_id: id, status: 'verified', evidence }, { status: 201 });
+  if (url.endsWith('/consent')) return Response.json({ evaluation_id: id, status: 'pending', evidence: null });
+  return Response.json({ ...evaluation, status: 'validated' });
+ }, 'src/pods/teacher-clinical/actions/consent.ts');
+ for (const [grants, role] of [[['kinesiology-evaluations:read'], 'teacher'], [['kinesiology-evaluations:verify-consent'], 'student']]) {
+  const result = await api.handleRecordTeacherConsent(input, { cookies: teacherCookies(grants, role) });
+  assert.equal(result.success, false);
+  assert.equal(requests.length, 0);
+ }
+ const grants = ['kinesiology-evaluations:read', 'kinesiology-evaluations:verify-consent'];
+ assert.equal((await api.handleRecordTeacherConsent(input, { cookies: teacherCookies(grants) })).success, true);
+ const posts = requests.filter(([, init]) => init.method === 'POST');
+ assert.equal(posts.length, 1);
+ assert.deepEqual(JSON.parse(posts[0][1].body), { paper_signature_date: '2099-12-31' });
+ assert.equal(posts[0][0], `https://api.invalid/kinesiology-evaluations/${id}/consent`);
+ const before = posts.length;
+ assert.equal((await api.handleRecordTeacherConsent({ ...input, paper_signature_date: '2025-02-29' }, { cookies: teacherCookies(grants) })).success, false);
+ assert.equal(requests.filter(([, init]) => init.method === 'POST').length, before);
+});
+
+test('consent action never retries failed/ambiguous writes or writes after concealed origin rejection', async () => {
+ const grants = ['kinesiology-evaluations:read', 'kinesiology-evaluations:verify-consent'];
+ for (const failure of ['snapshot', '404', 'post-failure']) {
+  let posts = 0;
+  const api = await compile(async (url, init) => {
+   if (init.method === 'POST') { posts++; throw new Error('network response lost'); }
+   if (url.endsWith('/consent')) return Response.json({ error: { code: 'NOT_FOUND', message: 'evaluation was not found' } }, { status: 404 });
+   return Response.json(failure === 'snapshot' ? { ...evaluation, submission_id: id } : evaluation);
+  }, 'src/pods/teacher-clinical/actions/consent.ts');
+  const result = await api.handleRecordTeacherConsent({ id, ...context, paper_signature_date: '2024-02-29' }, { cookies: teacherCookies(grants) });
+  assert.equal(result.success, false);
+  assert.equal(posts, 0);
+ }
+ let posts = 0;
+ const api = await compile(async (url, init) => {
+  if (init.method === 'POST') { posts++; throw new Error('network response lost'); }
+  return Response.json(url.endsWith('/consent') ? { evaluation_id: id, status: 'pending', evidence: null } : evaluation);
+ }, 'src/pods/teacher-clinical/actions/consent.ts');
+ const result = await api.handleRecordTeacherConsent({ id, ...context, paper_signature_date: '2024-02-29' }, { cookies: teacherCookies(grants) });
+ assert.equal(result.success, false);
+ assert.match(result.error, /No se pudo confirmar/);
+ assert.equal(posts, 1);
+});
+
 test('teacher read preserves 401/403/404 failures and never silently returns empty', async () => {
  for (const status of [401, 403, 404]) {
   let deleted = 0;

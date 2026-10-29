@@ -1,22 +1,44 @@
 ---
 export const prerender = false;
+import { actions, isInputError } from 'astro:actions';
 import Layout from '../../layouts/Layout.astro';
 import EvaluationReadOnly from '../../components/clinical/EvaluationReadOnly.astro';
 import { ApiError } from '../../shared/apiClient';
-import { getTeacherEvaluation, parseClinicalContext, teacherGrant } from '../../pods/teacher-clinical/api';
-import { type Evaluation } from '../../pods/kinesiology-evaluation/api';
+import { getConsent, getTeacherEvaluation, parseClinicalContext, teacherGrant, type ConsentState } from '../../pods/teacher-clinical/api';
+import { type Evaluation, actionHrefWithContext } from '../../pods/kinesiology-evaluation/api';
 Astro.response.headers.set('Cache-Control', 'no-store');
 let evaluation: Evaluation | null = null;
 let error = '';
+let consent: ConsentState | null = null;
+let consentError = '';
+const result = Astro.getActionResult(actions.recordTeacherConsent);
+const resultData = result?.data;
+const actionError = result?.error ? (isInputError(result.error) ? 'Revisá los campos del formulario.' : 'No se pudo procesar el formulario. Consultá el estado antes de registrar otra constancia.') : resultData?.success === false ? resultData.error : '';
+if (resultData?.success === false && /sesión venció/i.test(resultData.error)) return Astro.redirect('/auth/login?returnTo=%2Fteacher-clinical');
+if (resultData?.success) {
+ const context = parseClinicalContext(Astro.url.searchParams);
+ const returnParams = new URLSearchParams({ patient_id: context.patient_id, subject_id: context.subject_id, academic_group_id: context.academic_group_id });
+ return Astro.redirect(`/teacher-clinical/${Astro.params.id}?${returnParams}&recorded=1`);
+}
 const allowed = teacherGrant(Astro.cookies, 'kinesiology-evaluations:read');
 try {
  if (allowed) {
   evaluation = await getTeacherEvaluation(Astro.params.id ?? '', parseClinicalContext(Astro.url.searchParams), Astro.cookies);
+  try { consent = await getConsent(evaluation.id, Astro.cookies); }
+  catch (failure) {
+   if (failure instanceof ApiError && failure.status === 401) return Astro.redirect('/auth/login?returnTo=%2Fteacher-clinical');
+   consentError = 'No se pudo consultar el consentimiento en este contexto de origen. No se habilita el registro.';
+  }
  }
 } catch (failure) {
  if (failure instanceof ApiError && failure.status === 401) return Astro.redirect('/auth/login?returnTo=%2Fteacher-clinical');
  error = failure instanceof ApiError && failure.status === 403 ? 'No tenés permiso vigente para consultar esta ficha.' : 'No se pudo cargar la ficha en este contexto de origen.';
 }
+const cleanParams = evaluation ? new URLSearchParams({ patient_id: evaluation.patient_id, subject_id: evaluation.origin_subject_id, academic_group_id: evaluation.origin_group_id }) : new URLSearchParams();
+const stateHref = `/teacher-clinical/${Astro.params.id}?${cleanParams}`;
+const actionHref = actionHrefWithContext(actions.recordTeacherConsent.toString(), Object.fromEntries(cleanParams), Astro.url.href);
+const canRecord = !!evaluation && !!consent && teacherGrant(Astro.cookies, 'kinesiology-evaluations:verify-consent');
+const uncertain = resultData?.success === false && resultData.uncertain || !!result?.error && !isInputError(result.error);
 ---
 <Layout>
  <main>
@@ -25,11 +47,48 @@ try {
   {!allowed ? <p role="alert">No tenés permiso para consultar esta ficha como docente.</p> : error ? <p role="alert">{error}</p> : evaluation && <>
    <p>Asignatura de origen: {evaluation.origin_subject_id}<br />Grupo de origen: {evaluation.origin_group_id}</p>
    <EvaluationReadOnly evaluation={evaluation} />
+   <section aria-labelledby="consent-title">
+    <h2 id="consent-title">Consentimiento firmado en papel</h2>
+    {Astro.url.searchParams.get('recorded') === '1' && <p role="status">Constancia registrada.</p>}
+    {actionError && <p role="alert">{actionError}</p>}
+    {consentError ? <p role="alert">{consentError}</p> : consent && <>
+     <p>Estado: {consent.status === 'pending' ? 'Pendiente' : 'Verificado'}</p>
+     {consent.evidence && <dl>
+      <dt>Fecha de firma en papel</dt><dd>{consent.evidence.paper_signature_date}</dd>
+      <dt>Registrado por</dt><dd>{consent.evidence.verified_by}</dd>
+      <dt>Fecha de registro</dt><dd>{consent.evidence.verified_at}</dd>
+     </dl>}
+     {canRecord && !uncertain && <form method="POST" action={actionHref} id="consent-form">
+      <input type="hidden" name="id" value={evaluation.id} />
+      <input type="hidden" name="patient_id" value={evaluation.patient_id} />
+      <input type="hidden" name="subject_id" value={evaluation.origin_subject_id} />
+      <input type="hidden" name="academic_group_id" value={evaluation.origin_group_id} />
+      <label>Fecha de firma del consentimiento en papel <input type="date" name="paper_signature_date" required value={resultData?.success === false ? resultData.paper_signature_date : ''} /></label>
+      <p>Cada envío agrega una constancia nueva, aunque la fecha sea igual. Confirmá que tenés el consentimiento firmado antes de registrarlo.</p>
+      <button type="submit">Registrar constancia de consentimiento</button>
+     </form>}
+     {!canRecord && <p>La consulta no otorga permiso para registrar constancias.</p>}
+    </>}
+    <a href={stateHref}>Consultar estado sin registrar otra constancia</a>
+   </section>
   </>}
  </main>
+ <script>
+  const form = document.querySelector<HTMLFormElement>('#consent-form');
+  form?.addEventListener('submit', (event) => {
+   if (form.dataset.submitting === 'true') { event.preventDefault(); return; }
+   form.dataset.submitting = 'true';
+   const button = form.querySelector<HTMLButtonElement>('button[type="submit"]');
+   if (button) { button.disabled = true; button.textContent = 'Registrando…'; }
+  });
+ </script>
 </Layout>
 <style>
  main { max-width: 58rem; margin: auto; overflow-wrap: anywhere; }
+ section { margin: 1rem 0; padding: 1rem; background: var(--paper); border: 1px solid var(--line); border-radius: .65rem; }
+ label { display: grid; gap: .5rem; } input { padding: .6rem; border: 1px solid var(--field-line); background: var(--field); color: var(--ink); }
+ button { padding: .65rem; background: var(--rust); color: white; border: 1px solid var(--rust-deep); border-radius: .4rem; }
+ button:disabled { opacity: .65; cursor: wait; } dd { margin: .25rem 0 .75rem; }
  a { color: var(--rust-deep); text-decoration: underline; }
  [role="alert"] { border: 1px solid var(--rust-line); padding: 1rem; background: var(--rust-soft); }
 </style>

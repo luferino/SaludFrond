@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import ts from 'typescript';
 import { createRequire } from 'node:module';
+import vm from 'node:vm';
 const require = createRequire(import.meta.resolve('astro/package.json'));
 const { transform } = require('@astrojs/compiler');
 const root = new URL('../', import.meta.url);
@@ -22,15 +23,18 @@ async function html(value) {
 }
 async function render(path, options = {}) {
  const requests = [];
- const Astro = { props: options.props ?? {}, params: { id }, cookies: {}, url: new URL(`https://fixture.invalid/${path.includes('[id]') ? `teacher-clinical/${id}` : 'teacher-clinical'}?${options.query ?? query}`), request: new Request('https://fixture.invalid'), response: { headers: new Headers() }, redirect: (url) => `REDIRECT:${url}` };
+ const Astro = { props: options.props ?? {}, params: { id }, cookies: {}, url: new URL(`https://fixture.invalid/${path.includes('[id]') ? `teacher-clinical/${id}` : 'teacher-clinical'}?${options.query ?? query}`), request: new Request('https://fixture.invalid'), getActionResult: () => options.result, response: { headers: new Headers() }, redirect: (url) => `REDIRECT:${url}` };
  const mocks = {
   Layout: null, Fragment: null, EvaluationReadOnly: null, ApiError: class ApiError extends Error {},
-  teacherGrant: (_cookies, grant) => options.denied ? false : true,
+  actions: { recordTeacherConsent: 'record' }, isInputError: () => false,
+  teacherGrant: (_cookies, grant) => options.denied ? false : grant === 'kinesiology-evaluations:verify-consent' ? !!options.verify : true,
   parseTeacherPagination: () => ({ limit: 50, offset: options.offset ?? 0 }),
   parseClinicalContext: () => clinicalContext,
   listTeacherPatients: async () => { requests.push('assignments'); if (options.failure) throw new Error('failed'); return { items: options.empty ? [] : [row], limit: 50, offset: options.offset ?? 0 }; },
   listTeacherEvaluations: async () => { requests.push('list'); return options.emptyEvaluations ? [] : [evaluation]; },
   getTeacherEvaluation: async () => { requests.push('detail'); if (options.detailFailure) throw new Error('failed'); return evaluation; },
+  getConsent: async () => { requests.push('consent'); if (options.consentFailure) throw new Error('failed'); return { evaluation_id: id, status: 'pending', evidence: null }; },
+  actionHrefWithContext: (action) => action,
   $$createAstro: () => ({}), $$createComponent: (component) => component,
   $$render: async (strings, ...values) => { let output = ''; for (let i = 0; i < strings.length; i++) output += strings[i] + await html(values[i]); return output; },
   $$renderComponent: async (_result, _name, component, props, slots) => typeof component === 'function' ? component({ createAstro: () => ({ ...Astro, props }) }, props, slots) : slots?.default?.() ?? '',
@@ -74,11 +78,49 @@ test('teacher discovery distinguishes denied/error/empty and preserves Previous 
  assert.doesNotMatch(empty.html, />Siguiente</);
 });
 
-test('teacher detail renders read-only on GET', async () => {
+test('teacher consent renders state on GET, requires separate verify grant and hides form on uncertain/read failure', async () => {
  const path = 'src/pages/teacher-clinical/[id].astro';
  const reader = await render(path);
- assert.deepEqual(reader.requests, ['detail']);
+ assert.deepEqual(reader.requests, ['detail', 'consent']);
+ assert.match(reader.html, /Pendiente/);
  assert.doesNotMatch(reader.html, /method="POST"/);
+ const writer = await render(path, { verify: true });
+ assert.match(writer.html, /method="POST"/);
+ assert.match(writer.html, /name="paper_signature_date"/);
+ assert.doesNotMatch(writer.html, /Guardar borrador|Crear.*borrador|name="verified_by"/);
+ const unavailable = await render(path, { verify: true, consentFailure: true });
+ assert.match(unavailable.html, /No se pudo consultar/);
+ assert.doesNotMatch(unavailable.html, /method="POST"/);
+ const uncertain = await render(path, { verify: true, result: { data: { success: false, uncertain: true, error: 'No se pudo confirmar el registro.' } } });
+ assert.match(uncertain.html, /Consultar estado/);
+ assert.doesNotMatch(uncertain.html, /method="POST"/);
+ const success = await render(path, { verify: true, result: { data: { success: true } } });
+ assert.match(success.html, /REDIRECT:/);
+ assert.match(success.html, /recorded=1/);
+});
+
+test('confirmed consent append redirects with context before any follow-up reads can fail', async () => {
+ const path = 'src/pages/teacher-clinical/[id].astro';
+ const result = await render(path, { result: { data: { success: true } }, detailFailure: true });
+ assert.equal(result.html, `REDIRECT:/teacher-clinical/${id}?patient_id=${patient}&subject_id=${subject}&academic_group_id=${group}&recorded=1`);
+ assert.deepEqual(result.requests, []);
+ assert.doesNotMatch(result.html, /<form|method="POST"|Registrar constancia/);
+});
+
+test('consent browser handler disables first submit and prevents a second click without sending itself', async () => {
+ const page = await readFile(new URL('src/pages/teacher-clinical/[id].astro', root), 'utf8');
+ const script = page.match(/<script>([\s\S]*?)<\/script>/)?.[1];
+ assert.ok(script, 'explicit submit protection must exist');
+ let handler;
+ const button = { disabled: false, textContent: '' };
+ const form = { dataset: {}, addEventListener: (_name, callback) => { handler = callback; }, querySelector: () => button };
+ const code = ts.transpileModule(script, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+ vm.runInNewContext(code, { document: { querySelector: () => form } });
+ let prevented = 0;
+ handler({ preventDefault() { prevented++; } });
+ assert.equal(button.disabled, true);
+ handler({ preventDefault() { prevented++; } });
+ assert.equal(prevented, 1);
 });
 
 test('teacher read-only renderer shows actual clinical content, false/null antecedents and studies', async () => {

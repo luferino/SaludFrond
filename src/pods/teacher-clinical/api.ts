@@ -74,6 +74,36 @@ export async function listTeacherEvaluations(context: ClinicalContext, cookies: 
  if (!record(response) || !Array.isArray(response.items)) throw new Error('La respuesta de fichas no es válida.');
  return response.items.map((item) => originEvaluation(item, context));
 }
+export interface ConsentEvidence { id: string; paper_signature_date: string; verified_by: string; verified_at: string }
+export interface ConsentState { evaluation_id: string; status: 'pending' | 'verified'; evidence: ConsentEvidence | null }
+export function validPaperDate(value: unknown): value is string {
+ if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+ const date = new Date(`${value}T00:00:00Z`);
+ return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+function consentResponse(value: unknown, id: string): ConsentState {
+ if (!record(value) || value.evaluation_id !== id) throw new Error('La respuesta de consentimiento no es válida.');
+ if (value.status === 'pending' && value.evidence === null) return value as unknown as ConsentState;
+ const evidence = value.evidence;
+ if (value.status !== 'verified' || !record(evidence) || !validId(evidence.id)
+  || !validPaperDate(evidence.paper_signature_date) || typeof evidence.verified_by !== 'string' || !UUID.test(evidence.verified_by)
+  || typeof evidence.verified_at !== 'string' || !/^\d{4}-\d{2}-\d{2}T/.test(evidence.verified_at) || !Number.isFinite(Date.parse(evidence.verified_at))) {
+  throw new Error('La respuesta de consentimiento no es válida.');
+ }
+ return value as unknown as ConsentState;
+}
+export async function getConsent(id: string, cookies: AstroCookies): Promise<ConsentState> {
+ if (!validId(id)) throw new Error('El identificador de ficha no es válido.');
+ return consentResponse(await apiFetch<unknown>(`/kinesiology-evaluations/${id}/consent`, { cookies }), id);
+}
+export async function appendConsent(id: string, paper_signature_date: string, cookies: AstroCookies): Promise<ConsentState> {
+ if (!validId(id) || !validPaperDate(paper_signature_date)) throw new Error('La fecha o ficha no es válida.');
+ const state = consentResponse(await apiFetch<unknown>(`/kinesiology-evaluations/${id}/consent`, {
+  method: 'POST', body: { paper_signature_date }, cookies,
+ }), id);
+ if (state.status !== 'verified' || state.evidence?.paper_signature_date !== paper_signature_date) throw new Error('El resultado de registro no se pudo confirmar.');
+ return state;
+}
 export async function getTeacherEvaluation(id: string, context: ClinicalContext, cookies: AstroCookies): Promise<Evaluation> {
  validateContext(context);
  return originEvaluation(await getEvaluation(id, cookies), context);
