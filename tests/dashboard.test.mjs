@@ -109,6 +109,19 @@ test('availability and assignment navigation uses existing admin gate and permis
 	}
 });
 
+test('teacher clinical navigation requires teacher role and both read grants while student entry stays unchanged', async () => {
+ const grants = ['patient-assignments:read', 'kinesiology-evaluations:read'];
+ for (const [role, permissions, expected] of [
+  ['teacher', grants, ['/teacher-clinical']], ['docente', grants, ['/teacher-clinical']],
+  ['teacher', [grants[0]], []], ['teacher', [grants[1]], []], ['admin', grants, []],
+  ['student', grants, ['/my-patients']], ['teacher', [...grants, null], []],
+ ]) {
+  const shell = await evaluate('src/layouts/Layout.astro', ['clinicalLinks', 'pageTitle'], jwt({ ...valid, role, permissions }), '/teacher-clinical/123');
+  assert.deepEqual(Array.from(shell.clinicalLinks, (link) => link.href), expected);
+  assert.equal(shell.pageTitle, 'Acceso clínico docente');
+ }
+});
+
 test('home is a simple welcome without module cards or quick links', async () => {
 	const home = await source('src/pages/index.astro');
 	assert.match(home, /<h1 id="home-title">Bienvenido a Salud<\/h1>/);

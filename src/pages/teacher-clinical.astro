@@ -1,0 +1,74 @@
+---
+export const prerender = false;
+import Layout from '../layouts/Layout.astro';
+import { ApiError } from '../shared/apiClient';
+import { listTeacherPatients, listTeacherEvaluations, parseTeacherPagination, teacherGrant, type TeacherPatient } from '../pods/teacher-clinical/api';
+import type { Evaluation } from '../pods/kinesiology-evaluation/api';
+Astro.response.headers.set('Cache-Control', 'no-store');
+const allowed = teacherGrant(Astro.cookies, 'patient-assignments:read') && teacherGrant(Astro.cookies, 'kinesiology-evaluations:read');
+let pagination = { limit: 50, offset: 0 };
+let patients: TeacherPatient[] = [];
+let selected: TeacherPatient | undefined;
+let evaluations: Evaluation[] = [];
+let error = '';
+const choices = Astro.url.searchParams.getAll('assignment_id');
+try {
+ if (allowed) {
+  pagination = parseTeacherPagination(Astro.url.searchParams);
+  const page = await listTeacherPatients(pagination, Astro.cookies);
+  patients = page.items;
+  if (choices.length) {
+   selected = choices.length === 1 ? patients.find((row) => row.id === choices[0]) : undefined;
+   if (!selected) error = 'La asignación seleccionada no está disponible en esta página. Volvé a elegir el contexto.';
+   else evaluations = await listTeacherEvaluations({ patient_id: selected.patient_id, subject_id: selected.subject_id, academic_group_id: selected.academic_group_id }, Astro.cookies);
+  }
+ }
+} catch (failure) {
+ if (failure instanceof ApiError && failure.status === 401) return Astro.redirect('/auth/login?returnTo=%2Fteacher-clinical');
+ error = failure instanceof ApiError && failure.status === 403 ? 'No tenés permiso vigente para consultar este contexto.' : 'No se pudo cargar el acceso clínico. No se muestra una lista vacía porque la consulta falló.';
+}
+const link = (offset: number) => `/teacher-clinical?limit=${pagination.limit}&offset=${offset}`;
+const previous = pagination.offset > 0 ? Math.max(0, pagination.offset - pagination.limit) : null;
+const next = patients.length === pagination.limit && pagination.offset + pagination.limit <= 10000 ? pagination.offset + pagination.limit : null;
+---
+<Layout>
+ <main>
+  <h1>Acceso clínico docente</h1>
+  <p>Elegí paciente, asignatura y grupo de una asignación vigente. Este acceso no es un catálogo histórico de fichas.</p>
+  {!allowed ? <p role="alert">No tenés permiso para consultar el acceso clínico docente.</p> : <>
+   {error && <p role="alert">{error}</p>}
+   {!error && !patients.length && <p>No hay pacientes asignados disponibles en esta página de tus contextos docentes.</p>}
+   {patients.length > 0 && <form method="GET">
+    <input type="hidden" name="limit" value={pagination.limit} />
+    <input type="hidden" name="offset" value={pagination.offset} />
+    <label>Paciente y contexto de origen
+     <select name="assignment_id" required>
+      <option value="">Elegí una asignación</option>
+      {patients.map((row) => <option value={row.id} selected={selected?.id === row.id}>{row.apellidos}, {row.nombres} · Asignatura {row.subject_id} · Grupo {row.academic_group_id}</option>)}
+     </select>
+    </label>
+    <button type="submit">Consultar fichas</button>
+   </form>}
+   {!error && (previous !== null || next !== null) && <nav aria-label="Paginación de asignaciones">
+    {previous !== null && <a href={link(previous)}>Anterior</a>}
+    {next !== null && <a href={link(next)}>Siguiente</a>}
+   </nav>}
+   {selected && !error && <section aria-labelledby="records-title">
+    <h2 id="records-title">Fichas de {selected.apellidos}, {selected.nombres}</h2>
+    <p>Asignatura: {selected.subject_id}<br />Grupo: {selected.academic_group_id}</p>
+    {evaluations.length ? <ul>{evaluations.map((evaluation) => <li>
+     <a href={`/teacher-clinical/${evaluation.id}?${new URLSearchParams({ patient_id: selected!.patient_id, subject_id: selected!.subject_id, academic_group_id: selected!.academic_group_id, limit: String(pagination.limit), offset: String(pagination.offset), assignment_id: selected!.id })}`}>Abrir ficha · {evaluation.status === 'draft' ? 'Borrador' : evaluation.status === 'submitted' ? 'Enviada' : 'Validada'}</a>
+    </li>)}</ul> : <p>No hay fichas para este paciente y contexto de origen.</p>}
+   </section>}
+  </>}
+ </main>
+</Layout>
+<style>
+ main { max-width: 64rem; margin: auto; overflow-wrap: anywhere; }
+ form, section, [role="alert"] { padding: 1rem; margin: 1rem 0; border: 1px solid var(--line); background: var(--paper); border-radius: .65rem; }
+ label { display: grid; gap: .5rem; }
+ select { max-width: 100%; padding: .65rem; background: var(--field); color: var(--ink); border: 1px solid var(--field-line); }
+ button { margin-top: 1rem; padding: .6rem 1rem; background: var(--rust); color: white; border: 1px solid var(--rust-deep); border-radius: .4rem; }
+ a { color: var(--rust-deep); text-decoration: underline; }
+ nav { display: flex; gap: 1.5rem; } li { padding: .5rem 0; }
+</style>

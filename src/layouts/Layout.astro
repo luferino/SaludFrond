@@ -13,6 +13,9 @@ const canRegister = isLoggedIn && Array.isArray(payload?.permissions)
 const canAssign = isLoggedIn && Array.isArray(payload?.permissions)
 	&& payload.permissions.every((permission) => typeof permission === 'string')
 	&& payload.permissions.includes('patient-assignments:write');
+const canReadClinical = isLoggedIn && ['teacher', 'docente'].includes(String(payload?.role).toLowerCase())
+	&& Array.isArray(payload?.permissions) && payload.permissions.every((permission) => typeof permission === 'string')
+	&& ['patient-assignments:read', 'kinesiology-evaluations:read'].every((grant) => payload.permissions!.includes(grant));
 const currentPath = Astro.url?.pathname.replace(/\/$/, '') || '/';
 const pageTitles: Record<string, string> = {
 	'/': 'Inicio', '/students': 'Estudiantes', '/teachers': 'Profesores',
@@ -25,6 +28,7 @@ const pageTitles: Record<string, string> = {
 };
 const pageTitle = currentPath.startsWith('/my-patients') ? 'Mis pacientes asignados'
 	: currentPath.startsWith('/kinesiology-evaluations') ? 'Evaluaciones kinésicas'
+	: currentPath.startsWith('/teacher-clinical') ? 'Acceso clínico docente'
 	: pageTitles[currentPath] ?? 'Salud';
 const peopleLinks = isLoggedIn && isAdmin ? [
 	{ href: '/patients', label: 'Pacientes' },
@@ -34,7 +38,7 @@ const peopleLinks = isLoggedIn && isAdmin ? [
 ] : [];
 const clinicalLinks = isLoggedIn && ['estudiante', 'student'].includes(String(payload?.role).toLowerCase())
 	? [{ href: '/my-patients', label: 'Mis pacientes asignados' }]
-	: [];
+	: canReadClinical ? [{ href: '/teacher-clinical', label: 'Acceso clínico docente' }] : [];
 const academicLinks = isLoggedIn ? [
 	{ href: '/subjects', label: 'Asignaturas' },
 	{ href: '/groups', label: 'Grupos académicos' },

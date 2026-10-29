@@ -1,0 +1,35 @@
+---
+export const prerender = false;
+import Layout from '../../layouts/Layout.astro';
+import EvaluationReadOnly from '../../components/clinical/EvaluationReadOnly.astro';
+import { ApiError } from '../../shared/apiClient';
+import { getTeacherEvaluation, parseClinicalContext, teacherGrant } from '../../pods/teacher-clinical/api';
+import { type Evaluation } from '../../pods/kinesiology-evaluation/api';
+Astro.response.headers.set('Cache-Control', 'no-store');
+let evaluation: Evaluation | null = null;
+let error = '';
+const allowed = teacherGrant(Astro.cookies, 'kinesiology-evaluations:read');
+try {
+ if (allowed) {
+  evaluation = await getTeacherEvaluation(Astro.params.id ?? '', parseClinicalContext(Astro.url.searchParams), Astro.cookies);
+ }
+} catch (failure) {
+ if (failure instanceof ApiError && failure.status === 401) return Astro.redirect('/auth/login?returnTo=%2Fteacher-clinical');
+ error = failure instanceof ApiError && failure.status === 403 ? 'No tenés permiso vigente para consultar esta ficha.' : 'No se pudo cargar la ficha en este contexto de origen.';
+}
+---
+<Layout>
+ <main>
+  <a href="/teacher-clinical">Volver al acceso clínico docente</a>
+  <h1>Ficha kinésica inicial · consulta docente</h1>
+  {!allowed ? <p role="alert">No tenés permiso para consultar esta ficha como docente.</p> : error ? <p role="alert">{error}</p> : evaluation && <>
+   <p>Asignatura de origen: {evaluation.origin_subject_id}<br />Grupo de origen: {evaluation.origin_group_id}</p>
+   <EvaluationReadOnly evaluation={evaluation} />
+  </>}
+ </main>
+</Layout>
+<style>
+ main { max-width: 58rem; margin: auto; overflow-wrap: anywhere; }
+ a { color: var(--rust-deep); text-decoration: underline; }
+ [role="alert"] { border: 1px solid var(--rust-line); padding: 1rem; background: var(--rust-soft); }
+</style>
