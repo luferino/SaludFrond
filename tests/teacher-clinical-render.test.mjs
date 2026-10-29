@@ -29,7 +29,10 @@ async function render(path, options = {}) {
   actions: { recordTeacherConsent: 'record' }, isInputError: () => false,
   teacherGrant: (_cookies, grant) => options.denied ? false : grant === 'kinesiology-evaluations:verify-consent' ? !!options.verify : true,
   parseTeacherPagination: () => ({ limit: 50, offset: options.offset ?? 0 }),
-  parseClinicalContext: () => clinicalContext,
+  parseClinicalContext: (params) => {
+   if (options.rejectQuery || !params?.has('patient_id') || !params?.has('subject_id') || !params?.has('academic_group_id')) throw new Error('invalid query context');
+   return Object.fromEntries(['patient_id', 'subject_id', 'academic_group_id'].map((key) => [key, params.get(key)]));
+  },
   listTeacherPatients: async () => { requests.push('assignments'); if (options.failure) throw new Error('failed'); return { items: options.empty ? [] : [row], limit: 50, offset: options.offset ?? 0 }; },
   listTeacherEvaluations: async () => { requests.push('list'); return options.emptyEvaluations ? [] : [evaluation]; },
   getTeacherEvaluation: async () => { requests.push('detail'); if (options.detailFailure) throw new Error('failed'); return evaluation; },
@@ -94,17 +97,28 @@ test('teacher consent renders state on GET, requires separate verify grant and h
  const uncertain = await render(path, { verify: true, result: { data: { success: false, uncertain: true, error: 'No se pudo confirmar el registro.' } } });
  assert.match(uncertain.html, /Consultar estado/);
  assert.doesNotMatch(uncertain.html, /method="POST"/);
- const success = await render(path, { verify: true, result: { data: { success: true } } });
+ const success = await render(path, { verify: true, result: { data: { success: true, id, ...clinicalContext } } });
  assert.match(success.html, /REDIRECT:/);
  assert.match(success.html, /recorded=1/);
 });
 
 test('confirmed consent append redirects with context before any follow-up reads can fail', async () => {
  const path = 'src/pages/teacher-clinical/[id].astro';
- const result = await render(path, { result: { data: { success: true } }, detailFailure: true });
+ const result = await render(path, { result: { data: { success: true, id, ...clinicalContext } }, detailFailure: true });
  assert.equal(result.html, `REDIRECT:/teacher-clinical/${id}?patient_id=${patient}&subject_id=${subject}&academic_group_id=${group}&recorded=1`);
  assert.deepEqual(result.requests, []);
  assert.doesNotMatch(result.html, /<form|method="POST"|Registrar constancia/);
+});
+
+test('confirmed append redirects from validated action context despite missing, malformed, or different query context', async () => {
+ const path = 'src/pages/teacher-clinical/[id].astro';
+ const actionContext = { patient_id: patient, subject_id: subject, academic_group_id: group };
+ const confirmedId = '9007199254741099';
+ for (const queryValue of ['', 'patient_id=bad&subject_id=bad&academic_group_id=bad', `patient_id=${group}&subject_id=${patient}&academic_group_id=${subject}`]) {
+  const result = await render(path, { query: queryValue, rejectQuery: true, result: { data: { success: true, id: confirmedId, ...actionContext } }, detailFailure: true });
+  assert.equal(result.html, `REDIRECT:/teacher-clinical/${confirmedId}?patient_id=${patient}&subject_id=${subject}&academic_group_id=${group}&recorded=1`);
+  assert.deepEqual(result.requests, []);
+ }
 });
 
 test('consent browser handler disables first submit and prevents a second click without sending itself', async () => {

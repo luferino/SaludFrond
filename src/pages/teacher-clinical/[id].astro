@@ -16,9 +16,8 @@ const resultData = result?.data;
 const actionError = result?.error ? (isInputError(result.error) ? 'Revisá los campos del formulario.' : 'No se pudo procesar el formulario. Consultá el estado antes de registrar otra constancia.') : resultData?.success === false ? resultData.error : '';
 if (resultData?.success === false && /sesión venció/i.test(resultData.error)) return Astro.redirect('/auth/login?returnTo=%2Fteacher-clinical');
 if (resultData?.success) {
- const context = parseClinicalContext(Astro.url.searchParams);
- const returnParams = new URLSearchParams({ patient_id: context.patient_id, subject_id: context.subject_id, academic_group_id: context.academic_group_id });
- return Astro.redirect(`/teacher-clinical/${Astro.params.id}?${returnParams}&recorded=1`);
+ const returnParams = new URLSearchParams({ patient_id: resultData.patient_id, subject_id: resultData.subject_id, academic_group_id: resultData.academic_group_id });
+ return Astro.redirect(`/teacher-clinical/${resultData.id}?${returnParams}&recorded=1`);
 }
 const allowed = teacherGrant(Astro.cookies, 'kinesiology-evaluations:read');
 try {

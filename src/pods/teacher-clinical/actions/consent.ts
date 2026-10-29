@@ -22,7 +22,7 @@ export async function handleRecordTeacherConsent(input: Record<string, unknown>,
   await getConsent(input.id, context.cookies);
   writing = true;
   await appendConsent(input.id, date, context.cookies);
-  return { success: true as const };
+  return { success: true as const, id: String(input.id), ...selected };
  } catch (error) {
   if (error instanceof ApiError) {
    if (error.status === 401) return failed('Tu sesión venció. Iniciá sesión nuevamente.');

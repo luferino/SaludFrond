@@ -105,7 +105,8 @@ test('consent action checks separate teacher verify grant, exact origin and orig
   assert.equal(requests.length, 0);
  }
  const grants = ['kinesiology-evaluations:read', 'kinesiology-evaluations:verify-consent'];
- assert.equal((await api.handleRecordTeacherConsent(input, { cookies: teacherCookies(grants) })).success, true);
+ const saved = await api.handleRecordTeacherConsent(input, { cookies: teacherCookies(grants) });
+ assert.deepEqual(JSON.parse(JSON.stringify(saved)), { success: true, id, ...context });
  const posts = requests.filter(([, init]) => init.method === 'POST');
  assert.equal(posts.length, 1);
  assert.deepEqual(JSON.parse(posts[0][1].body), { paper_signature_date: '2099-12-31' });
@@ -113,6 +114,20 @@ test('consent action checks separate teacher verify grant, exact origin and orig
  const before = posts.length;
  assert.equal((await api.handleRecordTeacherConsent({ ...input, paper_signature_date: '2025-02-29' }, { cookies: teacherCookies(grants) })).success, false);
  assert.equal(requests.filter(([, init]) => init.method === 'POST').length, before);
+});
+
+test('denied consent action leaves append count and stored rows unchanged', async () => {
+ const rows = [{ id: 'existing', paper_signature_date: '2024-01-01' }];
+ let appends = 0;
+ const before = structuredClone(rows);
+ const api = await compile(async (_url, init) => {
+  if (init.method === 'POST') { appends++; rows.push({ paper_signature_date: '2024-02-29' }); }
+  return Response.json(evaluation);
+ }, 'src/pods/teacher-clinical/actions/consent.ts');
+ const result = await api.handleRecordTeacherConsent({ id, ...context, paper_signature_date: '2024-02-29' }, { cookies: teacherCookies(['kinesiology-evaluations:read']) });
+ assert.equal(result.success, false);
+ assert.equal(appends, 0);
+ assert.deepEqual(rows, before);
 });
 
 test('consent action never retries failed/ambiguous writes or writes after concealed origin rejection', async () => {
