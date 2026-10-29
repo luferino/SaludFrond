@@ -14,6 +14,12 @@ This entry discovers current assignments only; it is not a historical patient ca
 
 Cross-context submission snapshots are outside this entry: provenance fields (`submission_id`, `submission_ordinal`, `submitted_by`, `submitted_at`, `consent`) are rejected rather than treated as editable/origin records. Status alone does not distinguish snapshots from origin records. BIGINT IDs stay strings. Responses are `no-store`; no patient document is placed in navigation URLs. Errors are not represented as empty lists.
 
+## Origin version history (read-only)
+
+After the origin read succeeds, the detail page shows **Historial de versiones** from `GET /kinesiology-evaluations/:id/submissions`. `listTeacherSubmissions` runs the origin guard (`getTeacherEvaluation`) first, so a rejected origin never requests the list. Every version appears as a read-only `SubmissionSnapshot`: ordinal, submission time, status, demographics, clinical content, the top-level `studies` only, and the consent snapshot as data. Snapshots never render the consent form. The consent form and its double-submit protection are unchanged.
+
+A history failure shows its own error (`No se pudo cargar el historial de versiones`) while the origin record and consent state stay visible. No history is requested for a denied or rejected origin.
+
 ## Paper consent
 
 The detail page reads `/kinesiology-evaluations/:id/consent` and distinguishes **Pendiente**, **Verificado**, and an unavailable read. A failed read never becomes pending and disables recording. The last verified evidence shows the paper signature date and server-assigned verifier/time.
@@ -28,4 +34,4 @@ Enter a real calendar date in `YYYY-MM-DD`. There is no client-invented future-d
 
 Focused API tests use in-memory fetch responses. Render tests compile actual Astro templates with isolated synthetic props and no HTTP, database, shared QA state or server. These checks do not establish browser interaction, live grants or backend availability.
 
-No reassignment, historical catalog, submission, correction, validation, amendment, dependencies or backend changes are included. Commits, publication and shared runtime startup remain separately authorized operations.
+No reassignment, historical catalog, submission action, correction, validation, amendment, dependencies or backend changes are included. Origin version history above is read-only. Commits, publication and shared runtime startup remain separately authorized operations.

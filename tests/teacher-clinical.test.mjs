@@ -71,6 +71,22 @@ test('origin parser rejects every cross-context provenance field for all statuse
  }
 });
 
+test('teacher history lists submissions only after the origin guard and never requests them for a rejected origin', async () => {
+ const snapshot = { id: '9007199254741062', evaluation_id: id, ordinal: 1, submitted_by: patient, submitted_at: '2026-01-02T00:00:00Z', status: 'pending_validation', clinical_content: evaluation.content, studies: [], patient: null, age_at_admission: null, consent: { id: '5', paper_signature_date: '2026-01-01', verified_by: patient, verified_at: '2026-01-02T00:00:00Z' } };
+ const requests = [];
+ const api = await compile(async (url) => { requests.push(url); return Response.json(url.endsWith('/submissions') ? { evaluation_id: id, items: [snapshot] } : evaluation); });
+ const list = await api.listTeacherSubmissions(id, context, cookies);
+ assert.deepEqual(requests, [`https://api.invalid/kinesiology-evaluations/${id}`, `https://api.invalid/kinesiology-evaluations/${id}/submissions`]);
+ assert.deepEqual(list.items.map((item) => item.ordinal), [1]);
+ requests.length = 0;
+ await assert.rejects(api.listTeacherSubmissions(id, { ...context, academic_group_id: patient }, cookies), /no está disponible en este contexto de origen/);
+ assert.deepEqual(requests, [`https://api.invalid/kinesiology-evaluations/${id}`]);
+ requests.length = 0;
+ const provenance = await compile(async (url) => { requests.push(url); return Response.json({ ...evaluation, submission_id: '5' }); });
+ await assert.rejects(provenance.listTeacherSubmissions(id, context, cookies), /no está disponible en este contexto de origen/);
+ assert.deepEqual(requests, [`https://api.invalid/kinesiology-evaluations/${id}`]);
+});
+
 test('consent validates pending/verified envelopes, exact IDs and calendar dates without invented restrictions', async () => {
  const evidence = { id, paper_signature_date: '2099-12-31', verified_by: patient, verified_at: '2026-01-01T00:00:00Z' };
  const api = await compile(async () => Response.json({ evaluation_id: id, status: 'verified', evidence }));

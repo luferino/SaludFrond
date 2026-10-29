@@ -3,14 +3,17 @@ export const prerender = false;
 import { actions, isInputError } from 'astro:actions';
 import Layout from '../../layouts/Layout.astro';
 import EvaluationReadOnly from '../../components/clinical/EvaluationReadOnly.astro';
+import SubmissionSnapshot from '../../components/clinical/SubmissionSnapshot.astro';
 import { ApiError } from '../../shared/apiClient';
-import { getConsent, getTeacherEvaluation, parseClinicalContext, teacherGrant, type ConsentState } from '../../pods/teacher-clinical/api';
-import { type Evaluation, actionHrefWithContext } from '../../pods/kinesiology-evaluation/api';
+import { getConsent, getTeacherEvaluation, listTeacherSubmissions, parseClinicalContext, teacherGrant, type ConsentState } from '../../pods/teacher-clinical/api';
+import { type Evaluation, type Submission, actionHrefWithContext } from '../../pods/kinesiology-evaluation/api';
 Astro.response.headers.set('Cache-Control', 'no-store');
 let evaluation: Evaluation | null = null;
 let error = '';
 let consent: ConsentState | null = null;
 let consentError = '';
+let submissions: Submission[] = [];
+let historyError = '';
 const result = Astro.getActionResult(actions.recordTeacherConsent);
 const resultData = result?.data;
 const actionError = result?.error ? (isInputError(result.error) ? 'Revisá los campos del formulario.' : 'No se pudo procesar el formulario. Consultá el estado antes de registrar otra constancia.') : resultData?.success === false ? resultData.error : '';
@@ -27,6 +30,12 @@ try {
   catch (failure) {
    if (failure instanceof ApiError && failure.status === 401) return Astro.redirect('/auth/login?returnTo=%2Fteacher-clinical');
    consentError = 'No se pudo consultar el consentimiento en este contexto de origen. No se habilita el registro.';
+  }
+  // Read after the origin guard; a history failure keeps the origin record and consent state visible.
+  try { submissions = (await listTeacherSubmissions(evaluation.id, parseClinicalContext(Astro.url.searchParams), Astro.cookies)).items; }
+  catch (failure) {
+   if (failure instanceof ApiError && failure.status === 401) return Astro.redirect('/auth/login?returnTo=%2Fteacher-clinical');
+   historyError = 'No se pudo cargar el historial de versiones en este contexto de origen.';
   }
  }
 } catch (failure) {
@@ -69,6 +78,10 @@ const uncertain = resultData?.success === false && resultData.uncertain || !!res
      {!canRecord && <p>La consulta no otorga permiso para registrar constancias.</p>}
     </>}
     <a href={stateHref}>Consultar estado sin registrar otra constancia</a>
+   </section>
+   <section aria-labelledby="history-title">
+    <h2 id="history-title">Historial de versiones</h2>
+    {historyError ? <p role="alert">{historyError}</p> : submissions.length ? submissions.map((submission) => <SubmissionSnapshot submission={submission} />) : <p>No hay versiones enviadas para esta ficha.</p>}
    </section>
   </>}
  </main>

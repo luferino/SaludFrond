@@ -2,9 +2,10 @@
 export const prerender = false;
 import { actions, isInputError } from 'astro:actions';
 import Layout from '../../layouts/Layout.astro';
+import SubmissionSnapshot from '../../components/clinical/SubmissionSnapshot.astro';
 import { ApiError } from '../../shared/apiClient';
 import { listAssignedPatients, parseAssignmentPagination } from '../../pods/patient-assignment/api';
-import { actionHrefWithContext, antecedentOptionState, EVALUATION_STATUS_LABELS, getEvaluation, type Evaluation, type EvaluationContent } from '../../pods/kinesiology-evaluation/api';
+import { actionHrefWithContext, antecedentOptionState, EVALUATION_STATUS_LABELS, getEvaluation, listSubmissions, type Evaluation, type EvaluationContent, type Submission } from '../../pods/kinesiology-evaluation/api';
 import { rawEvaluationContentFromForm } from '../../pods/kinesiology-evaluation/actions/evaluations';
 import { decodeJwt } from '../../shared/jwt';
 
@@ -20,6 +21,8 @@ let eligible = false;
 let canSubmit = false;
 let unavailable = false;
 let loadError = '';
+let submissions: Submission[] = [];
+let historyError = '';
 const result = Astro.getActionResult(actions.updateKinesiologyEvaluation);
 let retainedContent: EvaluationContent | undefined = result?.data?.success === false ? result.data.content : undefined;
 let errorText = result?.data?.success === false ? result.data.error : '';
@@ -76,6 +79,14 @@ try {
 				// Retained values are unsaved; submission only sends the saved version.
 				canSubmit = eligible && !retainedContent && Array.isArray(actor?.permissions)
 					&& actor.permissions.includes('kinesiology-evaluations:submit');
+				// Version history is read-only and loads only after the identity checks above; a failure never hides the record.
+				if (record.status !== 'draft') {
+					try { submissions = (await listSubmissions(id, Astro.cookies)).items; }
+					catch (historyFailure) {
+						if (historyFailure instanceof ApiError && historyFailure.status === 401) throw historyFailure;
+						historyError = 'No se pudo cargar el historial de versiones. La ficha se muestra igual; intentá recargar la página.';
+					}
+				}
 			}
 		}
 	}
@@ -199,6 +210,10 @@ const textFields = [
 				<p id="dirty-notice" class="notice error" role="status" hidden>Hay cambios sin guardar. Guardá el borrador antes de enviarlo.</p>
 				<button id="submit-button" class="button" type="submit">Enviar ficha guardada</button>
 			</form>}
+		{evaluation.status !== 'draft' && <section class="history" aria-labelledby="history-title">
+				<h2 id="history-title">Historial de versiones</h2>
+				{historyError ? <p class="notice error" role="alert">{historyError}</p> : submissions.length ? submissions.map((submission) => <SubmissionSnapshot submission={submission} />) : <p>No hay versiones enviadas para esta ficha.</p>}
+			</section>}
 		</> : <section class="notice error" role="alert">
 			<h1 id="title">No se pudo cargar la ficha</h1>
 			<p>{errorText || 'Volvé a la asignación e intentá nuevamente.'}</p>
@@ -277,7 +292,7 @@ const textFields = [
 	}
 	.error { border-color: var(--rust-line); background: var(--rust-soft); }
 	.success { border-color: var(--sage); background: var(--sage-soft); }
-	.status, .submit-panel { margin: 1rem 0; padding: 1rem 1.25rem; border: 1px solid var(--line); border-radius: 0.75rem; background: var(--paper); }
+	.status, .submit-panel, .history { margin: 1rem 0; padding: 1rem 1.25rem; border: 1px solid var(--line); border-radius: 0.75rem; background: var(--paper); }
 	.status h2, .submit-panel h2 { margin: 0 0 0.5rem; font-size: 1.1rem; }
 	.button:disabled { opacity: 0.65; cursor: not-allowed; }
 	fieldset {

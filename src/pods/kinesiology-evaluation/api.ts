@@ -84,6 +84,13 @@ export interface Submission {
 	consent: ConsentSnapshot;
 }
 
+/** Version history envelope; items are ordered by ordinal and may be empty. */
+export interface SubmissionList {
+	evaluation_id: string;
+	amendment_of_evaluation_id?: string;
+	items: Submission[];
+}
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DECIMAL_ID = /^(0|[1-9]\d{0,18})$/;
 const MAX_ID = 9223372036854775807n;
@@ -93,6 +100,7 @@ const CONTENT_KEYS = [
 	'referring_physician', 'antecedents', 'studies',
 ];
 const ANTECEDENT_KEYS = ['hta', 'dbt', 'diu', 'sedentary_lifestyle', 'pacemaker', 'other'];
+const CONSENT_KEYS = ['id', 'paper_signature_date', 'verified_by', 'verified_at'];
 const TEXT_FIELDS = [
 	'admission_status', 'illness_history', 'medical_diagnosis', 'kinesiology_diagnosis',
 	'objectives', 'proposed_treatment', 'occupation', 'referring_physician',
@@ -207,7 +215,8 @@ export function isSubmission(value: unknown, evaluationId: string): value is Sub
 	if (!(value.patient === null || validPatient(value.patient))) return false;
 	if (!(value.age_at_admission === null || typeof value.age_at_admission === 'number' && Number.isFinite(value.age_at_admission))) return false;
 	const consent = value.consent;
-	return record(consent) && typeof consent.id === 'string' && validId(consent.id)
+	return record(consent) && Object.keys(consent).every((key) => CONSENT_KEYS.includes(key))
+		&& typeof consent.id === 'string' && validId(consent.id)
 		&& calendarDate(consent.paper_signature_date)
 		&& typeof consent.verified_by === 'string' && UUID.test(consent.verified_by) && iso(consent.verified_at);
 }
@@ -274,6 +283,27 @@ export async function submitEvaluation(id: string, cookies: AstroCookies): Promi
 		throw new Error('El servicio devolvió datos incompletos o desconocidos.');
 	}
 	return response;
+}
+
+/** Read-only version history for one record. The list is the only source of snapshot detail. */
+export async function listSubmissions(evaluationId: string, cookies: AstroCookies): Promise<SubmissionList> {
+	if (!validId(evaluationId)) throw new Error('El identificador de ficha no es válido.');
+	const response = await apiFetch<unknown>(`/kinesiology-evaluations/${evaluationId}/submissions`, { cookies });
+	if (!record(response) || response.evaluation_id !== evaluationId || !Array.isArray(response.items)
+		|| (response.amendment_of_evaluation_id !== undefined
+			&& (typeof response.amendment_of_evaluation_id !== 'string' || !validId(response.amendment_of_evaluation_id)))) {
+		throw new Error('La respuesta de historial no es válida.');
+	}
+	const items = response.items.map((item) => {
+		if (!isSubmission(item, evaluationId)) throw new Error('El historial de versiones no es válido.');
+		return item;
+	});
+	if (items.some((item, index) => index > 0 && item.ordinal <= items[index - 1].ordinal)) {
+		throw new Error('El historial de versiones no está ordenado.');
+	}
+	const list: SubmissionList = { evaluation_id: evaluationId, items };
+	if (response.amendment_of_evaluation_id !== undefined) list.amendment_of_evaluation_id = response.amendment_of_evaluation_id;
+	return list;
 }
 
 export async function getEvaluation(id: string, cookies: AstroCookies): Promise<Evaluation> {

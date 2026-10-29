@@ -1,6 +1,6 @@
 import type { AstroCookies } from 'astro';
 import { apiFetch } from '../../shared/apiClient';
-import { getEvaluation, isEvaluation, type Evaluation } from '../kinesiology-evaluation/api';
+import { getEvaluation, isEvaluation, listSubmissions, type Evaluation, type SubmissionList } from '../kinesiology-evaluation/api';
 import { decodeJwt } from '../../shared/jwt';
 
 export interface ClinicalContext { patient_id: string; subject_id: string; academic_group_id: string }
@@ -103,6 +103,11 @@ export async function appendConsent(id: string, paper_signature_date: string, co
  }), id);
  if (state.status !== 'verified' || state.evidence?.paper_signature_date !== paper_signature_date) throw new Error('El resultado de registro no se pudo confirmar.');
  return state;
+}
+/** Version history for an origin record; the origin guard runs first and cross-context reads never reach the list. */
+export async function listTeacherSubmissions(id: string, context: ClinicalContext, cookies: AstroCookies): Promise<SubmissionList> {
+ const origin = await getTeacherEvaluation(id, context, cookies);
+ return listSubmissions(origin.id, cookies);
 }
 export async function getTeacherEvaluation(id: string, context: ClinicalContext, cookies: AstroCookies): Promise<Evaluation> {
  validateContext(context);

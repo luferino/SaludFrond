@@ -23,4 +23,12 @@ A student can submit their saved initial kinesiology draft so it becomes an immu
 | Other `4xx` | Not submitted; check the status before trying again |
 | Network failure, `408`, `429`, `5xx`, or a malformed `201` | **Uncertain**: the submit form is hidden and the student is asked to check the status before trying again; never reported as success |
 
-Version history, teacher validation, correction requests, resubmission and amendments are out of scope for this slice.
+## Version history (read-only)
+
+- `/kinesiology-evaluations/[id]` shows **Historial de versiones** for submitted and validated records only, after the assignment and identity checks pass. Drafts show no history section.
+- The list comes from `GET /kinesiology-evaluations/:id/submissions` (`listSubmissions`). The envelope must echo the requested `evaluation_id`; items must be ordered by `ordinal` without duplicates; an empty `items` list is valid. There is no per-submission detail endpoint, so each version renders from the list.
+- Each version uses the shared read-only `SubmissionSnapshot` component: ordinal, submission time, status (**Pendiente de validación** or **Validada**), patient demographics and age at admission, clinical content, the top-level `studies` only, and the consent snapshot (paper signature date, verifier, verification time). A snapshot never renders a form.
+- A history failure shows its own error. The record and its status stay visible, and the page never reports "no versions" after a failed load.
+- The backend stays the authority for every read; the grant checks in the UI are hints only.
+
+Teacher-side history is described in [teacher-clinical-access-consent.md](teacher-clinical-access-consent.md). Validation, correction requests, resubmission and amendments are out of scope.

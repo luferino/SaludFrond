@@ -37,6 +37,7 @@ async function render(path, options = {}) {
   listTeacherEvaluations: async () => { requests.push('list'); return options.emptyEvaluations ? [] : [evaluation]; },
   getTeacherEvaluation: async () => { requests.push('detail'); if (options.detailFailure) throw new Error('failed'); return evaluation; },
   getConsent: async () => { requests.push('consent'); if (options.consentFailure) throw new Error('failed'); return { evaluation_id: id, status: 'pending', evidence: null }; },
+  listTeacherSubmissions: async () => { requests.push('history'); if (options.historyFailure) throw new Error('failed'); return { evaluation_id: id, items: options.submissions ?? [] }; },
   actionHrefWithContext: (action) => action,
   $$createAstro: () => ({}), $$createComponent: (component) => component,
   $$render: async (strings, ...values) => { let output = ''; for (let i = 0; i < strings.length; i++) output += strings[i] + await html(values[i]); return output; },
@@ -54,7 +55,10 @@ async function render(path, options = {}) {
   new Function('exports', ...Object.keys(mocks), output)(exports, ...Object.values(mocks));
   return exports.default;
  }
- if (!path.includes('components/')) mocks.EvaluationReadOnly = await compile('src/components/clinical/EvaluationReadOnly.astro');
+ if (!path.includes('components/')) {
+  mocks.EvaluationReadOnly = await compile('src/components/clinical/EvaluationReadOnly.astro');
+  mocks.SubmissionSnapshot = await compile('src/components/clinical/SubmissionSnapshot.astro');
+ }
  const component = await compile(path);
  return { html: await html(component({ createAstro: () => Astro }, {}, {})), requests };
 }
@@ -84,7 +88,7 @@ test('teacher discovery distinguishes denied/error/empty and preserves Previous 
 test('teacher consent renders state on GET, requires separate verify grant and hides form on uncertain/read failure', async () => {
  const path = 'src/pages/teacher-clinical/[id].astro';
  const reader = await render(path);
- assert.deepEqual(reader.requests, ['detail', 'consent']);
+ assert.deepEqual(reader.requests, ['detail', 'consent', 'history']);
  assert.match(reader.html, /Pendiente/);
  assert.doesNotMatch(reader.html, /method="POST"/);
  const writer = await render(path, { verify: true });
@@ -100,6 +104,32 @@ test('teacher consent renders state on GET, requires separate verify grant and h
  const success = await render(path, { verify: true, result: { data: { success: true, id, ...clinicalContext } } });
  assert.match(success.html, /REDIRECT:/);
  assert.match(success.html, /recorded=1/);
+});
+
+test('teacher detail shows origin version history after the origin read without a second consent form', async () => {
+ const path = 'src/pages/teacher-clinical/[id].astro';
+ const snapshot = { id: '9007199254741062', evaluation_id: id, ordinal: 1, submitted_by: patient, submitted_at: '2026-01-02T00:00:00Z', status: 'pending_validation', clinical_content: evaluation.content, studies: [{ type: 'RX', description: 'Informe top-level', date: null }], patient: null, age_at_admission: null, consent: { id: '5', paper_signature_date: '2026-01-01', verified_by: patient, verified_at: '2026-01-02T00:00:00Z' } };
+ const reader = await render(path, { submissions: [snapshot] });
+ assert.match(reader.html, /Historial de versiones/);
+ assert.match(reader.html, /Versión 1 · Pendiente de validación/);
+ assert.match(reader.html, /Informe top-level/);
+ assert.doesNotMatch(reader.html, /method="POST"/);
+ const writer = await render(path, { verify: true, submissions: [snapshot] });
+ assert.equal((writer.html.match(/method="POST"/g) ?? []).length, 1);
+ assert.equal((writer.html.match(/name="paper_signature_date"/g) ?? []).length, 1);
+ assert.match((await render(path)).html, /No hay versiones enviadas para esta ficha/);
+});
+
+test('teacher history failure shows its own error while the origin record and consent state still render', async () => {
+ const path = 'src/pages/teacher-clinical/[id].astro';
+ const failed = await render(path, { verify: true, historyFailure: true });
+ assert.match(failed.html, /No se pudo cargar el historial de versiones/);
+ assert.match(failed.html, /Estable/);
+ assert.match(failed.html, /Pendiente/);
+ assert.match(failed.html, /method="POST"/);
+ assert.doesNotMatch(failed.html, /No hay versiones enviadas/);
+ assert.deepEqual((await render(path, { denied: true, historyFailure: true })).requests, []);
+ assert.deepEqual((await render(path, { detailFailure: true, historyFailure: true })).requests, ['detail']);
 });
 
 test('confirmed consent append redirects with context before any follow-up reads can fail', async () => {
@@ -135,6 +165,29 @@ test('consent browser handler disables first submit and prevents a second click 
  assert.equal(button.disabled, true);
  handler({ preventDefault() { prevented++; } });
  assert.equal(prevented, 1);
+});
+
+test('shared submission snapshot renders one version read-only with top-level studies, consent evidence and no form controls', async () => {
+ const submission = { id: '9007199254741062', evaluation_id: id, ordinal: 2, submitted_by: patient, submitted_at: '2026-02-01T10:00:00Z', status: 'validated', clinical_content: { admission_status: 'Estable', antecedents: { hta: true, dbt: null }, studies: [{ type: 'Merge sentinel', description: 'Solo contenido', date: null }] }, studies: [{ type: 'RX', description: 'Informe top-level', date: '2026-01-15' }], patient: { id: patient, documento: 'QA-1', nombres: 'Ana', apellidos: 'Prueba', fecha_nacimiento: '1990-01-01', email: 'a@example.test', celular: '1', sexo: 'F', direccion: 'x' }, age_at_admission: 36, consent: { id: '5', paper_signature_date: '2026-01-10', verified_by: patient, verified_at: '2026-01-11T09:00:00Z' } };
+ const result = await render('src/components/clinical/SubmissionSnapshot.astro', { props: { submission } });
+ assert.match(result.html, /Versión 2/);
+ assert.match(result.html, /Validada/);
+ assert.match(result.html, /2026-02-01T10:00:00Z/);
+ assert.match(result.html, /Prueba, Ana · Documento: QA-1/);
+ assert.match(result.html, /Edad al ingreso: 36/);
+ assert.match(result.html, /Estable/);
+ assert.match(result.html, /Sin determinar/);
+ assert.match(result.html, /Informe top-level/);
+ assert.doesNotMatch(result.html, /Merge sentinel/);
+ assert.match(result.html, /Fecha de firma en papel/);
+ assert.match(result.html, /2026-01-10/);
+ assert.match(result.html, /2026-01-11T09:00:00Z/);
+ assert.doesNotMatch(result.html, /<form|<input|<textarea|<select|<button|paper_signature_date/);
+ const pending = await render('src/components/clinical/SubmissionSnapshot.astro', { props: { submission: { ...submission, ordinal: 1, status: 'pending_validation', patient: null, age_at_admission: null, studies: [] } } });
+ assert.match(pending.html, /Pendiente de validación/);
+ assert.match(pending.html, /Datos del paciente no disponibles/);
+ assert.match(pending.html, /Sin estudios registrados/);
+ assert.doesNotMatch(pending.html, /Edad al ingreso/);
 });
 
 test('teacher read-only renderer shows actual clinical content, false/null antecedents and studies', async () => {
