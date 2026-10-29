@@ -4,7 +4,7 @@ import { actions } from 'astro:actions';
 import Layout from '../../layouts/Layout.astro';
 import { ApiError } from '../../shared/apiClient';
 import { listAssignedPatients, parseAssignmentPagination } from '../../pods/patient-assignment/api';
-import { actionHrefWithContext, listEvaluations, type Evaluation } from '../../pods/kinesiology-evaluation/api';
+import { actionHrefWithContext, EVALUATION_STATUS_LABELS, listEvaluations, listSubmittedEvaluations, type Evaluation } from '../../pods/kinesiology-evaluation/api';
 
 const assignmentId = Astro.params.assignmentId ?? '';
 const decimalId = /^[1-9]\d{0,18}$/.test(assignmentId) && BigInt(assignmentId) <= 9223372036854775807n;
@@ -12,6 +12,7 @@ const query = Astro.url.searchParams;
 let pagination = { limit: 50, offset: 0 };
 let assignment: Awaited<ReturnType<typeof listAssignedPatients>>['items'][number] | null = null;
 let drafts: Evaluation[] = [];
+let submitted: Evaluation[] = [];
 let unavailable = false;
 let loadError = '';
 const result = Astro.getActionResult(actions.createKinesiologyEvaluation);
@@ -25,17 +26,23 @@ try {
 		const page = await listAssignedPatients(pagination, Astro.cookies);
 		assignment = page.items.find((item) => item.id === assignmentId && item.ended_at === null) ?? null;
 		if (!assignment) unavailable = true;
-		else drafts = await listEvaluations({
-			patient_id: assignment.patient_id,
-			subject_id: assignment.subject_id,
-			academic_group_id: assignment.academic_group_id,
-		}, Astro.cookies);
+		else {
+			const context = {
+				patient_id: assignment.patient_id,
+				subject_id: assignment.subject_id,
+				academic_group_id: assignment.academic_group_id,
+			};
+			[drafts, submitted] = await Promise.all([
+				listEvaluations(context, Astro.cookies),
+				listSubmittedEvaluations(context, Astro.cookies),
+			]);
+		}
 	}
 } catch (error) {
 	if (error instanceof ApiError && error.status === 401) {
 		return Astro.redirect(`/auth/login?returnTo=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`);
 	}
-	loadError = 'No se pudieron cargar las asignaciones y sus borradores. No se muestra una lista vacía porque el resultado no está disponible.';
+	loadError = 'No se pudieron cargar las asignaciones y sus fichas. No se muestra una lista vacía porque el resultado no está disponible.';
 }
 if (result?.data?.success && assignment && decimalId) {
 	return Astro.redirect(`/kinesiology-evaluations/${result.data.evaluation.id}?assignment_id=${encodeURIComponent(assignment.id)}&limit=${pagination.limit}&offset=${pagination.offset}`);
@@ -84,6 +91,14 @@ const createHref = actionHrefWithContext(actions.createKinesiologyEvaluation.toS
 						Abrir borrador de ficha · actualizado {new Date(draft.updated_at).toLocaleDateString('es')}
 					</a>
 				</li>)}</ul> : <p>Todavía no hay borradores para esta asignación.</p>}
+			</section>
+			<section aria-labelledby="submitted-title">
+				<h2 id="submitted-title">Fichas enviadas</h2>
+				{submitted.length ? <ul class="draft-list">{submitted.map((record) => <li>
+					<a href={`/kinesiology-evaluations/${record.id}?assignment_id=${assignment.id}&limit=${pagination.limit}&offset=${pagination.offset}`}>
+						Ver ficha enviada · {EVALUATION_STATUS_LABELS[record.status]} · actualizada {new Date(record.updated_at).toLocaleDateString('es')}
+					</a>
+				</li>)}</ul> : <p>Todavía no hay fichas enviadas para esta asignación.</p>}
 			</section>
 		</> : null}
 	</main>

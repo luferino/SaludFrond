@@ -40,6 +40,14 @@ const evaluation = (overrides = {}) => ({
  patient: { id: patientId, documento: '123', nombres: 'Ana', apellidos: 'Pérez', fecha_nacimiento: '1990-01-01', email: 'ana@example.test', celular: '123', sexo: 'F', direccion: 'Calle' },
  age: 36, created_at: iso, updated_at: iso, ...overrides,
 });
+const submission = (overrides = {}) => ({
+ id: '9223372036854775806', evaluation_id: largeId, ordinal: 1, submitted_by: authorId, submitted_at: iso,
+ status: 'pending_validation', clinical_content: content, studies: content.studies, patient: evaluation().patient,
+ age_at_admission: 36, consent: { id: '5', paper_signature_date: '2026-06-09', verified_by: authorId, verified_at: iso },
+ ...overrides,
+});
+const submitInput = () => ({ id: largeId, assignment_id: '17', limit: '50', offset: '0' });
+const assignmentPage = { status: 200, body: { items: [assignment()], limit: 50, offset: 0 } };
 
 async function evaluate(path, options = {}) {
  const requests = [], writes = [];
@@ -51,6 +59,7 @@ async function evaluate(path, options = {}) {
   requests.push({ url, ...init });
   const pathname = new URL(url).pathname;
   const response = options.responses?.shift() ?? { status: options.status ?? (init.method === 'POST' ? 201 : 200), body: options.body ?? (pathname === '/patient-assignments/mine' ? { items: [assignment()], limit: Number(new URL(url).searchParams.get('limit')), offset: Number(new URL(url).searchParams.get('offset')) } : pathname === '/kinesiology-evaluations' && init.method === 'GET' ? { items: [evaluation()] } : evaluation()) };
+  if (response.network) throw new TypeError('fetch failed');
   return Response.json(response.body, { status: response.status });
  }});
  const cache = new Map();
@@ -109,18 +118,19 @@ async function evaluatePageFrontmatter(path, options = {}) {
  const frontmatter = page.match(/^---\r?\n([\s\S]*?)\r?\n---/);
  assert.ok(frontmatter, `${path} has frontmatter`);
  const declarations = frontmatter[1].replace(/^import .*;\s*$/gm, '').replace(/^export const prerender = false;\s*$/m, '');
- const script = `async function renderPage() {${declarations}\nreturn { createHref: typeof createHref === 'undefined' ? undefined : createHref, actionHref: typeof actionHref === 'undefined' ? undefined : actionHref, assignment: typeof assignment === 'undefined' ? undefined : assignment, drafts: typeof drafts === 'undefined' ? undefined : drafts, evaluation: typeof evaluation === 'undefined' ? undefined : evaluation, eligible: typeof eligible === 'undefined' ? undefined : eligible, loadError: typeof loadError === 'undefined' ? undefined : loadError, unavailable: typeof unavailable === 'undefined' ? undefined : unavailable, c: typeof c === 'undefined' ? undefined : c }; }\nglobalThis.renderPage = renderPage;`;
+ const script = `async function renderPage() {${declarations}\nreturn { createHref: typeof createHref === 'undefined' ? undefined : createHref, actionHref: typeof actionHref === 'undefined' ? undefined : actionHref, assignment: typeof assignment === 'undefined' ? undefined : assignment, drafts: typeof drafts === 'undefined' ? undefined : drafts, evaluation: typeof evaluation === 'undefined' ? undefined : evaluation, eligible: typeof eligible === 'undefined' ? undefined : eligible, submitted: typeof submitted === 'undefined' ? undefined : submitted, canSubmit: typeof canSubmit === 'undefined' ? undefined : canSubmit, submitUncertain: typeof submitUncertain === 'undefined' ? undefined : submitUncertain, submitHref: typeof submitHref === 'undefined' ? undefined : submitHref, loadError: typeof loadError === 'undefined' ? undefined : loadError, unavailable: typeof unavailable === 'undefined' ? undefined : unavailable, c: typeof c === 'undefined' ? undefined : c }; }\nglobalThis.renderPage = renderPage;`;
  const output = ts.transpileModule(script, { compilerOptions: { module: ts.ModuleKind.None, target: ts.ScriptTarget.ES2022 } }).outputText;
  const action = (name) => ({ toString: () => `/_actions/${name}?_action=${name}` });
+ const submitAction = action('submitKinesiologyEvaluation');
  const sandbox = vm.createContext({
   URL, URLSearchParams, BigInt, Date, console,
-  actions: { createKinesiologyEvaluation: action('createKinesiologyEvaluation'), updateKinesiologyEvaluation: action('updateKinesiologyEvaluation') },
+  actions: { createKinesiologyEvaluation: action('createKinesiologyEvaluation'), updateKinesiologyEvaluation: action('updateKinesiologyEvaluation'), submitKinesiologyEvaluation: submitAction },
   isInputError: () => false,
   Astro: {
    params: options.params ?? { assignmentId: '17', id: largeId },
    url: new URL(options.url ?? '/my-patients/17?limit=50&offset=0', 'http://localhost'),
    cookies: { get: () => ({ value: 'token' }) },
-   getActionResult: () => options.actionResult,
+   getActionResult: (name) => name === submitAction ? options.submitResult : options.actionResult,
    redirect: (href) => ({ redirect: href }),
    request: { clone: () => ({ formData: async () => new FormData() }) },
   },
@@ -130,8 +140,10 @@ async function evaluatePageFrontmatter(path, options = {}) {
   listEvaluations: options.listEvaluations ?? (async () => [evaluation()]),
   getEvaluation: options.getEvaluation ?? (async () => evaluation()),
   actionHrefWithContext: (await apiHarness()).mod.namespace.actionHrefWithContext,
-  decodeJwt: () => ({ sub: authorId, role: 'student', permissions: ['kinesiology-evaluations:write'] }),
+  decodeJwt: () => ({ sub: authorId, role: 'student', permissions: options.permissions ?? ['kinesiology-evaluations:write', 'kinesiology-evaluations:submit'] }),
   rawEvaluationContentFromForm: () => content,
+  listSubmittedEvaluations: options.listSubmittedEvaluations ?? (async () => []),
+  EVALUATION_STATUS_LABELS: (await apiHarness()).mod.namespace.EVALUATION_STATUS_LABELS,
  });
  vm.runInContext(output, sandbox);
  return sandbox.renderPage();
@@ -367,7 +379,11 @@ test('evaluated SSR frontmatter preserves Astro action query and revalidates lis
 test('registered actions validate mutations and retain supported content; pages expose safe SSR routes and Spanish form', async () => {
  const result = await evaluate(registryPath);
  const server = result.mod.namespace.server;
- for (const name of ['createKinesiologyEvaluation', 'updateKinesiologyEvaluation']) assert.ok(server[name]);
+ for (const name of ['createKinesiologyEvaluation', 'updateKinesiologyEvaluation', 'submitKinesiologyEvaluation']) assert.ok(server[name]);
+ const submitSchema = server.submitKinesiologyEvaluation.input;
+ assert.equal(submitSchema.safeParse(submitInput()).success, true);
+ assert.equal(submitSchema.safeParse({ ...submitInput(), id: '0' }).success, false);
+ assert.equal(submitSchema.safeParse({ ...submitInput(), content: '{}' }).success, false);
  assert.ok(server.createStudent);
  const routes = await Promise.all(['src/pages/my-patients/[assignmentId].astro','src/pages/kinesiology-evaluations/[id].astro'].map(source));
  assert.match(routes[0], /listAssignedPatients/);
@@ -380,4 +396,146 @@ test('registered actions validate mutations and retain supported content; pages 
  assert.match(routes[1], /record\.author_id/);
  assert.match(routes[1], /Guardar borrador/);
  assert.match(routes[1], /solo lectura/i);
+});
+
+test('submitEvaluation posts one empty-body request to the submissions route and validates the 201 item', async () => {
+ const result = await apiHarness({ status: 201, body: submission() });
+ const record = await result.mod.namespace.submitEvaluation(largeId, result.cookies);
+ assert.equal(record.id, '9223372036854775806');
+ assert.equal(result.requests.length, 1);
+ assert.equal(result.requests[0].url, `https://backend.invalid/kinesiology-evaluations/${largeId}/submissions`);
+ assert.equal(result.requests[0].method, 'POST');
+ assert.equal(result.requests[0].body, '{}');
+});
+
+test('submission validation rejects malformed 201 items before they can be shown as success', async () => {
+ const bad = [
+  submission({ evaluation_id: '2' }), submission({ status: 'draft' }), submission({ id: Number(largeId) }),
+  submission({ consent: undefined }), submission({ consent: { ...submission().consent, paper_signature_date: '2026-02-30' } }),
+  submission({ studies: [{ type: 'RX', description: 'x' }] }), submission({ clinical_content: null }), submission({ submitted_by: 'bad' }),
+ ];
+ for (const body of bad) {
+  const result = await apiHarness({ status: 201, body });
+  await assert.rejects(() => result.mod.namespace.submitEvaluation(largeId, result.cookies), /incompletos o desconocidos/);
+ }
+});
+
+test('assignment helper lists only non-draft records while listEvaluations keeps the draft filter', async () => {
+ const items = [evaluation(), evaluation({ id: '2', status: 'submitted' }), evaluation({ id: '3', status: 'validated' })];
+ const result = await apiHarness({ body: { items } });
+ const { listEvaluations, listSubmittedEvaluations } = result.mod.namespace;
+ const context = { patient_id: patientId, subject_id: subjectId, academic_group_id: groupId };
+ assert.deepEqual((await listEvaluations(context, result.cookies)).map((row) => row.id), [largeId]);
+ assert.deepEqual((await listSubmittedEvaluations(context, result.cookies)).map((row) => row.status), ['submitted', 'validated']);
+});
+
+test('submit action refuses locally on invalid id, context mismatch or non-draft without any POST', async () => {
+ const cases = [
+  { input: { ...submitInput(), id: '0' }, responses: [] },
+  { input: submitInput(), responses: [assignmentPage, { status: 200, body: evaluation({ origin_group_id: subjectId }) }] },
+  { input: submitInput(), responses: [assignmentPage, { status: 200, body: evaluation({ status: 'submitted' }) }] },
+ ];
+ for (const { input, responses } of cases) {
+  const result = await evaluate(actionPath, { responses });
+  const outcome = await result.mod.namespace.handleSubmitKinesiologyEvaluation(input, { cookies: result.cookies });
+  assert.equal(outcome.success, false);
+  assert.equal(outcome.uncertain, false);
+  assert.equal(result.requests.some((request) => request.method === 'POST'), false);
+ }
+});
+
+test('submit action maps typed backend rejections to safe copy with exactly one POST and no retry', async () => {
+ const cases = [
+  [400, 'evaluation content is incomplete', /incompleta/], [401, 'session expired', /sesión venció/],
+  [403, 'forbidden', /No tenés permiso/], [404, 'not found', /no está disponible/],
+  [409, 'evaluation has already been submitted', /ya fue enviada/],
+  [409, 'verified paper consent is required before submission', /consentimiento verificado/],
+ ];
+ for (const [status, message, copy] of cases) {
+  const result = await evaluate(actionPath, { responses: [assignmentPage, { status: 200, body: evaluation() }, { status, body: { error: { code: `E${status}`, message } } }] });
+  const outcome = await result.mod.namespace.handleSubmitKinesiologyEvaluation(submitInput(), { cookies: result.cookies });
+  assert.equal(outcome.success, false);
+  assert.equal(outcome.uncertain, false);
+  assert.match(outcome.error, copy);
+  assert.equal(result.requests.filter((request) => request.method === 'POST').length, 1);
+  assert.equal(result.requests.length, 3);
+ }
+});
+
+test('submit action reports network failure or malformed 201 after the POST as uncertain without retrying', async () => {
+ for (const response of [{ network: true }, { status: 201, body: submission({ evaluation_id: '2' }) }, { status: 500, body: { error: { code: 'X', message: 'boom' } } }]) {
+  const result = await evaluate(actionPath, { responses: [assignmentPage, { status: 200, body: evaluation() }, response] });
+  const outcome = await result.mod.namespace.handleSubmitKinesiologyEvaluation(submitInput(), { cookies: result.cookies });
+  assert.equal(outcome.success, false);
+  assert.equal(outcome.uncertain, true);
+  assert.match(outcome.error, /consultá el estado/i);
+  assert.equal(result.requests.filter((request) => request.method === 'POST').length, 1);
+  assert.equal(result.requests.length, 3);
+ }
+});
+
+test('submit action success returns the validated submission with confirmed assignment context', async () => {
+ const result = await evaluate(actionPath, { responses: [assignmentPage, { status: 200, body: evaluation() }, { status: 201, body: submission() }] });
+ const outcome = await result.mod.namespace.handleSubmitKinesiologyEvaluation(submitInput(), { cookies: result.cookies });
+ assert.equal(outcome.success, true);
+ assert.equal(outcome.id, largeId);
+ assert.equal(outcome.assignment_id, '17');
+ assert.equal(outcome.limit, '50');
+ assert.equal(outcome.offset, '0');
+ assert.equal(outcome.submission.status, 'pending_validation');
+});
+
+test('editor submit form is gated by draft, author, submit grant and action result; uncertain hides it', async () => {
+ const page = 'src/pages/kinesiology-evaluations/[id].astro';
+ const url = '/kinesiology-evaluations/9223372036854775807?assignment_id=17&limit=50&offset=0';
+ const draft = await evaluatePageFrontmatter(page, { url });
+ assert.equal(draft.canSubmit, true);
+ assert.equal(draft.submitHref, '/_actions/submitKinesiologyEvaluation?_action=submitKinesiologyEvaluation&assignment_id=17&limit=50&offset=0');
+ assert.equal((await evaluatePageFrontmatter(page, { url, permissions: ['kinesiology-evaluations:write'] })).canSubmit, false);
+ const submitted = await evaluatePageFrontmatter(page, { url, getEvaluation: async () => evaluation({ status: 'submitted' }) });
+ assert.equal(submitted.eligible, false);
+ assert.equal(submitted.canSubmit, false);
+ const uncertain = await evaluatePageFrontmatter(page, { url, submitResult: { data: { success: false, uncertain: true, error: 'No se pudo confirmar el envío.' } } });
+ assert.equal(uncertain.submitUncertain, true);
+ const expired = await evaluatePageFrontmatter(page, { url, submitResult: { data: { success: false, uncertain: false, error: 'Tu sesión venció. Iniciá sesión nuevamente.' } } });
+ assert.match(expired.redirect, /^\/auth\/login\?returnTo=/);
+ const redirect = await evaluatePageFrontmatter(page, {
+  params: { id: '5', assignmentId: '17' }, url: '/kinesiology-evaluations/5?assignment_id=99&limit=10&offset=20',
+  submitResult: { data: { success: true, id: largeId, assignment_id: '17', limit: '50', offset: '0' } },
+ });
+ assert.equal(redirect.redirect, `/kinesiology-evaluations/${largeId}?assignment_id=17&limit=50&offset=0&submitted=1`);
+ const template = await source(page);
+ assert.match(template, /canSubmit && !submitUncertain/);
+ assert.match(template, /última versión guardada/);
+ assert.match(template, /Estado de la ficha/);
+});
+
+test('assignment view lists submitted and validated records beside unchanged drafts', async () => {
+ const page = await evaluatePageFrontmatter('src/pages/my-patients/[assignmentId].astro', {
+  listEvaluations: async () => [evaluation()],
+  listSubmittedEvaluations: async () => [evaluation({ id: '2', status: 'submitted' }), evaluation({ id: '3', status: 'validated' })],
+ });
+ assert.deepEqual(page.drafts.map((row) => row.status), ['draft']);
+ assert.deepEqual(page.submitted.map((row) => row.status), ['submitted', 'validated']);
+ const template = await source('src/pages/my-patients/[assignmentId].astro');
+ assert.match(template, /Borradores de ficha inicial/);
+ assert.match(template, /Fichas enviadas/);
+});
+
+test('editor hides submission while unsaved retained values from a failed save are shown', async () => {
+ const url = '/kinesiology-evaluations/9223372036854775807?assignment_id=17&limit=50&offset=0';
+ const page = await evaluatePageFrontmatter('src/pages/kinesiology-evaluations/[id].astro', { url, actionResult: { data: { success: false, error: 'Revisá los datos clínicos ingresados.', content } } });
+ assert.equal(page.eligible, true);
+ assert.equal(page.canSubmit, false);
+});
+
+test('submit action treats post-POST 408/429 as uncertain and other unmapped 4xx as a submit-specific rejection', async () => {
+ for (const [status, uncertain, copy] of [[408, true, /consultá el estado/i], [429, true, /consultá el estado/i], [422, false, /No se pudo enviar la ficha/]]) {
+  const result = await evaluate(actionPath, { responses: [assignmentPage, { status: 200, body: evaluation() }, { status, body: { error: { code: 'X', message: 'detail' } } }] });
+  const outcome = await result.mod.namespace.handleSubmitKinesiologyEvaluation(submitInput(), { cookies: result.cookies });
+  assert.equal(outcome.success, false);
+  assert.equal(outcome.uncertain, uncertain);
+  assert.match(outcome.error, copy);
+  assert.equal(result.requests.filter((request) => request.method === 'POST').length, 1);
+ }
 });

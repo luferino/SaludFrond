@@ -15,7 +15,7 @@ import { handleCreateTeacher } from '../pods/teacher/actions/teachers';
 import { handleCreatePatient } from '../pods/paciente/actions/patients';
 import { activateTeacherHabilitation, revokeTeacherHabilitation } from '../pods/teacher-habilitation/actions';
 import { activateStudentHabilitation, revokeStudentHabilitation } from '../pods/student-habilitation/actions';
-import { handleCreateKinesiologyEvaluation, handleUpdateKinesiologyEvaluation } from '../pods/kinesiology-evaluation/actions/evaluations';
+import { handleCreateKinesiologyEvaluation, handleSubmitKinesiologyEvaluation, handleUpdateKinesiologyEvaluation } from '../pods/kinesiology-evaluation/actions/evaluations';
 
 import { searchAvailablePatient, enablePatientAvailability, withdrawPatientAvailability } from '../pods/patient-availability/actions';
 import { createTeacherAssignment } from '../pods/teacher-assignment/actions';
@@ -152,6 +152,13 @@ export const server = {
 		}).catchall(z.string()),
 
 		handler: handleUpdateKinesiologyEvaluation,
+	}),
+	submitKinesiologyEvaluation: defineAction({
+		accept: 'form',
+		input: z.object({
+			id: z.string().regex(/^[1-9]\d{0,18}$/), assignment_id: z.string(), limit: z.string(), offset: z.string(),
+		}).strict(),
+		handler: handleSubmitKinesiologyEvaluation,
 	}),
 	createPatient: defineAction({
 		accept: 'form',

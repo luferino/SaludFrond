@@ -1,6 +1,7 @@
 import type { AstroCookies } from 'astro';
 import { listAssignedPatients, parseAssignmentPagination } from '../../patient-assignment/api';
-import { createEvaluation, getEvaluation, updateEvaluation, validateEvaluationContent, type EvaluationContent } from '../api';
+import { ApiError } from '../../../shared/apiClient';
+import { createEvaluation, getEvaluation, submitEvaluation, updateEvaluation, validateEvaluationContent, type EvaluationContent } from '../api';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ID = /^[1-9]\d{0,18}$/;
@@ -154,5 +155,50 @@ export async function handleUpdateKinesiologyEvaluation(input: Record<string, un
 	} catch (error) {
 		const message = safeError(error);
 		return { success: false as const, error: content ? `${message} Conservamos los valores enviados.` : message, content };
+	}
+}
+
+const UNCERTAIN_SUBMIT = 'No se pudo confirmar el envío. Consultá el estado de la ficha antes de volver a intentarlo.';
+
+function submitRejection(error: ApiError): string {
+	if (error.status === 400) return 'La ficha guardada está incompleta. Completá y guardá los datos requeridos antes de enviarla.';
+	if (error.status === 409 && /already been submitted/i.test(error.message)) return 'Esta ficha ya fue enviada.';
+	if (error.status === 409 && /consent/i.test(error.message)) return 'Para enviar la ficha se necesita el consentimiento verificado por un docente.';
+	if (error.status === 409) return 'Esta ficha ya no está en borrador.';
+	if (error.status === 403) return 'No tenés permiso para enviar esta ficha.';
+	if ([401, 404].includes(error.status)) return safeError(error);
+	return 'No se pudo enviar la ficha. Revisá su estado antes de volver a intentarlo.';
+}
+
+/** Explicit single submission of the saved draft: no content is sent and the POST is never retried. */
+export async function handleSubmitKinesiologyEvaluation(input: Record<string, unknown>, context: { cookies: AstroCookies }) {
+	if (!validId(input.id)) return { success: false as const, uncertain: false, error: 'El identificador de ficha no es válido.' };
+	let assignment;
+	try {
+		assignment = await selectedAssignment(input, context.cookies);
+		const record = await getEvaluation(input.id, context.cookies);
+		if (record.id !== input.id || record.patient_id !== assignment.patient_id
+			|| record.origin_subject_id !== assignment.subject_id || record.origin_group_id !== assignment.academic_group_id) {
+			return { success: false as const, uncertain: false, error: 'La ficha no pertenece a esta asignación.' };
+		}
+		if (record.status !== 'draft') return { success: false as const, uncertain: false, error: 'Esta ficha ya no está en borrador.' };
+	} catch (error) {
+		if (error instanceof ApiError) return { success: false as const, uncertain: false, error: submitRejection(error) };
+		return {
+			success: false as const, uncertain: false,
+			error: error instanceof Error && /asignación/.test(error.message) ? error.message : 'No se pudo verificar la ficha antes de enviarla. No se envió nada.',
+		};
+	}
+	const pagination = parseAssignmentPagination(new URLSearchParams({ limit: String(input.limit), offset: String(input.offset) }));
+	try {
+		const submission = await submitEvaluation(input.id, context.cookies);
+		return {
+			success: true as const, id: input.id, assignment_id: assignment.id,
+			limit: String(pagination.limit), offset: String(pagination.offset), submission,
+		};
+	} catch (error) {
+		// Only a typed rejection proves nothing was stored; anything else may have committed.
+		if (error instanceof ApiError && error.status < 500 && ![408, 429].includes(error.status)) return { success: false as const, uncertain: false, error: submitRejection(error) };
+		return { success: false as const, uncertain: true, error: UNCERTAIN_SUBMIT };
 	}
 }

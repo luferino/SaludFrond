@@ -58,6 +58,32 @@ export interface Evaluation {
 	updated_at: string;
 }
 
+export const EVALUATION_STATUS_LABELS: Record<Evaluation['status'], string> = {
+	draft: 'Borrador', submitted: 'Enviada', validated: 'Validada',
+};
+
+export interface ConsentSnapshot {
+	id: string;
+	paper_signature_date: string;
+	verified_by: string;
+	verified_at: string;
+}
+
+/** Immutable snapshot of one submitted version, as returned by the submissions endpoints. */
+export interface Submission {
+	id: string;
+	evaluation_id: string;
+	ordinal: number;
+	submitted_by: string;
+	submitted_at: string;
+	status: 'pending_validation' | 'validated';
+	clinical_content: EvaluationContent;
+	studies: Array<{ type: string; description: string; date: string | null }>;
+	patient: Patient | null;
+	age_at_admission: number | null;
+	consent: ConsentSnapshot;
+}
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DECIMAL_ID = /^(0|[1-9]\d{0,18})$/;
 const MAX_ID = 9223372036854775807n;
@@ -169,6 +195,23 @@ export function isEvaluation(value: unknown): value is Evaluation {
 	return iso(value.created_at) && iso(value.updated_at);
 }
 
+export function isSubmission(value: unknown, evaluationId: string): value is Submission {
+	if (!record(value) || typeof value.id !== 'string' || !validId(value.id) || value.evaluation_id !== evaluationId) return false;
+	if (!Number.isSafeInteger(value.ordinal) || value.ordinal < 1) return false;
+	if (typeof value.submitted_by !== 'string' || !UUID.test(value.submitted_by) || !iso(value.submitted_at)) return false;
+	if (!['pending_validation', 'validated'].includes(String(value.status)) || !record(value.clinical_content)) return false;
+	try { validateEvaluationContent(value.clinical_content); } catch { return false; }
+	if (!Array.isArray(value.studies) || !value.studies.every((study) => record(study)
+		&& Object.keys(study).length === 3 && typeof study.type === 'string' && typeof study.description === 'string'
+		&& 'date' in study && (study.date === null || calendarDate(study.date)))) return false;
+	if (!(value.patient === null || validPatient(value.patient))) return false;
+	if (!(value.age_at_admission === null || typeof value.age_at_admission === 'number' && Number.isFinite(value.age_at_admission))) return false;
+	const consent = value.consent;
+	return record(consent) && typeof consent.id === 'string' && validId(consent.id)
+		&& calendarDate(consent.paper_signature_date)
+		&& typeof consent.verified_by === 'string' && UUID.test(consent.verified_by) && iso(consent.verified_at);
+}
+
 function validPatient(value: unknown): value is Patient {
 	return record(value) && UUID.test(String(value.id))
 		&& ['documento', 'nombres', 'apellidos', 'fecha_nacimiento', 'email', 'celular', 'sexo', 'direccion']
@@ -202,16 +245,35 @@ function validateResponse(value: unknown, expected?: { id?: string; patient_id?:
 	return value;
 }
 
-export async function listEvaluations(context: { patient_id: string; subject_id: string; academic_group_id: string }, cookies: AstroCookies): Promise<Evaluation[]> {
+type EvaluationContext = { patient_id: string; subject_id: string; academic_group_id: string };
+
+async function listContextEvaluations(context: EvaluationContext, cookies: AstroCookies): Promise<Evaluation[]> {
 	contextId(context.patient_id, 'paciente');
 	contextId(context.subject_id, 'asignatura');
 	contextId(context.academic_group_id, 'grupo');
 	const query = new URLSearchParams(context);
 	const response = await apiFetch<unknown>(`/kinesiology-evaluations?${query}`, { cookies });
 	if (!record(response) || !Array.isArray(response.items)) throw new Error('La respuesta de evaluaciones no es válida.');
-	return response.items
-		.map((item) => validateResponse(item, context))
-		.filter((item) => item.status === 'draft');
+	return response.items.map((item) => validateResponse(item, context));
+}
+
+export async function listEvaluations(context: EvaluationContext, cookies: AstroCookies): Promise<Evaluation[]> {
+	return (await listContextEvaluations(context, cookies)).filter((item) => item.status === 'draft');
+}
+
+/** Submitted and validated records for the assignment view; the draft list above stays unchanged. */
+export async function listSubmittedEvaluations(context: EvaluationContext, cookies: AstroCookies): Promise<Evaluation[]> {
+	return (await listContextEvaluations(context, cookies)).filter((item) => item.status !== 'draft');
+}
+
+/** Submit the stored draft exactly once. Sends no content: the backend snapshots what is saved. */
+export async function submitEvaluation(id: string, cookies: AstroCookies): Promise<Submission> {
+	if (!validId(id)) throw new Error('El identificador de ficha no es válido.');
+	const response = await apiFetch<unknown>(`/kinesiology-evaluations/${id}/submissions`, { method: 'POST', body: {}, cookies });
+	if (!isSubmission(response, id) || response.status !== 'pending_validation') {
+		throw new Error('El servicio devolvió datos incompletos o desconocidos.');
+	}
+	return response;
 }
 
 export async function getEvaluation(id: string, cookies: AstroCookies): Promise<Evaluation> {

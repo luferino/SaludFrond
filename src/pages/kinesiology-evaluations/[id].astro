@@ -4,7 +4,7 @@ import { actions, isInputError } from 'astro:actions';
 import Layout from '../../layouts/Layout.astro';
 import { ApiError } from '../../shared/apiClient';
 import { listAssignedPatients, parseAssignmentPagination } from '../../pods/patient-assignment/api';
-import { actionHrefWithContext, antecedentOptionState, getEvaluation, type Evaluation, type EvaluationContent } from '../../pods/kinesiology-evaluation/api';
+import { actionHrefWithContext, antecedentOptionState, EVALUATION_STATUS_LABELS, getEvaluation, type Evaluation, type EvaluationContent } from '../../pods/kinesiology-evaluation/api';
 import { rawEvaluationContentFromForm } from '../../pods/kinesiology-evaluation/actions/evaluations';
 import { decodeJwt } from '../../shared/jwt';
 
@@ -17,6 +17,7 @@ let offset = 0;
 let evaluation: Evaluation | null = null;
 let patientLabel = '';
 let eligible = false;
+let canSubmit = false;
 let unavailable = false;
 let loadError = '';
 const result = Astro.getActionResult(actions.updateKinesiologyEvaluation);
@@ -31,7 +32,18 @@ if (result?.error) {
 		} catch { /* Some framework validation failures do not expose the submitted form body. */ }
 	}
 }
-if (/sesión venció/i.test(errorText)) {
+const submitResult = Astro.getActionResult(actions.submitKinesiologyEvaluation);
+const submitData = submitResult?.data;
+if (submitData?.success) {
+	// Redirect from the context the action validated, before any fallible read.
+	const returnParams = new URLSearchParams({ assignment_id: submitData.assignment_id, limit: submitData.limit, offset: submitData.offset, submitted: '1' });
+	return Astro.redirect(`/kinesiology-evaluations/${encodeURIComponent(submitData.id)}?${returnParams}`);
+}
+const submitUncertain = submitData?.success === false && submitData.uncertain || !!submitResult?.error && !isInputError(submitResult.error);
+const submitError = submitUncertain && submitResult?.error
+	? 'No se pudo confirmar el envío. Consultá el estado de la ficha antes de volver a intentarlo.'
+	: submitData?.success === false ? submitData.error : submitResult?.error ? 'Revisá los datos del envío.' : '';
+if (/sesión venció/i.test(errorText) || /sesión venció/i.test(submitError)) {
 	return Astro.redirect(`/auth/login?returnTo=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`);
 }
 try {
@@ -61,6 +73,9 @@ try {
 				const canWrite = Array.isArray(actor?.permissions)
 					&& actor.permissions.includes('kinesiology-evaluations:write');
 				eligible = record.status === 'draft' && actor?.sub === record.author_id && role && canWrite;
+				// Retained values are unsaved; submission only sends the saved version.
+				canSubmit = eligible && !retainedContent && Array.isArray(actor?.permissions)
+					&& actor.permissions.includes('kinesiology-evaluations:submit');
 			}
 		}
 	}
@@ -79,10 +94,16 @@ const actionHref = actionHrefWithContext(actions.updateKinesiologyEvaluation.toS
 	limit: String(limit),
 	offset: String(offset),
 }, Astro.url.href);
+const submitHref = actionHrefWithContext(actions.submitKinesiologyEvaluation.toString(), {
+	assignment_id: assignmentId,
+	limit: String(limit),
+	offset: String(offset),
+}, Astro.url.href);
 const c = retainedContent ?? evaluation?.content ?? {};
 const antecedents = c.antecedents ?? {};
 const antecedentKeys = Object.keys(antecedents).join(',');
 const saved = search.getAll('saved').length === 1 && search.get('saved') === '1';
+const justSubmitted = search.getAll('submitted').length === 1 && search.get('submitted') === '1';
 const textFields = [
 	['admission_status', 'Estado al ingreso'], ['occupation', 'Ocupación'],
 	['referring_physician', 'Profesional que deriva'], ['illness_history', 'Historia de la enfermedad'],
@@ -107,8 +128,15 @@ const textFields = [
 				<p class="patient">Paciente: {patientLabel}</p>
 				<p class="context">Asignatura · <span class="identifier">{evaluation.origin_subject_id}</span><br />Grupo académico · <span class="identifier">{evaluation.origin_group_id}</span></p>
 			</header>
+			<section class="status" aria-labelledby="status-title">
+				<h2 id="status-title">Estado de la ficha</h2>
+				<p>{EVALUATION_STATUS_LABELS[evaluation.status]}</p>
+				{evaluation.status !== 'draft' && <p>La ficha fue enviada y ya no se puede editar. Queda disponible en la asignación, en la lista de fichas enviadas.</p>}
+			</section>
 			{saved && <p class="success" role="status">Borrador guardado.</p>}
+			{justSubmitted && evaluation.status !== 'draft' && <p class="success" role="status">Ficha enviada. Queda pendiente de validación docente.</p>}
 			{errorText && <p class="notice error" role="alert">{errorText}</p>}
+			{submitError && <p class="notice error" role="alert">{submitError}</p>}
 			{!eligible && <p class="notice">Esta ficha se muestra en modo de solo lectura. Solo el autor de un borrador en una asignación vigente puede editarla; el servicio vuelve a comprobar los permisos al guardar.</p>}
 			{eligible && <p class="notice">Evitá editar este borrador al mismo tiempo que otra persona. El guardado reemplaza el contenido completo y no detecta cambios simultáneos.</p>}
 			<form method="POST" action={actionHref} id="evaluation-form">
@@ -161,6 +189,16 @@ const textFields = [
 				</fieldset>
 				{eligible && <button class="button" type="submit">Guardar borrador</button>}
 			</form>
+			{canSubmit && !submitUncertain && <form method="POST" action={submitHref} id="submit-form" class="submit-panel">
+				<input type="hidden" name="id" value={evaluation.id} />
+				<input type="hidden" name="assignment_id" value={assignmentId} />
+				<input type="hidden" name="limit" value={limit} />
+				<input type="hidden" name="offset" value={offset} />
+				<h2>Enviar ficha</h2>
+				<p>Se envía la última versión guardada del borrador. Los cambios sin guardar no se incluyen; guardalos antes de enviar. Después del envío la ficha ya no se puede editar.</p>
+				<p id="dirty-notice" class="notice error" role="status" hidden>Hay cambios sin guardar. Guardá el borrador antes de enviarlo.</p>
+				<button id="submit-button" class="button" type="submit">Enviar ficha guardada</button>
+			</form>}
 		</> : <section class="notice error" role="alert">
 			<h1 id="title">No se pudo cargar la ficha</h1>
 			<p>{errorText || 'Volvé a la asignación e intentá nuevamente.'}</p>
@@ -185,9 +223,36 @@ const textFields = [
 			studies.append(row);
 			rowIndex++;
 		});
+		const submitForm = document.querySelector<HTMLFormElement>('#submit-form');
+		const submitButton = document.querySelector<HTMLButtonElement>('#submit-button');
+		const dirtyNotice = document.querySelector<HTMLElement>('#dirty-notice');
+		let dirty = false;
+		// Submission sends only the saved version, so any unsaved edit blocks it.
+		const markDirty = () => {
+			dirty = true;
+			if (submitButton) submitButton.disabled = true;
+			if (dirtyNotice) dirtyNotice.hidden = false;
+		};
+		const evaluationForm = document.querySelector<HTMLFormElement>('#evaluation-form');
+		evaluationForm?.addEventListener('input', markDirty);
+		evaluationForm?.addEventListener('change', markDirty);
 		studies?.addEventListener('click', (event) => {
 			const target = event.target;
-			if (target instanceof Element && target.closest('.remove-study')) target.closest('.study-row')?.remove();
+			if (target instanceof Element && target.closest('.remove-study')) {
+				target.closest('.study-row')?.remove();
+				markDirty();
+			}
+		});
+		submitForm?.addEventListener('submit', (event) => {
+			if (dirty || submitForm.dataset.submitting === 'true') {
+				event.preventDefault();
+				return;
+			}
+			submitForm.dataset.submitting = 'true';
+			if (submitButton) {
+				submitButton.disabled = true;
+				submitButton.textContent = 'Enviando…';
+			}
 		});
 	</script>
 </Layout>
@@ -212,6 +277,9 @@ const textFields = [
 	}
 	.error { border-color: var(--rust-line); background: var(--rust-soft); }
 	.success { border-color: var(--sage); background: var(--sage-soft); }
+	.status, .submit-panel { margin: 1rem 0; padding: 1rem 1.25rem; border: 1px solid var(--line); border-radius: 0.75rem; background: var(--paper); }
+	.status h2, .submit-panel h2 { margin: 0 0 0.5rem; font-size: 1.1rem; }
+	.button:disabled { opacity: 0.65; cursor: not-allowed; }
 	fieldset {
 		display: grid;
 		grid-template-columns: repeat(2, minmax(0, 1fr));
