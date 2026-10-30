@@ -604,3 +604,63 @@ test('submit action treats post-POST 408/429 as uncertain and other unmapped 4xx
   assert.equal(result.requests.filter((request) => request.method === 'POST').length, 1);
  }
 });
+
+
+test('real API decimal-string ordinal confirms submission once while numeric snapshots stay supported', async () => {
+ for (const ordinal of [1, '1']) {
+  const snapshot = submission({ ordinal });
+  const api = await apiHarness({ status: 201, body: snapshot });
+  assert.deepEqual(plain(await api.mod.namespace.submitEvaluation(largeId, api.cookies)), snapshot);
+  assert.equal(api.requests.length, 1);
+  assert.equal(api.requests[0].method, 'POST');
+  assert.equal(api.requests[0].body, '{}');
+  assert.equal(api.writes.length, 0);
+  const action = await evaluate(actionPath, { responses: [assignmentPage, { status: 200, body: evaluation() }, { status: 201, body: snapshot }] });
+  const result = await action.mod.namespace.handleSubmitKinesiologyEvaluation(submitInput(), { cookies: action.cookies });
+  assert.equal(result.success, true, `ordinal ${JSON.stringify(ordinal)} must confirm the committed version`);
+  assert.deepEqual(plain(result.submission), snapshot);
+  assert.equal(result.assignment_id, '17');
+  assert.equal(action.requests.length, 3);
+  assert.equal(action.requests.filter((request) => request.method === 'POST').length, 1);
+  assert.equal(action.requests.at(-1).body, '{}');
+  assert.equal(action.writes.length, 0);
+ }
+});
+
+test('history accepts decimal-string ordinals and orders them numerically without losing bigint precision', async () => {
+ for (const ordinals of [[2, 10], ['2', '10'], [2, '10'], ['9007199254740992', '9007199254740993'], ['9223372036854775806', largeId]]) {
+  const items = ordinals.map((ordinal, index) => submission({ id: String(index + 1), ordinal }));
+  const api = await apiHarness({ body: { evaluation_id: largeId, items } });
+  const result = await api.mod.namespace.listSubmissions(largeId, api.cookies);
+  assert.deepEqual(plain(result.items), items);
+  assert.equal(api.requests.length, 1);
+  assert.equal(api.requests[0].method, 'GET');
+  assert.equal(api.writes.length, 0);
+ }
+ for (const ordinals of [['10', '2'], [1, '1'], ['1', 1], ['9007199254740993', '9007199254740992']]) {
+  const items = ordinals.map((ordinal, index) => submission({ id: String(index + 1), ordinal }));
+  const api = await apiHarness({ body: { evaluation_id: largeId, items } });
+  await assert.rejects(() => api.mod.namespace.listSubmissions(largeId, api.cookies), /no está ordenado/);
+  assert.equal(api.requests.length, 1);
+  assert.equal(api.requests[0].method, 'GET');
+  assert.equal(api.writes.length, 0);
+ }
+});
+
+test('ordinal compatibility still rejects malformed snapshots and leaves post-POST outcomes uncertain', async () => {
+ const invalid = [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, '', '0', '01', '-1', '+1', '1.0', '1e0', ' 1', '1 ', '9223372036854775808', null, true];
+ const { isSubmission } = (await apiHarness()).mod.namespace;
+ for (const ordinal of invalid) assert.equal(isSubmission(submission({ ordinal }), largeId), false, JSON.stringify(ordinal));
+ const malformed = submission({ ordinal: '1.0' });
+ const api = await apiHarness({ body: { evaluation_id: largeId, items: [malformed] } });
+ await assert.rejects(() => api.mod.namespace.listSubmissions(largeId, api.cookies), /no es válido/);
+ assert.equal(api.requests.length, 1);
+ const action = await evaluate(actionPath, { responses: [assignmentPage, { status: 200, body: evaluation() }, { status: 201, body: malformed }] });
+ const outcome = await action.mod.namespace.handleSubmitKinesiologyEvaluation(submitInput(), { cookies: action.cookies });
+ assert.equal(outcome.success, false);
+ assert.equal(outcome.uncertain, true);
+ assert.match(outcome.error, /consultá el estado/i);
+ assert.equal(action.requests.length, 3);
+ assert.equal(action.requests.filter((request) => request.method === 'POST').length, 1);
+ assert.equal(action.writes.length, 0);
+});

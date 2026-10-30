@@ -73,7 +73,7 @@ export interface ConsentSnapshot {
 export interface Submission {
 	id: string;
 	evaluation_id: string;
-	ordinal: number;
+	ordinal: number | string;
 	submitted_by: string;
 	submitted_at: string;
 	status: 'pending_validation' | 'validated';
@@ -205,7 +205,9 @@ export function isEvaluation(value: unknown): value is Evaluation {
 
 export function isSubmission(value: unknown, evaluationId: string): value is Submission {
 	if (!record(value) || typeof value.id !== 'string' || !validId(value.id) || value.evaluation_id !== evaluationId) return false;
-	if (!Number.isSafeInteger(value.ordinal) || value.ordinal < 1) return false;
+	// PostgreSQL bigint ordinals arrive as decimal strings; retain safe numeric responses too.
+	if (!(typeof value.ordinal === 'number' && Number.isSafeInteger(value.ordinal) && value.ordinal >= 1
+		|| typeof value.ordinal === 'string' && validId(value.ordinal))) return false;
 	if (typeof value.submitted_by !== 'string' || !UUID.test(value.submitted_by) || !iso(value.submitted_at)) return false;
 	if (!['pending_validation', 'validated'].includes(String(value.status)) || !record(value.clinical_content)) return false;
 	try { validateEvaluationContent(value.clinical_content); } catch { return false; }
@@ -298,7 +300,7 @@ export async function listSubmissions(evaluationId: string, cookies: AstroCookie
 		if (!isSubmission(item, evaluationId)) throw new Error('El historial de versiones no es válido.');
 		return item;
 	});
-	if (items.some((item, index) => index > 0 && item.ordinal <= items[index - 1].ordinal)) {
+	if (items.some((item, index) => index > 0 && BigInt(item.ordinal) <= BigInt(items[index - 1].ordinal))) {
 		throw new Error('El historial de versiones no está ordenado.');
 	}
 	const list: SubmissionList = { evaluation_id: evaluationId, items };
