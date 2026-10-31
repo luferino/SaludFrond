@@ -3,9 +3,12 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
+import { createRequire } from 'node:module';
 import { z } from 'astro/zod';
 
 const root = new URL('../', import.meta.url);
+const require = createRequire(import.meta.resolve('astro/package.json'));
+const { transform } = require('@astrojs/compiler');
 const source = (path) => readFile(new URL(path, root), 'utf8');
 const apiPath = 'src/pods/kinesiology-evaluation/api.ts';
 const actionPath = 'src/pods/kinesiology-evaluation/actions/evaluations.ts';
@@ -119,7 +122,7 @@ async function evaluatePageFrontmatter(path, options = {}) {
  const frontmatter = page.match(/^---\r?\n([\s\S]*?)\r?\n---/);
  assert.ok(frontmatter, `${path} has frontmatter`);
  const declarations = frontmatter[1].replace(/^import .*;\s*$/gm, '').replace(/^export const prerender = false;\s*$/m, '');
- const script = `async function renderPage() {${declarations}\nreturn { createHref: typeof createHref === 'undefined' ? undefined : createHref, actionHref: typeof actionHref === 'undefined' ? undefined : actionHref, assignment: typeof assignment === 'undefined' ? undefined : assignment, drafts: typeof drafts === 'undefined' ? undefined : drafts, evaluation: typeof evaluation === 'undefined' ? undefined : evaluation, eligible: typeof eligible === 'undefined' ? undefined : eligible, submitted: typeof submitted === 'undefined' ? undefined : submitted, canSubmit: typeof canSubmit === 'undefined' ? undefined : canSubmit, submitUncertain: typeof submitUncertain === 'undefined' ? undefined : submitUncertain, submitHref: typeof submitHref === 'undefined' ? undefined : submitHref, loadError: typeof loadError === 'undefined' ? undefined : loadError, unavailable: typeof unavailable === 'undefined' ? undefined : unavailable, c: typeof c === 'undefined' ? undefined : c, submissions: typeof submissions === 'undefined' ? undefined : submissions, historyError: typeof historyError === 'undefined' ? undefined : historyError }; }\nglobalThis.renderPage = renderPage;`;
+ const script = `async function renderPage() {${declarations}\nreturn { createHref: typeof createHref === 'undefined' ? undefined : createHref, actionHref: typeof actionHref === 'undefined' ? undefined : actionHref, assignment: typeof assignment === 'undefined' ? undefined : assignment, drafts: typeof drafts === 'undefined' ? undefined : drafts, evaluation: typeof evaluation === 'undefined' ? undefined : evaluation, eligible: typeof eligible === 'undefined' ? undefined : eligible, submitted: typeof submitted === 'undefined' ? undefined : submitted, canSubmit: typeof canSubmit === 'undefined' ? undefined : canSubmit, submitUncertain: typeof submitUncertain === 'undefined' ? undefined : submitUncertain, submitHref: typeof submitHref === 'undefined' ? undefined : submitHref, loadError: typeof loadError === 'undefined' ? undefined : loadError, unavailable: typeof unavailable === 'undefined' ? undefined : unavailable, c: typeof c === 'undefined' ? undefined : c, submissions: typeof submissions === 'undefined' ? undefined : submissions, historyError: typeof historyError === 'undefined' ? undefined : historyError, corrections: typeof corrections === 'undefined' ? undefined : corrections, correctionsError: typeof correctionsError === 'undefined' ? undefined : correctionsError, correctionDraft: typeof correctionDraft === 'undefined' ? undefined : correctionDraft }; }\nglobalThis.renderPage = renderPage;`;
  const output = ts.transpileModule(script, { compilerOptions: { module: ts.ModuleKind.None, target: ts.ScriptTarget.ES2022 } }).outputText;
  const action = (name) => ({ toString: () => `/_actions/${name}?_action=${name}` });
  const submitAction = action('submitKinesiologyEvaluation');
@@ -141,10 +144,11 @@ async function evaluatePageFrontmatter(path, options = {}) {
   listEvaluations: options.listEvaluations ?? (async () => [evaluation()]),
   getEvaluation: options.getEvaluation ?? (async () => evaluation()),
   actionHrefWithContext: (await apiHarness()).mod.namespace.actionHrefWithContext,
-  decodeJwt: () => ({ sub: authorId, role: 'student', permissions: options.permissions ?? ['kinesiology-evaluations:write', 'kinesiology-evaluations:submit'] }),
+  decodeJwt: () => options.actor ?? ({ sub: authorId, role: 'student', permissions: options.permissions ?? ['kinesiology-evaluations:write', 'kinesiology-evaluations:submit'] }),
   rawEvaluationContentFromForm: () => content,
   listSubmittedEvaluations: options.listSubmittedEvaluations ?? (async () => []),
   listSubmissions: options.listSubmissions ?? (async () => ({ evaluation_id: largeId, items: [] })),
+  listCorrections: options.listCorrections ?? (async () => ({ evaluation_id: largeId, items: [] })),
   EVALUATION_STATUS_LABELS: (await apiHarness()).mod.namespace.EVALUATION_STATUS_LABELS,
  });
  vm.runInContext(output, sandbox);
@@ -593,6 +597,95 @@ test('editor loads version history only for non-draft records and keeps the reco
  const template = await source(page);
  assert.match(template, /Historial de versiones/);
  assert.match(template, /SubmissionSnapshot/);
+});
+
+test('student editor compiles with the installed Astro compiler', async () => {
+ const page = 'src/pages/kinesiology-evaluations/[id].astro';
+ const result = await transform(await source(page), { filename: page });
+ assert.ok(Array.isArray(result.diagnostics), 'Astro compiler diagnostics must be available');
+ const astroErrors = result.diagnostics.filter((diagnostic) => diagnostic.severity === 1);
+ assert.deepEqual(astroErrors, [], `Astro compiler errors: ${JSON.stringify(astroErrors)}`);
+ const generated = ts.transpileModule(result.code, {
+  reportDiagnostics: true,
+  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+ });
+ const syntaxErrors = generated.diagnostics.filter((diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error);
+ assert.deepEqual(syntaxErrors.map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\\n')), [], 'Astro output must be syntactically valid JavaScript');
+ assert.doesNotThrow(() => new vm.SourceTextModule(generated.outputText, { context: vm.createContext({}) }));
+});
+
+test('student correction rework loads origin history and reasons, distinguishes empty/failing reads, and keeps resubmission gated', async () => {
+ const page = 'src/pages/kinesiology-evaluations/[id].astro';
+ const url = '/kinesiology-evaluations/9223372036854775807?assignment_id=17&limit=50&offset=0';
+ const old = submission({ id: '9223372036854775806', ordinal: '1' });
+ const correction = { submission_id: old.id, reason: 'Aclarar evolución clínica', reviewed_by: authorId, requested_at: iso };
+ let correctionReads = 0, historyReads = 0;
+ const reopened = await evaluatePageFrontmatter(page, {
+  url, getEvaluation: async () => evaluation(),
+  listCorrections: async () => { correctionReads++; return { evaluation_id: largeId, items: [correction] }; },
+  listSubmissions: async () => { historyReads++; return { evaluation_id: largeId, items: [old] }; },
+ });
+ assert.equal(correctionReads, 1);
+ assert.equal(historyReads, 1);
+ assert.equal(reopened.correctionDraft, true);
+ assert.deepEqual(plain(reopened.submissions.map((item) => item.id)), [old.id]);
+ assert.deepEqual(plain(reopened.corrections), [correction]);
+ assert.equal(reopened.canSubmit, true);
+ const initial = await evaluatePageFrontmatter(page, { url, getEvaluation: async () => evaluation() });
+ assert.equal(initial.correctionDraft, false);
+ assert.deepEqual(plain(initial.submissions), []);
+ assert.equal(initial.canSubmit, true);
+ const validated = await evaluatePageFrontmatter(page, {
+  url, getEvaluation: async () => evaluation({ status: 'validated' }),
+  listCorrections: async () => ({ evaluation_id: largeId, items: [correction] }),
+  listSubmissions: async () => ({ evaluation_id: largeId, items: [old, submission({ id: largeId, ordinal: 2, status: 'validated' })] }),
+ });
+ assert.deepEqual(plain(validated.corrections), [correction]);
+ assert.deepEqual(plain(validated.submissions.map((item) => item.status)), ['pending_validation', 'validated']);
+ assert.equal(validated.canSubmit, false);
+ const failed = await evaluatePageFrontmatter(page, {
+  url, getEvaluation: async () => evaluation(),
+  listCorrections: async () => { throw new Error('offline'); },
+  listSubmissions: async () => { throw new Error('must not infer a correction'); },
+ });
+ assert.equal(failed.correctionsError, 'No se pudieron cargar las solicitudes de corrección. La ficha se muestra igual; intentá recargar la página.');
+ assert.equal(failed.correctionDraft, false);
+ assert.equal(failed.canSubmit, false);
+ assert.equal(failed.evaluation.id, largeId);
+ let nonAuthorCorrectionReads = 0;
+ const nonAuthor = await evaluatePageFrontmatter(page, {
+  url, actor: { sub: patientId, role: 'student', permissions: ['kinesiology-evaluations:write', 'kinesiology-evaluations:submit'] },
+  getEvaluation: async () => evaluation(), listCorrections: async () => { nonAuthorCorrectionReads++; return { evaluation_id: largeId, items: [correction] }; },
+ });
+ assert.equal(nonAuthor.eligible, false);
+ assert.equal(nonAuthor.canSubmit, false);
+ assert.equal(nonAuthorCorrectionReads, 0);
+ let outsideCorrectionReads = 0;
+ const outside = await evaluatePageFrontmatter(page, {
+  url, listAssignedPatients: async () => ({ items: [], limit: 50, offset: 0 }),
+  listCorrections: async () => { outsideCorrectionReads++; throw new Error('must not read outside origin'); },
+ });
+ assert.equal(outside.unavailable, true);
+ assert.equal(outsideCorrectionReads, 0);
+ let endedCorrectionReads = 0;
+ const ended = await evaluatePageFrontmatter(page, {
+  url, listAssignedPatients: async () => ({ items: [{ ...assignment(), ended_at: iso }], limit: 50, offset: 0 }),
+  listCorrections: async () => { endedCorrectionReads++; return { evaluation_id: largeId, items: [correction] }; },
+ });
+ assert.equal(ended.unavailable, true);
+ assert.equal(endedCorrectionReads, 0);
+ const historyFailed = await evaluatePageFrontmatter(page, {
+  url, getEvaluation: async () => evaluation(),
+  listCorrections: async () => ({ evaluation_id: largeId, items: [correction] }),
+  listSubmissions: async () => { throw new Error('history offline'); },
+ });
+ assert.equal(historyFailed.correctionDraft, true);
+ assert.deepEqual(plain(historyFailed.corrections), [correction]);
+ assert.match(historyFailed.historyError, /historial/);
+ assert.equal(historyFailed.canSubmit, true);
+ const template = await source(page);
+ assert.match(template, /Reenviar versión guardada/);
+ assert.match(template, /corrections=\{corrections\}/);
 });
 
 test('submit action treats post-POST 408/429 as uncertain and other unmapped 4xx as a submit-specific rejection', async () => {

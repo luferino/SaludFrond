@@ -5,7 +5,7 @@ import Layout from '../../layouts/Layout.astro';
 import SubmissionSnapshot from '../../components/clinical/SubmissionSnapshot.astro';
 import { ApiError } from '../../shared/apiClient';
 import { listAssignedPatients, parseAssignmentPagination } from '../../pods/patient-assignment/api';
-import { actionHrefWithContext, antecedentOptionState, EVALUATION_STATUS_LABELS, getEvaluation, listSubmissions, type Evaluation, type EvaluationContent, type Submission } from '../../pods/kinesiology-evaluation/api';
+import { actionHrefWithContext, antecedentOptionState, EVALUATION_STATUS_LABELS, getEvaluation, listCorrections, listSubmissions, type CorrectionEvent, type Evaluation, type EvaluationContent, type Submission } from '../../pods/kinesiology-evaluation/api';
 import { rawEvaluationContentFromForm } from '../../pods/kinesiology-evaluation/actions/evaluations';
 import { decodeJwt } from '../../shared/jwt';
 
@@ -23,6 +23,10 @@ let unavailable = false;
 let loadError = '';
 let submissions: Submission[] = [];
 let historyError = '';
+let corrections: CorrectionEvent[] = [];
+let correctionsError = '';
+let correctionsLoaded = false;
+let correctionDraft = false;
 const result = Astro.getActionResult(actions.updateKinesiologyEvaluation);
 let retainedContent: EvaluationContent | undefined = result?.data?.success === false ? result.data.content : undefined;
 let errorText = result?.data?.success === false ? result.data.error : '';
@@ -76,11 +80,23 @@ try {
 				const canWrite = Array.isArray(actor?.permissions)
 					&& actor.permissions.includes('kinesiology-evaluations:write');
 				eligible = record.status === 'draft' && actor?.sub === record.author_id && role && canWrite;
-				// Retained values are unsaved; submission only sends the saved version.
-				canSubmit = eligible && !retainedContent && Array.isArray(actor?.permissions)
+				const originAuthor = role && actor?.sub === record.author_id;
+				// Correction reasons and working content stay with the original author in the verified assignment context.
+				if (originAuthor) {
+					try {
+						corrections = (await listCorrections(id, Astro.cookies)).items;
+						correctionsLoaded = true;
+					} catch (correctionFailure) {
+						if (correctionFailure instanceof ApiError && correctionFailure.status === 401) throw correctionFailure;
+						correctionsError = 'No se pudieron cargar las solicitudes de corrección. La ficha se muestra igual; intentá recargar la página.';
+					}
+				}
+				correctionDraft = record.status === 'draft' && originAuthor && correctionsLoaded && corrections.length > 0;
+				// Retained values are unsaved; submission only sends the saved version. A failed correction read cannot make a draft actionable.
+				canSubmit = eligible && !retainedContent && correctionsLoaded && Array.isArray(actor?.permissions)
 					&& actor.permissions.includes('kinesiology-evaluations:submit');
 				// Version history is read-only and loads only after the identity checks above; a failure never hides the record.
-				if (record.status !== 'draft') {
+				if (record.status !== 'draft' || correctionDraft) {
 					try { submissions = (await listSubmissions(id, Astro.cookies)).items; }
 					catch (historyFailure) {
 						if (historyFailure instanceof ApiError && historyFailure.status === 401) throw historyFailure;
@@ -148,6 +164,7 @@ const textFields = [
 			{justSubmitted && evaluation.status !== 'draft' && <p class="success" role="status">Ficha enviada. Queda pendiente de validación docente.</p>}
 			{errorText && <p class="notice error" role="alert">{errorText}</p>}
 			{submitError && <p class="notice error" role="alert">{submitError}</p>}
+			{correctionsError && <p class="notice error" role="alert">{correctionsError}</p>}
 			{!eligible && <p class="notice">Esta ficha se muestra en modo de solo lectura. Solo el autor de un borrador en una asignación vigente puede editarla; el servicio vuelve a comprobar los permisos al guardar.</p>}
 			{eligible && <p class="notice">Evitá editar este borrador al mismo tiempo que otra persona. El guardado reemplaza el contenido completo y no detecta cambios simultáneos.</p>}
 			<form method="POST" action={actionHref} id="evaluation-form">
@@ -205,14 +222,15 @@ const textFields = [
 				<input type="hidden" name="assignment_id" value={assignmentId} />
 				<input type="hidden" name="limit" value={limit} />
 				<input type="hidden" name="offset" value={offset} />
-				<h2>Enviar ficha</h2>
+				<h2>{correctionDraft ? 'Reenviar versión guardada' : 'Enviar ficha'}</h2>
 				<p>Se envía la última versión guardada del borrador. Los cambios sin guardar no se incluyen; guardalos antes de enviar. Después del envío la ficha ya no se puede editar.</p>
 				<p id="dirty-notice" class="notice error" role="status" hidden>Hay cambios sin guardar. Guardá el borrador antes de enviarlo.</p>
-				<button id="submit-button" class="button" type="submit">Enviar ficha guardada</button>
+				<button id="submit-button" class="button" type="submit">{correctionDraft ? 'Reenviar versión guardada' : 'Enviar ficha guardada'}</button>
+				<button id="discard-button" class="button secondary" type="button" hidden>Descartar cambios</button>
 			</form>}
-		{evaluation.status !== 'draft' && <section class="history" aria-labelledby="history-title">
+		{(evaluation.status !== 'draft' || correctionDraft) && <section class="history" aria-labelledby="history-title">
 				<h2 id="history-title">Historial de versiones</h2>
-				{historyError ? <p class="notice error" role="alert">{historyError}</p> : submissions.length ? submissions.map((submission) => <SubmissionSnapshot submission={submission} />) : <p>No hay versiones enviadas para esta ficha.</p>}
+				{historyError ? <p class="notice error" role="alert">{historyError}</p> : submissions.length ? submissions.map((submission) => <SubmissionSnapshot submission={submission} corrections={corrections} />) : <p>No hay versiones enviadas para esta ficha.</p>}
 			</section>}
 		</> : <section class="notice error" role="alert">
 			<h1 id="title">No se pudo cargar la ficha</h1>
@@ -241,16 +259,21 @@ const textFields = [
 		const submitForm = document.querySelector<HTMLFormElement>('#submit-form');
 		const submitButton = document.querySelector<HTMLButtonElement>('#submit-button');
 		const dirtyNotice = document.querySelector<HTMLElement>('#dirty-notice');
+		const discardButton = document.querySelector<HTMLButtonElement>('#discard-button');
 		let dirty = false;
 		// Submission sends only the saved version, so any unsaved edit blocks it.
 		const markDirty = () => {
 			dirty = true;
 			if (submitButton) submitButton.disabled = true;
 			if (dirtyNotice) dirtyNotice.hidden = false;
+			if (discardButton) discardButton.hidden = false;
 		};
 		const evaluationForm = document.querySelector<HTMLFormElement>('#evaluation-form');
 		evaluationForm?.addEventListener('input', markDirty);
 		evaluationForm?.addEventListener('change', markDirty);
+		discardButton?.addEventListener('click', () => {
+			window.location.assign(window.location.pathname + window.location.search);
+		});
 		studies?.addEventListener('click', (event) => {
 			const target = event.target;
 			if (target instanceof Element && target.closest('.remove-study')) {

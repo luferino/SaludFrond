@@ -14,7 +14,7 @@ function fakeDom() {
   addEventListener(name, callback) { this.handlers[name] = callback; },
   querySelectorAll: () => [],
  });
- const elements = Object.fromEntries(['#evaluation-form', '#submit-form', '#submit-button', '#dirty-notice', '#studies', '#add-study'].map((selector) => [selector, element(selector)]));
+ const elements = Object.fromEntries(['#evaluation-form', '#submit-form', '#submit-button', '#dirty-notice', '#discard-button', '#studies', '#add-study'].map((selector) => [selector, element(selector)]));
  return { elements, document: { querySelector: (selector) => elements[selector] ?? null } };
 }
 
@@ -27,18 +27,22 @@ async function editorScript() {
 
 test('dirty guard disables the submit button and shows the saved-version explanation after any form field changes', async () => {
  const dom = fakeDom();
- vm.runInNewContext(await editorScript(), { document: dom.document });
+ vm.runInNewContext(await editorScript(), { document: dom.document, window: { location: { pathname: '/kinesiology-evaluations/7', search: '?assignment_id=17', assign: (href) => { dom.discardHref = href; } } } });
  const { '#evaluation-form': form, '#submit-button': button, '#dirty-notice': notice } = dom.elements;
  assert.equal(button.disabled, false);
  assert.equal(notice.hidden, true);
  form.handlers.input();
  assert.equal(button.disabled, true);
  assert.equal(notice.hidden, false);
+ const discard = dom.elements['#discard-button'];
+ assert.equal(discard.hidden, false);
+ discard.handlers.click();
+ assert.equal(dom.discardHref, '/kinesiology-evaluations/7?assignment_id=17');
 });
 
 test('submit form double-submit guard prevents a second submit event without a second POST', async () => {
  const dom = fakeDom();
- vm.runInNewContext(await editorScript(), { document: dom.document });
+ vm.runInNewContext(await editorScript(), { document: dom.document, window: { location: { pathname: '/', search: '', assign() {} } } });
  const { '#submit-form': form, '#submit-button': button } = dom.elements;
  let prevented = 0;
  form.handlers.submit({ preventDefault() { prevented++; } });
