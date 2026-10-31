@@ -20,7 +20,13 @@ After the origin read succeeds, the detail page shows **Historial de versiones**
 
 A history failure shows its own error (`No se pudo cargar el historial de versiones`) while the origin record and consent state stay visible. No history is requested for a denied or rejected origin.
 
-Correction reasons are read separately from `GET /kinesiology-evaluations/:id/corrections`, after the same exact origin check. Each event is joined to its immutable snapshot by `submission_id`; only that version displays the reason, reviewer and request time. A correction-read failure has a separate error and is never presented as an empty list. The annotation is read-only and does not change the snapshot's pending/validated status or add review controls. These reasons remain origin-only; this read does not use student assignment discovery or `/mine`.
+Correction reasons are read separately from `GET /kinesiology-evaluations/:id/corrections`, after the same exact origin check. Each event is joined to its immutable snapshot by `submission_id`; only that version displays the reason, reviewer and request time. A correction-read failure has a separate error and is never presented as an empty list. The annotation is read-only and does not change the snapshot's pending/validated status. These reasons remain origin-only; this read does not use student assignment discovery or `/mine`.
+
+### Teacher validation and correction requests
+
+On an origin detail page, a teacher/docente with the exact `kinesiology-evaluations:review` grant can act only on the last validated history item when the current evaluation is `submitted` and that item is still `pending_validation`. The validation form sends only the evaluation/origin context and targeted `submission_id` to `POST /kinesiology-evaluations/:id/validations`; the correction form adds a required, trimmed, non-empty reason and sends it to `POST /kinesiology-evaluations/:id/corrections`. No active student assignment is required. History errors, empty history, non-submitted evaluations, and read-only grants never expose these forms. Earlier corrected snapshots remain pending in their immutable history but are not actionable. The action rechecks the exact origin, current status and latest target before making one backend-authorized write.
+
+A confirmed response redirects to a GET using the action-validated evaluation and origin context. The backend remains authoritative for races and final authorization. Known backend rejections are failures, not idempotent success. Network/server errors or malformed success responses are uncertain: review controls stay hidden in that response, and the user must explicitly refresh/consult the record before deciding on another action. Each review form has its own double-submit guard; there is no client-side fetch or automatic retry. A failed correction preserves the entered reason where the action result is available.
 
 ## Paper consent
 
@@ -36,4 +42,4 @@ Enter a real calendar date in `YYYY-MM-DD`. There is no client-invented future-d
 
 Focused API tests use in-memory fetch responses. Render tests compile actual Astro templates with isolated synthetic props and no HTTP, database, shared QA state or server. These checks do not establish browser interaction, live grants or backend availability.
 
-No reassignment, historical catalog, submission action, correction or validation mutation, amendment, dependencies or backend changes are included. Correction reasons and origin version history above are read-only. Commits, publication and shared runtime startup remain separately authorized operations.
+No reassignment, historical catalog, student submission action, amendment, dependencies or backend changes are included. Student rework and explicit resubmission remain separate follow-up work. Commits, publication and shared runtime startup remain separately authorized operations.

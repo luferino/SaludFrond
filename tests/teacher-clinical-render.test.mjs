@@ -11,10 +11,12 @@ const patient = '11111111-1111-4111-8111-111111111111';
 const subject = '22222222-2222-4222-8222-222222222222';
 const group = '33333333-3333-4333-8333-333333333333';
 const id = '9007199254741061';
+const latestSubmissionId = '9007199254741063';
 const clinicalContext = { patient_id: patient, subject_id: subject, academic_group_id: group };
 const query = new URLSearchParams(clinicalContext).toString();
 const row = { id, ...clinicalContext, nombres: 'Ana', apellidos: 'Prueba', documento: 'QA' };
 const evaluation = { id, ...clinicalContext, origin_subject_id: subject, origin_group_id: group, status: 'draft', patient: null, age: null, content: { admission_status: 'Estable', antecedents: { hta: false, dbt: null }, studies: [{ type: 'RX', description: 'Descripción de prueba', date: null }] } };
+const reviewSnapshot = (submissionId = latestSubmissionId, ordinal = '1', status = 'pending_validation') => ({ id: submissionId, evaluation_id: id, ordinal, submitted_by: patient, submitted_at: '2026-01-02T00:00:00Z', status, clinical_content: evaluation.content, studies: [], patient: null, age_at_admission: null, consent: { id: '5', paper_signature_date: '2026-01-01', verified_by: patient, verified_at: '2026-01-02T00:00:00Z' } });
 async function html(value) {
  value = await value;
  if (value == null || value === false) return '';
@@ -23,11 +25,11 @@ async function html(value) {
 }
 async function render(path, options = {}) {
  const requests = [];
- const Astro = { props: options.props ?? {}, params: { id }, cookies: {}, url: new URL(`https://fixture.invalid/${path.includes('[id]') ? `teacher-clinical/${id}` : 'teacher-clinical'}?${options.query ?? query}`), request: new Request('https://fixture.invalid'), getActionResult: () => options.result, response: { headers: new Headers() }, redirect: (url) => `REDIRECT:${url}` };
+ const Astro = { props: options.props ?? {}, params: { id }, cookies: {}, url: new URL(`https://fixture.invalid/${path.includes('[id]') ? `teacher-clinical/${id}` : 'teacher-clinical'}?${options.query ?? query}`), request: new Request('https://fixture.invalid'), getActionResult: (action) => options.results?.[action] ?? (action === 'record' ? options.result : undefined), response: { headers: new Headers() }, redirect: (url) => `REDIRECT:${url}` };
  const mocks = {
   Layout: null, Fragment: null, EvaluationReadOnly: null, ApiError: class ApiError extends Error {},
-  actions: { recordTeacherConsent: 'record' }, isInputError: () => false,
-  teacherGrant: (_cookies, grant) => options.denied ? false : grant === 'kinesiology-evaluations:verify-consent' ? !!options.verify : true,
+  actions: { recordTeacherConsent: 'record', validateTeacherSubmission: 'validate', requestTeacherCorrection: 'correct' }, isInputError: () => false,
+  teacherGrant: (_cookies, grant) => options.denied ? false : grant === 'kinesiology-evaluations:verify-consent' ? !!options.verify : grant === 'kinesiology-evaluations:review' ? options.review !== false : true,
   parseTeacherPagination: () => ({ limit: 50, offset: options.offset ?? 0 }),
   parseClinicalContext: (params) => {
    if (options.rejectQuery || !params?.has('patient_id') || !params?.has('subject_id') || !params?.has('academic_group_id')) throw new Error('invalid query context');
@@ -35,7 +37,7 @@ async function render(path, options = {}) {
   },
   listTeacherPatients: async () => { requests.push('assignments'); if (options.failure) throw new Error('failed'); return { items: options.empty ? [] : [row], limit: 50, offset: options.offset ?? 0 }; },
   listTeacherEvaluations: async () => { requests.push('list'); return options.emptyEvaluations ? [] : [evaluation]; },
-  getTeacherEvaluation: async () => { requests.push('detail'); if (options.detailFailure) throw new Error('failed'); return evaluation; },
+  getTeacherEvaluation: async () => { requests.push('detail'); if (options.detailFailure) throw new Error('failed'); return { ...evaluation, status: options.evaluationStatus ?? 'draft' }; },
   getConsent: async () => { requests.push('consent'); if (options.consentFailure) throw new Error('failed'); return { evaluation_id: id, status: 'pending', evidence: null }; },
   listTeacherSubmissions: async () => { requests.push('history'); if (options.historyFailure) throw new Error('failed'); return { evaluation_id: id, items: options.submissions ?? [] }; },
   listTeacherCorrections: async () => { requests.push('corrections'); if (options.correctionsFailure) throw new Error('failed'); return { evaluation_id: id, items: options.corrections ?? [] }; },
@@ -121,6 +123,43 @@ test('teacher detail shows origin version history after the origin read without 
  assert.match((await render(path)).html, /No hay versiones enviadas para esta ficha/);
 });
 
+test('teacher review controls target only the latest submitted version and disappear on failed or empty history', async () => {
+ const path = 'src/pages/teacher-clinical/[id].astro';
+ const history = ['9007199254741062', latestSubmissionId].map((submissionId, index) => reviewSnapshot(submissionId, String(index + 1)));
+ const latestSubmission = history.at(-1);
+ const snapshot = latestSubmission;
+ const active = await render(path, { review: true, evaluationStatus: 'submitted', submissions: history });
+ assert.equal((active.html.match(/name="submission_id"/g) ?? []).length, 2);
+ assert.match(active.html, /name="reason"/);
+ assert.equal((active.html.match(new RegExp(`name="submission_id" value="${latestSubmission.id}"`, 'g')) ?? []).length, 2);
+ assert.doesNotMatch(active.html, new RegExp(`name="submission_id" value="${history[0].id}"`));
+ const empty = await render(path, { review: true, evaluationStatus: 'submitted', submissions: [] });
+ assert.doesNotMatch(empty.html, /name="submission_id"/);
+ const failed = await render(path, { review: true, evaluationStatus: 'submitted', historyFailure: true });
+ assert.match(failed.html, /No se pudo cargar el historial/);
+ assert.doesNotMatch(failed.html, /name="submission_id"/);
+ const denied = await render(path, { review: false, evaluationStatus: 'submitted', submissions: [snapshot] });
+ assert.doesNotMatch(denied.html, /name="submission_id"/);
+ const draft = await render(path, { review: true, evaluationStatus: 'draft', submissions: [snapshot] });
+ const validated = await render(path, { review: true, evaluationStatus: 'validated', submissions: [snapshot] });
+ assert.doesNotMatch(draft.html, /name="submission_id"/);
+ assert.doesNotMatch(validated.html, /name="submission_id"/);
+ const uncertain = await render(path, { review: true, evaluationStatus: 'submitted', submissions: [snapshot], results: { validate: { data: { success: false, uncertain: true, error: 'uncertain' } } } });
+ assert.match(uncertain.html, /Consultá el estado de la ficha antes de decidir si corresponde otra revisión\./);
+ assert.doesNotMatch(uncertain.html, /name="submission_id"/);
+});
+
+test('confirmed teacher reviews redirect with nested action-validated context before follow-up reads', async () => {
+ const path = 'src/pages/teacher-clinical/[id].astro';
+ for (const [action, outcome] of [['validate', 'validated'], ['correct', 'corrections-requested']]) {
+  for (const queryValue of ['', `patient_id=${group}&subject_id=${patient}&academic_group_id=${subject}`]) {
+   const result = await render(path, { query: queryValue, rejectQuery: true, detailFailure: true, results: { [action]: { data: { success: true, id, context: clinicalContext, outcome } } } });
+   assert.equal(result.html, `REDIRECT:/teacher-clinical/${id}?patient_id=${patient}&subject_id=${subject}&academic_group_id=${group}&reviewed=${outcome}`);
+   assert.deepEqual(result.requests, []);
+  }
+ }
+});
+
 test('teacher history failure shows its own error while the origin record and consent state still render', async () => {
  const path = 'src/pages/teacher-clinical/[id].astro';
  const failed = await render(path, { verify: true, historyFailure: true });
@@ -160,7 +199,7 @@ test('consent browser handler disables first submit and prevents a second click 
  const button = { disabled: false, textContent: '' };
  const form = { dataset: {}, addEventListener: (_name, callback) => { handler = callback; }, querySelector: () => button };
  const code = ts.transpileModule(script, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
- vm.runInNewContext(code, { document: { querySelector: () => form } });
+ vm.runInNewContext(code, { document: { querySelector: () => form, querySelectorAll: () => [] } });
  let prevented = 0;
  handler({ preventDefault() { prevented++; } });
  assert.equal(button.disabled, true);

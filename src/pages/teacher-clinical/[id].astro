@@ -18,11 +18,22 @@ let corrections: CorrectionEvent[] = [];
 let correctionsError = '';
 const result = Astro.getActionResult(actions.recordTeacherConsent);
 const resultData = result?.data;
+const reviewResult = Astro.getActionResult(actions.validateTeacherSubmission);
+const reviewData = reviewResult?.data;
+const correctionResult = Astro.getActionResult(actions.requestTeacherCorrection);
+const correctionData = correctionResult?.data;
 const actionError = result?.error ? (isInputError(result.error) ? 'Revisá los campos del formulario.' : 'No se pudo procesar el formulario. Consultá el estado antes de registrar otra constancia.') : resultData?.success === false ? resultData.error : '';
-if (resultData?.success === false && /sesión venció/i.test(resultData.error)) return Astro.redirect('/auth/login?returnTo=%2Fteacher-clinical');
+const reviewError = reviewResult?.error ? (isInputError(reviewResult.error) ? 'Revisá los campos de la revisión.' : 'No se pudo confirmar la revisión. Actualizá el estado antes de volver a decidir.') : reviewData?.success === false ? reviewData.error : '';
+const correctionError = correctionResult?.error ? (isInputError(correctionResult.error) ? 'Revisá los campos de la corrección.' : 'No se pudo confirmar la solicitud. Actualizá el estado antes de volver a decidir.') : correctionData?.success === false ? correctionData.error : '';
+if (resultData?.success === false && /sesión venció/i.test(resultData.error) || reviewData?.success === false && /sesión venció/i.test(reviewData.error) || correctionData?.success === false && /sesión venció/i.test(correctionData.error)) return Astro.redirect('/auth/login?returnTo=%2Fteacher-clinical');
 if (resultData?.success) {
  const returnParams = new URLSearchParams({ patient_id: resultData.patient_id, subject_id: resultData.subject_id, academic_group_id: resultData.academic_group_id });
  return Astro.redirect(`/teacher-clinical/${resultData.id}?${returnParams}&recorded=1`);
+}
+const confirmedReview = reviewData?.success ? reviewData : correctionData?.success ? correctionData : null;
+if (confirmedReview) {
+ const returnParams = new URLSearchParams({ patient_id: confirmedReview.context.patient_id, subject_id: confirmedReview.context.subject_id, academic_group_id: confirmedReview.context.academic_group_id });
+ return Astro.redirect(`/teacher-clinical/${confirmedReview.id}?${returnParams}&reviewed=${confirmedReview.outcome}`);
 }
 const allowed = teacherGrant(Astro.cookies, 'kinesiology-evaluations:read');
 try {
@@ -52,8 +63,18 @@ try {
 const cleanParams = evaluation ? new URLSearchParams({ patient_id: evaluation.patient_id, subject_id: evaluation.origin_subject_id, academic_group_id: evaluation.origin_group_id }) : new URLSearchParams();
 const stateHref = `/teacher-clinical/${Astro.params.id}?${cleanParams}`;
 const actionHref = actionHrefWithContext(actions.recordTeacherConsent.toString(), Object.fromEntries(cleanParams), Astro.url.href);
+const validateHref = actionHrefWithContext(actions.validateTeacherSubmission.toString(), Object.fromEntries(cleanParams), Astro.url.href);
+const correctionHref = actionHrefWithContext(actions.requestTeacherCorrection.toString(), Object.fromEntries(cleanParams), Astro.url.href);
 const canRecord = !!evaluation && !!consent && teacherGrant(Astro.cookies, 'kinesiology-evaluations:verify-consent');
 const uncertain = resultData?.success === false && resultData.uncertain || !!result?.error && !isInputError(result.error);
+const reviewUncertain = reviewData?.success === false && reviewData.uncertain
+ || correctionData?.success === false && correctionData.uncertain
+ || !!reviewResult?.error && !isInputError(reviewResult.error) || !!correctionResult?.error && !isInputError(correctionResult.error);
+const latestSubmission = submissions.at(-1);
+const canReview = !!evaluation && evaluation.status === 'submitted' && !historyError && !reviewUncertain
+ && submissions.length > 0 && latestSubmission?.status === 'pending_validation'
+ && teacherGrant(Astro.cookies, 'kinesiology-evaluations:review');
+const reviewReason = correctionData?.success === false ? correctionData.reason : '';
 ---
 <Layout>
  <main>
@@ -65,6 +86,8 @@ const uncertain = resultData?.success === false && resultData.uncertain || !!res
    <section aria-labelledby="consent-title">
     <h2 id="consent-title">Consentimiento firmado en papel</h2>
     {Astro.url.searchParams.get('recorded') === '1' && <p role="status">Constancia registrada.</p>}
+    {Astro.url.searchParams.get('reviewed') === 'validated' && <p role="status">Versión validada.</p>}
+    {Astro.url.searchParams.get('reviewed') === 'corrections-requested' && <p role="status">Se solicitaron correcciones para la versión enviada.</p>}
     {actionError && <p role="alert">{actionError}</p>}
     {consentError ? <p role="alert">{consentError}</p> : consent && <>
      <p>Estado: {consent.status === 'pending' ? 'Pendiente' : 'Verificado'}</p>
@@ -88,19 +111,45 @@ const uncertain = resultData?.success === false && resultData.uncertain || !!res
    </section>
    <section aria-labelledby="history-title">
     <h2 id="history-title">Historial de versiones</h2>
-    {historyError ? <p role="alert">{historyError}</p> : submissions.length ? submissions.map((submission) => <SubmissionSnapshot submission={submission} corrections={corrections} />) : <p>No hay versiones enviadas para esta ficha.</p>}
+    {reviewError && <p role="alert">{reviewError}</p>}
+    {correctionError && <p role="alert">{correctionError}</p>}
+    {reviewUncertain && <p role="status">Consultá el estado de la ficha antes de decidir si corresponde otra revisión.</p>}
+    {historyError ? <p role="alert">{historyError}</p> : submissions.length ? submissions.map((submission, index) => <div class="submission-review-item">
+     <SubmissionSnapshot submission={submission} corrections={corrections} />
+     {canReview && index === submissions.length - 1 && <div class="teacher-review-controls" aria-label="Revisión de la última versión">
+      <form method="POST" action={validateHref} class="teacher-review-form">
+       <input type="hidden" name="id" value={evaluation!.id} />
+       <input type="hidden" name="patient_id" value={evaluation!.patient_id} />
+       <input type="hidden" name="subject_id" value={evaluation!.origin_subject_id} />
+       <input type="hidden" name="academic_group_id" value={evaluation!.origin_group_id} />
+       <input type="hidden" name="submission_id" value={submission.id} />
+       <button type="submit">Validar esta versión</button>
+      </form>
+      <form method="POST" action={correctionHref} class="teacher-review-form">
+       <input type="hidden" name="id" value={evaluation!.id} />
+       <input type="hidden" name="patient_id" value={evaluation!.patient_id} />
+       <input type="hidden" name="subject_id" value={evaluation!.origin_subject_id} />
+       <input type="hidden" name="academic_group_id" value={evaluation!.origin_group_id} />
+       <input type="hidden" name="submission_id" value={submission.id} />
+       <label>Motivo de la corrección <textarea name="reason" required>{reviewReason}</textarea></label>
+       <button type="submit">Solicitar correcciones</button>
+      </form>
+     </div>}
+    </div>) : <p>No hay versiones enviadas para esta ficha.</p>}
     {correctionsError && <p role="alert">{correctionsError}</p>}
    </section>
   </>}
  </main>
  <script>
-  const form = document.querySelector<HTMLFormElement>('#consent-form');
-  form?.addEventListener('submit', (event) => {
+  const protectSubmit = (form: HTMLFormElement, busyText: string) => form.addEventListener('submit', (event) => {
    if (form.dataset.submitting === 'true') { event.preventDefault(); return; }
    form.dataset.submitting = 'true';
    const button = form.querySelector<HTMLButtonElement>('button[type="submit"]');
-   if (button) { button.disabled = true; button.textContent = 'Registrando…'; }
+   if (button) { button.disabled = true; button.textContent = busyText; }
   });
+  const consentForm = document.querySelector<HTMLFormElement>('#consent-form');
+  if (consentForm) protectSubmit(consentForm, 'Registrando…');
+  document.querySelectorAll<HTMLFormElement>('.teacher-review-form').forEach((form) => protectSubmit(form, 'Enviando revisión…'));
  </script>
 </Layout>
 <style>

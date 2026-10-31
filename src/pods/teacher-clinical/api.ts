@@ -118,3 +118,35 @@ export async function getTeacherEvaluation(id: string, context: ClinicalContext,
  validateContext(context);
  return originEvaluation(await getEvaluation(id, cookies), context);
 }
+
+function reviewTime(value: unknown): value is string {
+ return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value) && Number.isFinite(Date.parse(value));
+}
+
+/** Send exactly one targeted review write and accept only the documented confirmed response. */
+export async function validateTeacherSubmission(id: string, submissionId: string, cookies: AstroCookies) {
+ if (!validId(id) || !validId(submissionId)) throw new Error('La ficha o versión no es válida.');
+ const value = await apiFetch<unknown>(`/kinesiology-evaluations/${id}/validations`, {
+  method: 'POST', body: { submission_id: submissionId }, cookies,
+ });
+ if (!record(value) || Object.keys(value).some((key) => !['evaluation_id', 'submission_id', 'status', 'reviewed_by', 'reviewed_at'].includes(key))
+  || value.evaluation_id !== id || value.submission_id !== submissionId || value.status !== 'validated'
+  || typeof value.reviewed_by !== 'string' || !UUID.test(value.reviewed_by) || !reviewTime(value.reviewed_at)) {
+  throw new Error('La respuesta de validación no se pudo confirmar.');
+ }
+ return value as { evaluation_id: string; submission_id: string; status: 'validated'; reviewed_by: string; reviewed_at: string };
+}
+
+/** Request correction for one version; reasons are trimmed but otherwise unconstrained. */
+export async function requestTeacherCorrection(id: string, submissionId: string, reason: string, cookies: AstroCookies) {
+ if (!validId(id) || !validId(submissionId) || !reason.trim()) throw new Error('La ficha, versión o motivo no es válido.');
+ const value = await apiFetch<unknown>(`/kinesiology-evaluations/${id}/corrections`, {
+  method: 'POST', body: { submission_id: submissionId, reason }, cookies,
+ });
+ if (!record(value) || Object.keys(value).some((key) => !['evaluation_id', 'submission_id', 'status', 'correction_request_id', 'requested_at'].includes(key))
+  || value.evaluation_id !== id || value.submission_id !== submissionId || value.status !== 'draft'
+  || !validId(value.correction_request_id) || !reviewTime(value.requested_at)) {
+  throw new Error('La respuesta de corrección no se pudo confirmar.');
+ }
+ return value as { evaluation_id: string; submission_id: string; status: 'draft'; correction_request_id: string; requested_at: string };
+}

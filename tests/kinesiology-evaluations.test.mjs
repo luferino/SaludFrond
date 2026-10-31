@@ -95,6 +95,7 @@ async function evaluate(path, options = {}) {
      '../pods/patient-availability/actions': ['searchAvailablePatient','enablePatientAvailability','withdrawPatientAvailability'],
      '../pods/teacher-assignment/actions': ['createTeacherAssignment'],
      '../pods/teacher-clinical/actions/consent': ['handleRecordTeacherConsent'],
+     '../pods/teacher-clinical/actions/reviews': ['handleValidateTeacherSubmission', 'handleRequestTeacherCorrection'],
     };
     return new vm.SyntheticModule(exports[specifier], function () { for (const n of exports[specifier]) this.setExport(n, () => undefined); }, { context: sandbox });
    }

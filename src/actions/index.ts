@@ -20,6 +20,7 @@ import { handleCreateKinesiologyEvaluation, handleSubmitKinesiologyEvaluation, h
 import { searchAvailablePatient, enablePatientAvailability, withdrawPatientAvailability } from '../pods/patient-availability/actions';
 import { createTeacherAssignment } from '../pods/teacher-assignment/actions';
 import { handleRecordTeacherConsent } from '../pods/teacher-clinical/actions/consent';
+import { handleRequestTeacherCorrection, handleValidateTeacherSubmission } from '../pods/teacher-clinical/actions/reviews';
 
 export const server = {
 	recordTeacherConsent: defineAction({
@@ -29,6 +30,20 @@ export const server = {
 			paper_signature_date: z.string(),
 		}).strict(),
 		handler: handleRecordTeacherConsent,
+	}),
+	validateTeacherSubmission: defineAction({
+		accept: 'form',
+		input: z.object({
+			id: z.string(), patient_id: z.string(), subject_id: z.string(), academic_group_id: z.string(), submission_id: z.string(),
+		}).strict(),
+		handler: handleValidateTeacherSubmission,
+	}),
+	requestTeacherCorrection: defineAction({
+		accept: 'form',
+		input: z.object({
+			id: z.string(), patient_id: z.string(), subject_id: z.string(), academic_group_id: z.string(), submission_id: z.string(), reason: z.string(),
+		}).strict(),
+		handler: handleRequestTeacherCorrection,
 	}),
 	searchAvailablePatient,
 	enablePatientAvailability,
