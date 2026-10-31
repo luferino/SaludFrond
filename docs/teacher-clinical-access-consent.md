@@ -20,6 +20,8 @@ After the origin read succeeds, the detail page shows **Historial de versiones**
 
 A history failure shows its own error (`No se pudo cargar el historial de versiones`) while the origin record and consent state stay visible. No history is requested for a denied or rejected origin.
 
+Correction reasons are read separately from `GET /kinesiology-evaluations/:id/corrections`, after the same exact origin check. Each event is joined to its immutable snapshot by `submission_id`; only that version displays the reason, reviewer and request time. A correction-read failure has a separate error and is never presented as an empty list. The annotation is read-only and does not change the snapshot's pending/validated status or add review controls. These reasons remain origin-only; this read does not use student assignment discovery or `/mine`.
+
 ## Paper consent
 
 The detail page reads `/kinesiology-evaluations/:id/consent` and distinguishes **Pendiente**, **Verificado**, and an unavailable read. A failed read never becomes pending and disables recording. The last verified evidence shows the paper signature date and server-assigned verifier/time.
@@ -34,4 +36,4 @@ Enter a real calendar date in `YYYY-MM-DD`. There is no client-invented future-d
 
 Focused API tests use in-memory fetch responses. Render tests compile actual Astro templates with isolated synthetic props and no HTTP, database, shared QA state or server. These checks do not establish browser interaction, live grants or backend availability.
 
-No reassignment, historical catalog, submission action, correction, validation, amendment, dependencies or backend changes are included. Origin version history above is read-only. Commits, publication and shared runtime startup remain separately authorized operations.
+No reassignment, historical catalog, submission action, correction or validation mutation, amendment, dependencies or backend changes are included. Correction reasons and origin version history above are read-only. Commits, publication and shared runtime startup remain separately authorized operations.

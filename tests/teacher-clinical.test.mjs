@@ -104,6 +104,46 @@ test('consent validates pending/verified envelopes, exact IDs and calendar dates
  }
 });
 
+test('correction history preserves version IDs/reasons and rejects malformed or failed reads instead of empty', async () => {
+ const event = { submission_id: '9007199254741062', reason: '  Revisar diagnóstico  ', reviewed_by: patient, requested_at: '2026-01-02T00:00:00Z' };
+ const requests = [];
+ const api = await compile(async (url, init) => { requests.push([url, init]); return Response.json({ evaluation_id: id, items: [event] }); }, 'src/pods/kinesiology-evaluation/api.ts');
+ const list = await api.listCorrections(id, cookies);
+ assert.deepEqual(JSON.parse(JSON.stringify(list)), { evaluation_id: id, items: [event] });
+ assert.equal(requests[0][0], `https://api.invalid/kinesiology-evaluations/${id}/corrections`);
+ assert.equal(requests[0][1].method, 'GET');
+ assert.equal(requests[0][1].body, undefined);
+ for (const value of [
+  { evaluation_id: '1', items: [] }, { evaluation_id: id, items: null },
+  ...[{ submission_id: 9 }, { submission_id: '0' }, { reason: '  ' }, { reason: null }, { reviewed_by: 'bad' }, { requested_at: 'bad' }].map((patch) => ({ evaluation_id: id, items: [{ ...event, ...patch }] })),
+ ]) {
+  const bad = await compile(async () => Response.json(value), 'src/pods/kinesiology-evaluation/api.ts');
+  await assert.rejects(bad.listCorrections(id, cookies));
+ }
+ const empty = await compile(async () => Response.json({ evaluation_id: id, items: [] }), 'src/pods/kinesiology-evaluation/api.ts');
+ assert.equal((await empty.listCorrections(id, cookies)).items.length, 0);
+ for (const status of [401, 403, 404, 500]) {
+  const bad = await compile(async () => Response.json({ error: { code: 'DENIED', message: 'unavailable' } }, { status }), 'src/pods/kinesiology-evaluation/api.ts');
+  await assert.rejects(bad.listCorrections(id, cookies), (error) => error.status === status);
+ }
+ await assert.rejects(api.listCorrections('0', cookies));
+ assert.equal(requests.length, 1);
+});
+
+test('teacher correction reasons are read only after exact origin and never use student assignment gates', async () => {
+ const requests = [];
+ const api = await compile(async (url) => { requests.push(url); return Response.json(url.endsWith('/corrections') ? { evaluation_id: id, items: [] } : evaluation); });
+ assert.equal((await api.listTeacherCorrections(id, context, cookies)).items.length, 0);
+ assert.deepEqual(requests, [`https://api.invalid/kinesiology-evaluations/${id}`, `https://api.invalid/kinesiology-evaluations/${id}/corrections`]);
+ for (const patch of [{ patient_id: group }, { subject_id: patient }, { academic_group_id: patient }]) {
+  requests.length = 0;
+  await assert.rejects(api.listTeacherCorrections(id, { ...context, ...patch }, cookies));
+  assert.deepEqual(requests, [`https://api.invalid/kinesiology-evaluations/${id}`]);
+ }
+ const projected = await compile(async () => Response.json({ ...evaluation, submission_id: '5' }));
+ await assert.rejects(projected.listTeacherCorrections(id, context, cookies));
+});
+
 const teacherCookies = (permissions, role = 'teacher') => ({ get: () => ({ value: `header.${Buffer.from(JSON.stringify({ role, permissions, exp: 9999999999 })).toString('base64url')}.signature` }), delete() {} });
 test('consent action checks separate teacher verify grant, exact origin and origin-only consent before one append', async () => {
  const input = { id, ...context, paper_signature_date: '2099-12-31' };

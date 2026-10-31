@@ -1,7 +1,8 @@
 ---
-import type { Submission } from '../../pods/kinesiology-evaluation/api';
-interface Props { submission: Submission }
-const { submission } = Astro.props;
+import type { CorrectionEvent, Submission } from '../../pods/kinesiology-evaluation/api';
+interface Props { submission: Submission; corrections?: CorrectionEvent[] }
+const { submission, corrections = [] } = Astro.props;
+const versionCorrections = corrections.filter((correction) => correction.submission_id === submission.id);
 const content = submission.clinical_content;
 const headingId = `submission-${submission.ordinal}`;
 const statusLabels = { pending_validation: 'Pendiente de validación', validated: 'Validada' } as const;
@@ -26,6 +27,10 @@ const antecedents = { hta: 'Hipertensión arterial', dbt: 'Diabetes', diu: 'Disp
    return <div><dt>{label}</dt><dd>{value === undefined ? 'Sin registrar' : value === null ? 'Sin determinar' : value === true ? 'Sí' : value === false ? 'No' : value}</dd></div>;
   })}
  </dl>
+ {versionCorrections.length > 0 && <section aria-label="Correcciones solicitadas">
+  <h4>Corrección solicitada</h4>
+  {versionCorrections.map((correction) => <div><p>{correction.reason}</p><p>Solicitada por: {correction.reviewed_by}</p><p>Fecha: {correction.requested_at}</p></div>)}
+ </section>}
  <h4>Estudios complementarios</h4>
  {submission.studies.length ? <ul>{submission.studies.map((study) => <li><strong>{study.type}</strong><p>{study.description}</p><p>{study.date ?? 'Fecha sin registrar'}</p></li>)}</ul> : <p>Sin estudios registrados.</p>}
  <h4>Consentimiento en papel · solo lectura</h4>

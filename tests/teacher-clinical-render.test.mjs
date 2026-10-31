@@ -38,6 +38,7 @@ async function render(path, options = {}) {
   getTeacherEvaluation: async () => { requests.push('detail'); if (options.detailFailure) throw new Error('failed'); return evaluation; },
   getConsent: async () => { requests.push('consent'); if (options.consentFailure) throw new Error('failed'); return { evaluation_id: id, status: 'pending', evidence: null }; },
   listTeacherSubmissions: async () => { requests.push('history'); if (options.historyFailure) throw new Error('failed'); return { evaluation_id: id, items: options.submissions ?? [] }; },
+  listTeacherCorrections: async () => { requests.push('corrections'); if (options.correctionsFailure) throw new Error('failed'); return { evaluation_id: id, items: options.corrections ?? [] }; },
   actionHrefWithContext: (action) => action,
   $$createAstro: () => ({}), $$createComponent: (component) => component,
   $$render: async (strings, ...values) => { let output = ''; for (let i = 0; i < strings.length; i++) output += strings[i] + await html(values[i]); return output; },
@@ -88,7 +89,7 @@ test('teacher discovery distinguishes denied/error/empty and preserves Previous 
 test('teacher consent renders state on GET, requires separate verify grant and hides form on uncertain/read failure', async () => {
  const path = 'src/pages/teacher-clinical/[id].astro';
  const reader = await render(path);
- assert.deepEqual(reader.requests, ['detail', 'consent', 'history']);
+ assert.deepEqual(reader.requests, ['detail', 'consent', 'history', 'corrections']);
  assert.match(reader.html, /Pendiente/);
  assert.doesNotMatch(reader.html, /method="POST"/);
  const writer = await render(path, { verify: true });
@@ -188,6 +189,23 @@ test('shared submission snapshot renders one version read-only with top-level st
  assert.match(pending.html, /Datos del paciente no disponibles/);
  assert.match(pending.html, /Sin estudios registrados/);
  assert.doesNotMatch(pending.html, /Edad al ingreso/);
+});
+
+test('origin history annotates only the corrected version without changing immutable snapshot status or adding controls', async () => {
+ const snapshot = { id: '9007199254741062', evaluation_id: id, ordinal: '9007199254741063', submitted_at: '2026-01-02T00:00:00Z', status: 'pending_validation', clinical_content: {}, studies: [], patient: null, age_at_admission: null, consent: {} };
+ const reason = { submission_id: snapshot.id, reason: 'Revisar diagnóstico', reviewed_by: patient, requested_at: '2026-02-01T00:00:00Z' };
+ const rendered = await render('src/pages/teacher-clinical/[id].astro', { submissions: [snapshot, { ...snapshot, id: '9007199254741064', ordinal: '9007199254741064' }], corrections: [reason] });
+ assert.equal((rendered.html.match(/Revisar diagnóstico/g) ?? []).length, 1);
+ assert.match(rendered.html, /Corrección solicitada/);
+ assert.match(rendered.html, /2026-02-01T00:00:00Z/);
+ assert.match(rendered.html, new RegExp(patient));
+ assert.equal((rendered.html.match(/Pendiente de validación/g) ?? []).length, 2);
+ assert.doesNotMatch(rendered.html, /<form|<button/);
+ const failed = await render('src/pages/teacher-clinical/[id].astro', { submissions: [snapshot], correctionsFailure: true });
+ assert.match(failed.html, /No se pudieron cargar los motivos de corrección/);
+ assert.match(failed.html, /Versión 9007199254741063/);
+ assert.doesNotMatch(failed.html, /Corrección solicitada/);
+ assert.deepEqual((await render('src/pages/teacher-clinical/[id].astro', { detailFailure: true })).requests, ['detail']);
 });
 
 test('teacher read-only renderer shows actual clinical content, false/null antecedents and studies', async () => {

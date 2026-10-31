@@ -91,6 +91,19 @@ export interface SubmissionList {
 	items: Submission[];
 }
 
+export interface CorrectionEvent {
+	submission_id: string;
+	reason: string;
+	reviewed_by: string;
+	requested_at: string;
+}
+
+/** Correction requests are events associated with immutable submitted versions. */
+export interface CorrectionList {
+	evaluation_id: string;
+	items: CorrectionEvent[];
+}
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DECIMAL_ID = /^(0|[1-9]\d{0,18})$/;
 const MAX_ID = 9223372036854775807n;
@@ -306,6 +319,23 @@ export async function listSubmissions(evaluationId: string, cookies: AstroCookie
 	const list: SubmissionList = { evaluation_id: evaluationId, items };
 	if (response.amendment_of_evaluation_id !== undefined) list.amendment_of_evaluation_id = response.amendment_of_evaluation_id;
 	return list;
+}
+
+/** Read correction events without changing the immutable submission snapshots. */
+export async function listCorrections(evaluationId: string, cookies: AstroCookies): Promise<CorrectionList> {
+	if (!validId(evaluationId)) throw new Error('El identificador de ficha no es válido.');
+	const response = await apiFetch<unknown>(`/kinesiology-evaluations/${evaluationId}/corrections`, { cookies });
+	if (!record(response) || response.evaluation_id !== evaluationId || !Array.isArray(response.items)) {
+		throw new Error('La respuesta de correcciones no es válida.');
+	}
+	const items = response.items.map((item): CorrectionEvent => {
+		if (!record(item) || typeof item.submission_id !== 'string' || !validId(item.submission_id)
+			|| typeof item.reason !== 'string' || !item.reason.trim()
+			|| typeof item.reviewed_by !== 'string' || !UUID.test(item.reviewed_by)
+			|| !iso(item.requested_at)) throw new Error('El historial de correcciones no es válido.');
+		return { submission_id: item.submission_id, reason: item.reason, reviewed_by: item.reviewed_by, requested_at: item.requested_at };
+	});
+	return { evaluation_id: evaluationId, items };
 }
 
 export async function getEvaluation(id: string, cookies: AstroCookies): Promise<Evaluation> {
