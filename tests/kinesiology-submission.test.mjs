@@ -51,3 +51,17 @@ test('submit form double-submit guard prevents a second submit event without a s
  form.handlers.submit({ preventDefault() { prevented++; } });
  assert.equal(prevented, 1);
 });
+
+test('amend form double-submit guard prevents a second create request', async () => {
+ const dom = fakeDom();
+ dom.elements['#amend-form'] = { dataset: {}, handlers: {}, addEventListener(name, callback) { this.handlers[name] = callback; } };
+ dom.elements['#amend-button'] = { disabled: false, textContent: 'Crear enmienda' };
+ vm.runInNewContext(await editorScript(), { document: dom.document, window: { location: { pathname: '/', search: '', assign() {} } } });
+ const { '#amend-form': form, '#amend-button': button } = dom.elements;
+ let prevented = 0;
+ form.handlers.submit({ preventDefault() { prevented++; } });
+ assert.equal(button.disabled, true);
+ assert.equal(form.dataset.submitting, 'true');
+ form.handlers.submit({ preventDefault() { prevented++; } });
+ assert.equal(prevented, 1);
+});

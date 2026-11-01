@@ -16,6 +16,6 @@ The browser submits named native controls. The server validates the submitted fi
 
 The UI offers editing only as a presentation hint for the current author and a draft in a matching active assignment. Assignment and evaluation identities are checked again during each action. The backend remains the authority for current permissions, ownership, and transactional context checks. Local JWT claims are not authorization. No administrator bypass is introduced.
 
-Submission of the saved draft is described in [kinesiology-submission.md](kinesiology-submission.md). This slice does not implement consent, teacher review, amendments, timeline/evolution operations, or other lifecycle mutations. Avoid simultaneous edits: the API has no version/ETag stale-write check, and the last successful full-content save wins.
+Submission of the saved draft is described in [kinesiology-submission.md](kinesiology-submission.md), and amendments of validated records in [kinesiology-amendments.md](kinesiology-amendments.md). This slice does not implement consent, teacher review, timeline/evolution operations, or other lifecycle mutations. Avoid simultaneous edits: the API has no version/ETag stale-write check, and the last successful full-content save wins.
 
 The form's normal fields submit without JavaScript. JavaScript is used only to add/remove study rows and to suppress accidental rapid repeat clicks on explicit draft creation. Clinical text is not placed in query strings or local storage.

@@ -56,6 +56,8 @@ export interface Evaluation {
 	age: number | null;
 	created_at: string;
 	updated_at: string;
+	/** Present only when this record amends a validated original. */
+	amendment_of_evaluation_id?: string;
 }
 
 export const EVALUATION_STATUS_LABELS: Record<Evaluation['status'], string> = {
@@ -213,6 +215,8 @@ export function isEvaluation(value: unknown): value is Evaluation {
 	try { validateEvaluationContent(value.content); } catch { return false; }
 	if (!(value.patient === null || validPatient(value.patient) && value.patient.id === value.patient_id)) return false;
 	if (!(value.age === null || typeof value.age === 'number' && Number.isFinite(value.age))) return false;
+	if ('amendment_of_evaluation_id' in value
+		&& (typeof value.amendment_of_evaluation_id !== 'string' || !validId(value.amendment_of_evaluation_id))) return false;
 	return iso(value.created_at) && iso(value.updated_at);
 }
 
@@ -312,6 +316,19 @@ export async function submitEvaluation(id: string, cookies: AstroCookies): Promi
 		throw new Error('El servicio devolvió datos incompletos o desconocidos.');
 	}
 	return response;
+}
+
+/**
+ * Create one amendment of a validated record. Sends no content: the backend copies the validated snapshot
+ * into a new draft, which then follows the normal save, submit and review flow.
+ */
+export async function createAmendment(id: string, cookies: AstroCookies): Promise<Evaluation & { amendment_of_evaluation_id: string }> {
+	if (!validId(id)) throw new Error('El identificador de ficha no es válido.');
+	const response = await apiFetch<unknown>(`/kinesiology-evaluations/${id}/amendments`, { method: 'POST', body: {}, cookies });
+	if (!isEvaluation(response) || response.status !== 'draft' || response.id === id || response.amendment_of_evaluation_id !== id) {
+		throw new Error('El servicio devolvió datos incompletos o desconocidos.');
+	}
+	return response as Evaluation & { amendment_of_evaluation_id: string };
 }
 
 /** Read-only version history for one record. The list is the only source of snapshot detail. */

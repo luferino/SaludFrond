@@ -1,7 +1,7 @@
 import type { AstroCookies } from 'astro';
 import { listAssignedPatients, parseAssignmentPagination } from '../../patient-assignment/api';
 import { ApiError } from '../../../shared/apiClient';
-import { createEvaluation, getEvaluation, submitEvaluation, updateEvaluation, validateEvaluationContent, type EvaluationContent } from '../api';
+import { createAmendment, createEvaluation, getEvaluation, submitEvaluation, updateEvaluation, validateEvaluationContent, type EvaluationContent } from '../api';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ID = /^[1-9]\d{0,18}$/;
@@ -200,5 +200,55 @@ export async function handleSubmitKinesiologyEvaluation(input: Record<string, un
 		// Only a typed rejection proves nothing was stored; anything else may have committed.
 		if (error instanceof ApiError && error.status < 500 && ![408, 429].includes(error.status)) return { success: false as const, uncertain: false, error: submitRejection(error) };
 		return { success: false as const, uncertain: true, error: UNCERTAIN_SUBMIT };
+	}
+}
+
+const UNCERTAIN_AMEND = 'No se pudo confirmar la creación de la enmienda. Revisá los borradores de la asignación antes de volver a intentarlo: cada intento puede crear una enmienda nueva.';
+const NOT_VALIDATED = 'Solo se puede enmendar una ficha validada.';
+
+function amendRejection(error: ApiError): string {
+	if (error.status === 409 && /validated submission is unavailable/i.test(error.message)) return 'La versión validada no está disponible para enmendar esta ficha.';
+	if (error.status === 409) return NOT_VALIDATED;
+	if (error.status === 403) return 'No tenés permiso para enmendar esta ficha.';
+	if ([401, 404].includes(error.status)) return safeError(error);
+	return 'No se creó la enmienda. Revisá el estado de la ficha antes de volver a intentarlo.';
+}
+
+/** Explicit single amendment of a validated record: the backend copies the validated snapshot into a new draft. Never retried. */
+export async function handleCreateKinesiologyAmendment(input: Record<string, unknown>, context: { cookies: AstroCookies }) {
+	if (!validId(input.id)) return { success: false as const, uncertain: false, error: 'El identificador de ficha no es válido.' };
+	if (input.confirm !== 'on') return { success: false as const, uncertain: false, error: 'Confirmá que querés crear una enmienda nueva.' };
+	let assignment;
+	try {
+		assignment = await selectedAssignment(input, context.cookies);
+		const record = await getEvaluation(input.id, context.cookies);
+		if (record.id !== input.id || record.patient_id !== assignment.patient_id
+			|| record.origin_subject_id !== assignment.subject_id || record.origin_group_id !== assignment.academic_group_id) {
+			return { success: false as const, uncertain: false, error: 'La ficha no pertenece a esta asignación.' };
+		}
+		if (record.status !== 'validated') return { success: false as const, uncertain: false, error: NOT_VALIDATED };
+	} catch (error) {
+		if (error instanceof ApiError) return { success: false as const, uncertain: false, error: amendRejection(error) };
+		return {
+			success: false as const, uncertain: false,
+			error: error instanceof Error && /asignación/.test(error.message) ? error.message : 'No se pudo verificar la ficha antes de enmendarla. No se creó nada.',
+		};
+	}
+	const pagination = parseAssignmentPagination(new URLSearchParams({ limit: String(input.limit), offset: String(input.offset) }));
+	try {
+		const amendment = await createAmendment(input.id, context.cookies);
+		// A 201 outside the confirmed context cannot be opened here, but something may have been stored.
+		if (amendment.patient_id !== assignment.patient_id || amendment.origin_subject_id !== assignment.subject_id
+			|| amendment.origin_group_id !== assignment.academic_group_id) {
+			return { success: false as const, uncertain: true, error: UNCERTAIN_AMEND };
+		}
+		return {
+			success: true as const, id: amendment.id, amendment_of_evaluation_id: amendment.amendment_of_evaluation_id,
+			assignment_id: assignment.id, limit: String(pagination.limit), offset: String(pagination.offset),
+		};
+	} catch (error) {
+		// Only a typed rejection proves nothing was stored; anything else may have committed.
+		if (error instanceof ApiError && error.status < 500 && ![408, 429].includes(error.status)) return { success: false as const, uncertain: false, error: amendRejection(error) };
+		return { success: false as const, uncertain: true, error: UNCERTAIN_AMEND };
 	}
 }

@@ -28,6 +28,7 @@ let correctionsError = '';
 let correctionsLoaded = false;
 let correctionDraft = false;
 let crossContext = false;
+let canAmend = false;
 const result = Astro.getActionResult(actions.updateKinesiologyEvaluation);
 let retainedContent: EvaluationContent | undefined = result?.data?.success === false ? result.data.content : undefined;
 let errorText = result?.data?.success === false ? result.data.error : '';
@@ -51,7 +52,18 @@ const submitUncertain = submitData?.success === false && submitData.uncertain ||
 const submitError = submitUncertain && submitResult?.error
 	? 'No se pudo confirmar el envío. Consultá el estado de la ficha antes de volver a intentarlo.'
 	: submitData?.success === false ? submitData.error : submitResult?.error ? 'Revisá los datos del envío.' : '';
-if (/sesión venció/i.test(errorText) || /sesión venció/i.test(submitError)) {
+const amendResult = Astro.getActionResult(actions.createKinesiologyAmendment);
+const amendData = amendResult?.data;
+if (amendData?.success) {
+	// Open the new draft through the context the action validated.
+	const returnParams = new URLSearchParams({ assignment_id: amendData.assignment_id, limit: amendData.limit, offset: amendData.offset, amended: '1' });
+	return Astro.redirect(`/kinesiology-evaluations/${encodeURIComponent(amendData.id)}?${returnParams}`);
+}
+const amendUncertain = amendData?.success === false && amendData.uncertain || !!amendResult?.error && !isInputError(amendResult.error);
+const amendError = amendUncertain && amendResult?.error
+	? 'No se pudo confirmar la creación de la enmienda. Revisá los borradores de la asignación antes de volver a intentarlo: cada intento puede crear una enmienda nueva.'
+	: amendData?.success === false ? amendData.error : amendResult?.error ? 'Confirmá que querés crear una enmienda nueva.' : '';
+if (/sesión venció/i.test(errorText) || /sesión venció/i.test(submitError) || /sesión venció/i.test(amendError)) {
 	return Astro.redirect(`/auth/login?returnTo=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`);
 }
 try {
@@ -83,6 +95,8 @@ try {
 				const canWrite = Array.isArray(actor?.permissions)
 					&& actor.permissions.includes('kinesiology-evaluations:write');
 				eligible = !crossContext && record.status === 'draft' && actor?.sub === record.author_id && role && canWrite;
+				// Any student with write access in the origin context may amend; the backend rechecks habilitation and assignment.
+				canAmend = !crossContext && record.status === 'validated' && role && canWrite && !amendUncertain;
 				const originAuthor = !crossContext && role && actor?.sub === record.author_id;
 				// Correction reasons and working content stay with the original author in the verified assignment context.
 				if (originAuthor) {
@@ -134,6 +148,15 @@ const antecedents = c.antecedents ?? {};
 const antecedentKeys = Object.keys(antecedents).join(',');
 const saved = search.getAll('saved').length === 1 && search.get('saved') === '1';
 const justSubmitted = search.getAll('submitted').length === 1 && search.get('submitted') === '1';
+const justAmended = search.getAll('amended').length === 1 && search.get('amended') === '1';
+const amendHref = actionHrefWithContext(actions.createKinesiologyAmendment.toString(), {
+	assignment_id: assignmentId,
+	limit: String(limit),
+	offset: String(offset),
+}, Astro.url.href);
+const amendmentOfHref = evaluation?.amendment_of_evaluation_id
+	? `/kinesiology-evaluations/${encodeURIComponent(evaluation.amendment_of_evaluation_id)}?assignment_id=${encodeURIComponent(assignmentId)}&limit=${limit}&offset=${offset}`
+	: '';
 const textFields = [
 	['admission_status', 'Estado al ingreso'], ['occupation', 'Ocupación'],
 	['referring_physician', 'Profesional que deriva'], ['illness_history', 'Historia de la enfermedad'],
@@ -164,9 +187,12 @@ const textFields = [
 				{evaluation.status !== 'draft' && <p>La ficha fue enviada y ya no se puede editar. Queda disponible en la asignación, en la lista de fichas enviadas.</p>}
 			</section>
 			{saved && <p class="success" role="status">Borrador guardado.</p>}
+			{evaluation.amendment_of_evaluation_id && <p class="notice">Esta ficha es una enmienda de la <a href={amendmentOfHref}>ficha validada {evaluation.amendment_of_evaluation_id}</a>. La ficha original no cambia.</p>}
 			{justSubmitted && evaluation.status !== 'draft' && <p class="success" role="status">Ficha enviada. Queda pendiente de validación docente.</p>}
+			{justAmended && evaluation.status === 'draft' && <p class="success" role="status">Enmienda creada. Editá y guardá el borrador; después envialo para una nueva revisión docente.</p>}
 			{errorText && <p class="notice error" role="alert">{errorText}</p>}
 			{submitError && <p class="notice error" role="alert">{submitError}</p>}
+			{amendError && <p class="notice error" role="alert">{amendError}</p>}
 			{correctionsError && <p class="notice error" role="alert">{correctionsError}</p>}
 			{crossContext && <p class="notice">Esta ficha fue registrada en otra asignatura o grupo y se muestra en modo de solo lectura.</p>}
 			{!eligible && !crossContext && <p class="notice">Esta ficha se muestra en modo de solo lectura. Solo el autor de un borrador en una asignación vigente puede editarla; el servicio vuelve a comprobar los permisos al guardar.</p>}
@@ -232,6 +258,16 @@ const textFields = [
 				<button id="submit-button" class="button" type="submit">{correctionDraft ? 'Reenviar versión guardada' : 'Enviar ficha guardada'}</button>
 				<button id="discard-button" class="button secondary" type="button" hidden>Descartar cambios</button>
 			</form>}
+			{canAmend && <form method="POST" action={amendHref} id="amend-form" class="submit-panel">
+				<input type="hidden" name="id" value={evaluation.id} />
+				<input type="hidden" name="assignment_id" value={assignmentId} />
+				<input type="hidden" name="limit" value={limit} />
+				<input type="hidden" name="offset" value={offset} />
+				<h2>Crear enmienda</h2>
+				<p>Se crea un borrador nuevo con el contenido de la versión validada. Esta ficha y su versión validada no cambian. El borrador se edita, se envía y pasa por revisión docente como cualquier ficha.</p>
+				<label class="confirm"><input type="checkbox" name="confirm" required /> Confirmo que quiero crear una enmienda nueva. Cada confirmación crea una enmienda distinta.</label>
+				<button id="amend-button" class="button" type="submit">Crear enmienda</button>
+			</form>}
 		{(evaluation.status !== 'draft' || correctionDraft) && <section class="history" aria-labelledby="history-title">
 				<h2 id="history-title">Historial de versiones</h2>
 				{historyError ? <p class="notice error" role="alert">{historyError}</p> : submissions.length ? submissions.map((submission) => <SubmissionSnapshot submission={submission} corrections={corrections} crossContext={crossContext} />) : <p>No hay versiones enviadas para esta ficha.</p>}
@@ -285,6 +321,20 @@ const textFields = [
 				markDirty();
 			}
 		});
+		const amendForm = document.querySelector<HTMLFormElement>('#amend-form');
+		const amendButton = document.querySelector<HTMLButtonElement>('#amend-button');
+		// Each POST creates a separate amendment, so a second click is ignored.
+		amendForm?.addEventListener('submit', (event) => {
+			if (amendForm.dataset.submitting === 'true') {
+				event.preventDefault();
+				return;
+			}
+			amendForm.dataset.submitting = 'true';
+			if (amendButton) {
+				amendButton.disabled = true;
+				amendButton.textContent = 'Creando…';
+			}
+		});
 		submitForm?.addEventListener('submit', (event) => {
 			if (dirty || submitForm.dataset.submitting === 'true') {
 				event.preventDefault();
@@ -334,6 +384,7 @@ const textFields = [
 	}
 	legend { padding: 0 0.5rem; font-weight: 700; }
 	label { display: grid; gap: 0.35rem; font-weight: 600; }
+	label.confirm { display: flex; align-items: flex-start; gap: 0.5rem; margin: 0 0 0.75rem; }
 	input, textarea, select {
 		min-width: 0;
 		padding: 0.65rem;

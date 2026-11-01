@@ -124,19 +124,20 @@ async function evaluatePageFrontmatter(path, options = {}) {
  const frontmatter = page.match(/^---\r?\n([\s\S]*?)\r?\n---/);
  assert.ok(frontmatter, `${path} has frontmatter`);
  const declarations = frontmatter[1].replace(/^import .*;\s*$/gm, '').replace(/^export const prerender = false;\s*$/m, '');
- const script = `async function renderPage() {${declarations}\nreturn { createHref: typeof createHref === 'undefined' ? undefined : createHref, actionHref: typeof actionHref === 'undefined' ? undefined : actionHref, assignment: typeof assignment === 'undefined' ? undefined : assignment, drafts: typeof drafts === 'undefined' ? undefined : drafts, evaluation: typeof evaluation === 'undefined' ? undefined : evaluation, eligible: typeof eligible === 'undefined' ? undefined : eligible, submitted: typeof submitted === 'undefined' ? undefined : submitted, canSubmit: typeof canSubmit === 'undefined' ? undefined : canSubmit, submitUncertain: typeof submitUncertain === 'undefined' ? undefined : submitUncertain, submitHref: typeof submitHref === 'undefined' ? undefined : submitHref, loadError: typeof loadError === 'undefined' ? undefined : loadError, unavailable: typeof unavailable === 'undefined' ? undefined : unavailable, c: typeof c === 'undefined' ? undefined : c, submissions: typeof submissions === 'undefined' ? undefined : submissions, historyError: typeof historyError === 'undefined' ? undefined : historyError, corrections: typeof corrections === 'undefined' ? undefined : corrections, correctionsError: typeof correctionsError === 'undefined' ? undefined : correctionsError, correctionDraft: typeof correctionDraft === 'undefined' ? undefined : correctionDraft, crossContext: typeof crossContext === 'undefined' ? undefined : crossContext }; }\nglobalThis.renderPage = renderPage;`;
+ const script = `async function renderPage() {${declarations}\nreturn { createHref: typeof createHref === 'undefined' ? undefined : createHref, actionHref: typeof actionHref === 'undefined' ? undefined : actionHref, assignment: typeof assignment === 'undefined' ? undefined : assignment, drafts: typeof drafts === 'undefined' ? undefined : drafts, evaluation: typeof evaluation === 'undefined' ? undefined : evaluation, eligible: typeof eligible === 'undefined' ? undefined : eligible, submitted: typeof submitted === 'undefined' ? undefined : submitted, canSubmit: typeof canSubmit === 'undefined' ? undefined : canSubmit, submitUncertain: typeof submitUncertain === 'undefined' ? undefined : submitUncertain, submitHref: typeof submitHref === 'undefined' ? undefined : submitHref, loadError: typeof loadError === 'undefined' ? undefined : loadError, unavailable: typeof unavailable === 'undefined' ? undefined : unavailable, c: typeof c === 'undefined' ? undefined : c, submissions: typeof submissions === 'undefined' ? undefined : submissions, historyError: typeof historyError === 'undefined' ? undefined : historyError, corrections: typeof corrections === 'undefined' ? undefined : corrections, correctionsError: typeof correctionsError === 'undefined' ? undefined : correctionsError, correctionDraft: typeof correctionDraft === 'undefined' ? undefined : correctionDraft, crossContext: typeof crossContext === 'undefined' ? undefined : crossContext, canAmend: typeof canAmend === 'undefined' ? undefined : canAmend, amendHref: typeof amendHref === 'undefined' ? undefined : amendHref, amendUncertain: typeof amendUncertain === 'undefined' ? undefined : amendUncertain, amendError: typeof amendError === 'undefined' ? undefined : amendError, justAmended: typeof justAmended === 'undefined' ? undefined : justAmended }; }\nglobalThis.renderPage = renderPage;`;
  const output = ts.transpileModule(script, { compilerOptions: { module: ts.ModuleKind.None, target: ts.ScriptTarget.ES2022 } }).outputText;
  const action = (name) => ({ toString: () => `/_actions/${name}?_action=${name}` });
  const submitAction = action('submitKinesiologyEvaluation');
+ const amendAction = action('createKinesiologyAmendment');
  const sandbox = vm.createContext({
   URL, URLSearchParams, BigInt, Date, console,
-  actions: { createKinesiologyEvaluation: action('createKinesiologyEvaluation'), updateKinesiologyEvaluation: action('updateKinesiologyEvaluation'), submitKinesiologyEvaluation: submitAction },
+  actions: { createKinesiologyEvaluation: action('createKinesiologyEvaluation'), updateKinesiologyEvaluation: action('updateKinesiologyEvaluation'), submitKinesiologyEvaluation: submitAction, createKinesiologyAmendment: amendAction },
   isInputError: () => false,
   Astro: {
    params: options.params ?? { assignmentId: '17', id: largeId },
    url: new URL(options.url ?? '/my-patients/17?limit=50&offset=0', 'http://localhost'),
    cookies: { get: () => ({ value: 'token' }) },
-   getActionResult: (name) => name === submitAction ? options.submitResult : options.actionResult,
+   getActionResult: (name) => name === submitAction ? options.submitResult : name === amendAction ? options.amendResult : options.actionResult,
    redirect: (href) => ({ redirect: href }),
    request: { clone: () => ({ formData: async () => new FormData() }) },
   },
@@ -915,4 +916,165 @@ test('ordinal compatibility still rejects malformed snapshots and leaves post-PO
  assert.equal(action.requests.length, 3);
  assert.equal(action.requests.filter((request) => request.method === 'POST').length, 1);
  assert.equal(action.writes.length, 0);
+});
+
+// Amendments: a validated record opens a new draft through POST /:id/amendments.
+const amendmentId = '41';
+const amendInput = () => ({ id: largeId, assignment_id: '17', limit: '50', offset: '0', confirm: 'on' });
+const amendment = (overrides = {}) => evaluation({ id: amendmentId, clinical_record_id: '9223372036854775806', author_id: otherSubjectId, status: 'draft', amendment_of_evaluation_id: largeId, ...overrides });
+const validatedPage = { status: 200, body: evaluation({ status: 'validated' }) };
+
+test('createAmendment posts one empty-body request to the amendments route and validates the new draft', async () => {
+ const api = await apiHarness({ status: 201, body: amendment() });
+ const record = await api.mod.namespace.createAmendment(largeId, api.cookies);
+ assert.equal(record.id, amendmentId);
+ assert.equal(record.status, 'draft');
+ assert.equal(record.amendment_of_evaluation_id, largeId);
+ assert.equal(api.requests.length, 1);
+ assert.equal(api.requests[0].url, `https://backend.invalid/kinesiology-evaluations/${largeId}/amendments`);
+ assert.equal(api.requests[0].method, 'POST');
+ assert.equal(api.requests[0].body, '{}');
+ assert.equal(api.writes.length, 0);
+ const local = await apiHarness();
+ await assert.rejects(() => local.mod.namespace.createAmendment('0', local.cookies), /identificador de ficha/);
+ assert.equal(local.requests.length, 0);
+});
+
+test('createAmendment rejects malformed 201 bodies before they can be shown as success', async () => {
+ const bad = [
+  amendment({ status: 'validated' }), amendment({ id: largeId }), amendment({ amendment_of_evaluation_id: '2' }),
+  amendment({ amendment_of_evaluation_id: undefined }), amendment({ amendment_of_evaluation_id: '01' }), amendment({ content: null }),
+ ];
+ for (const body of bad) {
+  const api = await apiHarness({ status: 201, body });
+  await assert.rejects(() => api.mod.namespace.createAmendment(largeId, api.cookies), /incompletos o desconocidos/);
+  assert.equal(api.requests.length, 1);
+ }
+});
+
+test('evaluation reads accept an optional decimal amendment link and reject a malformed one', async () => {
+ const { isEvaluation } = (await apiHarness()).mod.namespace;
+ assert.equal(isEvaluation(evaluation()), true);
+ assert.equal(isEvaluation(amendment()), true);
+ for (const link of ['0', '01', 'x', 7, null]) assert.equal(isEvaluation(amendment({ amendment_of_evaluation_id: link })), false, JSON.stringify(link));
+});
+
+test('amend action refuses locally on invalid id or confirmation, context mismatch or non-validated record without any POST', async () => {
+ const cases = [
+  { input: { ...amendInput(), id: '0' }, responses: [], copy: /identificador/ },
+  { input: { ...amendInput(), confirm: undefined }, responses: [], copy: /Confirmá/ },
+  { input: amendInput(), responses: [assignmentPage, { status: 200, body: evaluation({ status: 'validated', origin_group_id: otherGroupId }) }], copy: /no pertenece/ },
+  { input: amendInput(), responses: [assignmentPage, { status: 200, body: evaluation({ status: 'submitted' }) }], copy: /Solo se puede enmendar una ficha validada/ },
+  { input: amendInput(), responses: [assignmentPage, { status: 200, body: evaluation() }], copy: /Solo se puede enmendar una ficha validada/ },
+ ];
+ for (const { input, responses, copy } of cases) {
+  const result = await evaluate(actionPath, { responses });
+  const outcome = await result.mod.namespace.handleCreateKinesiologyAmendment(input, { cookies: result.cookies });
+  assert.equal(outcome.success, false);
+  assert.equal(outcome.uncertain, false);
+  assert.match(outcome.error, copy);
+  assert.equal(result.requests.some((request) => request.method === 'POST'), false);
+  assert.equal(result.writes.length, 0);
+ }
+});
+
+test('amend action maps typed backend rejections to safe copy with exactly one POST and no retry', async () => {
+ const cases = [
+  [400, 'body must be an empty object', /No se creó la enmienda/], [401, 'Authentication required', /sesión venció/],
+  [403, "Permission 'kinesiology-evaluations:write' required", /No tenés permiso para enmendar/],
+  [404, 'evaluation was not found', /no está disponible/],
+  [409, 'only a validated evaluation can be amended', /Solo se puede enmendar una ficha validada/],
+  [409, 'validated submission is unavailable', /versión validada no está disponible/],
+  [422, 'unexpected', /No se creó la enmienda/],
+ ];
+ for (const [status, message, copy] of cases) {
+  const result = await evaluate(actionPath, { responses: [assignmentPage, validatedPage, { status, body: { error: { code: `E${status}`, message } } }] });
+  const outcome = await result.mod.namespace.handleCreateKinesiologyAmendment(amendInput(), { cookies: result.cookies });
+  assert.equal(outcome.success, false);
+  assert.equal(outcome.uncertain, false);
+  assert.match(outcome.error, copy);
+  assert.equal(result.requests.filter((request) => request.method === 'POST').length, 1);
+  assert.equal(result.requests.length, 3);
+ }
+});
+
+test('amend action reports network failure, 408/429/5xx or a malformed or other-context 201 as uncertain without retrying', async () => {
+ const responses = [
+  { network: true }, { status: 408, body: { error: { code: 'T', message: 'timeout' } } }, { status: 429, body: { error: { code: 'R', message: 'slow down' } } },
+  { status: 500, body: { error: { code: 'X', message: 'boom' } } }, { status: 201, body: amendment({ status: 'submitted' }) },
+  { status: 201, body: amendment({ origin_group_id: otherGroupId }) }, { status: 201, body: amendment({ patient_id: authorId, patient: null }) },
+ ];
+ for (const response of responses) {
+  const result = await evaluate(actionPath, { responses: [assignmentPage, validatedPage, response] });
+  const outcome = await result.mod.namespace.handleCreateKinesiologyAmendment(amendInput(), { cookies: result.cookies });
+  assert.equal(outcome.success, false);
+  assert.equal(outcome.uncertain, true);
+  assert.match(outcome.error, /No se pudo confirmar la creación de la enmienda/);
+  assert.equal(result.requests.filter((request) => request.method === 'POST').length, 1);
+  assert.equal(result.requests.length, 3);
+ }
+});
+
+test('amend action success returns the new draft id with the confirmed assignment context', async () => {
+ const result = await evaluate(actionPath, { responses: [assignmentPage, validatedPage, { status: 201, body: amendment() }] });
+ const outcome = await result.mod.namespace.handleCreateKinesiologyAmendment(amendInput(), { cookies: result.cookies });
+ assert.deepEqual(plain(outcome), { success: true, id: amendmentId, amendment_of_evaluation_id: largeId, assignment_id: '17', limit: '50', offset: '0' });
+ assert.equal(result.requests[2].url, `https://backend.invalid/kinesiology-evaluations/${largeId}/amendments`);
+ assert.equal(result.requests[2].body, '{}');
+});
+
+test('registered amend action requires explicit confirmation and rejects unknown fields', async () => {
+ const result = await evaluate(registryPath);
+ const schema = result.mod.namespace.server.createKinesiologyAmendment.input;
+ assert.equal(schema.safeParse(amendInput()).success, true);
+ assert.equal(schema.safeParse({ ...amendInput(), confirm: undefined }).success, false);
+ assert.equal(schema.safeParse({ ...amendInput(), id: '0' }).success, false);
+ assert.equal(schema.safeParse({ ...amendInput(), content: '{}' }).success, false);
+ for (const name of ['createKinesiologyEvaluation', 'updateKinesiologyEvaluation', 'submitKinesiologyEvaluation']) assert.ok(result.mod.namespace.server[name]);
+});
+
+test('editor amend panel is offered on validated same-context records to any student with write, never elsewhere', async () => {
+ const page = 'src/pages/kinesiology-evaluations/[id].astro';
+ const url = '/kinesiology-evaluations/9223372036854775807?assignment_id=17&limit=50&offset=0';
+ const validated = async () => evaluation({ status: 'validated' });
+ const author = await evaluatePageFrontmatter(page, { url, getEvaluation: validated });
+ assert.equal(author.canAmend, true);
+ assert.equal(author.amendHref, '/_actions/createKinesiologyAmendment?_action=createKinesiologyAmendment&assignment_id=17&limit=50&offset=0');
+ const replacement = await evaluatePageFrontmatter(page, { url, getEvaluation: validated, actor: { sub: otherSubjectId, role: 'estudiante', permissions: ['kinesiology-evaluations:write'] } });
+ assert.equal(replacement.canAmend, true);
+ assert.equal((await evaluatePageFrontmatter(page, { url })).canAmend, false);
+ assert.equal((await evaluatePageFrontmatter(page, { url, getEvaluation: async () => evaluation({ status: 'submitted' }) })).canAmend, false);
+ assert.equal((await evaluatePageFrontmatter(page, { url, getEvaluation: async () => evaluation({ status: 'validated', origin_group_id: otherGroupId }) })).canAmend, false);
+ assert.equal((await evaluatePageFrontmatter(page, { url, getEvaluation: validated, actor: { sub: authorId, role: 'teacher', permissions: ['kinesiology-evaluations:read', 'kinesiology-evaluations:review'] } })).canAmend, false);
+ assert.equal((await evaluatePageFrontmatter(page, { url, getEvaluation: validated, permissions: ['kinesiology-evaluations:submit'] })).canAmend, false);
+ const uncertain = await evaluatePageFrontmatter(page, { url, getEvaluation: validated, amendResult: { data: { success: false, uncertain: true, error: 'No se pudo confirmar la creación de la enmienda.' } } });
+ assert.equal(uncertain.amendUncertain, true);
+ assert.equal(uncertain.canAmend, false);
+ assert.match(uncertain.amendError, /No se pudo confirmar/);
+ const rejected = await evaluatePageFrontmatter(page, { url, getEvaluation: validated, amendResult: { data: { success: false, uncertain: false, error: 'No tenés permiso para enmendar esta ficha.' } } });
+ assert.equal(rejected.amendUncertain, false);
+ assert.equal(rejected.amendError, 'No tenés permiso para enmendar esta ficha.');
+ const expired = await evaluatePageFrontmatter(page, { url, getEvaluation: validated, amendResult: { data: { success: false, uncertain: false, error: 'Tu sesión venció. Iniciá sesión nuevamente.' } } });
+ assert.match(expired.redirect, /^\/auth\/login\?returnTo=/);
+});
+
+test('confirmed amendment redirects to the new draft through the validated context and announces it', async () => {
+ const page = 'src/pages/kinesiology-evaluations/[id].astro';
+ const redirect = await evaluatePageFrontmatter(page, {
+  params: { id: largeId }, url: `/kinesiology-evaluations/${largeId}?assignment_id=99&limit=10&offset=20`,
+  amendResult: { data: { success: true, id: amendmentId, amendment_of_evaluation_id: largeId, assignment_id: '17', limit: '50', offset: '0' } },
+ });
+ assert.equal(redirect.redirect, `/kinesiology-evaluations/${amendmentId}?assignment_id=17&limit=50&offset=0&amended=1`);
+ const draft = await evaluatePageFrontmatter(page, {
+  params: { id: amendmentId }, url: `/kinesiology-evaluations/${amendmentId}?assignment_id=17&limit=50&offset=0&amended=1`,
+  getEvaluation: async () => amendment({ author_id: authorId }),
+ });
+ assert.equal(draft.justAmended, true);
+ assert.equal(draft.eligible, true);
+ assert.equal(draft.canSubmit, true);
+ assert.equal(draft.canAmend, false);
+ const template = await source(page);
+ assert.match(template, /Enmienda creada/);
+ assert.match(template, /amendment_of_evaluation_id/);
+ assert.match(template, /Crear enmienda/);
 });

@@ -33,4 +33,4 @@ A student can submit their saved initial kinesiology draft so it becomes an immu
 - After a correction request, the author can edit and save the reopened draft. **Reenviar versión guardada** appears only after the origin correction history confirms that the draft has a correction event and existing author/active-assignment/permission checks pass. Resubmission still sends one empty-body POST of the saved content; it never saves implicitly, sends unsaved fields, retries, or treats a conflict as success. Dirty edits block resubmission until saved or explicitly discarded back to the saved page.
 - The backend stays the authority for every read and mutation; the grant checks in the UI are hints only.
 
-Teacher-side review and correction requests are described in [teacher-clinical-access-consent.md](teacher-clinical-access-consent.md).
+Teacher-side review and correction requests are described in [teacher-clinical-access-consent.md](teacher-clinical-access-consent.md). Amending a validated record is described in [kinesiology-amendments.md](kinesiology-amendments.md).
