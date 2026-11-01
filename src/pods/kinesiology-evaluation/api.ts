@@ -271,23 +271,37 @@ function validateResponse(value: unknown, expected?: { id?: string; patient_id?:
 
 type EvaluationContext = { patient_id: string; subject_id: string; academic_group_id: string };
 
+/** One read of the list route. The caller chooses the query and validates every row it keeps. */
+async function fetchEvaluationItems(query: URLSearchParams, cookies: AstroCookies): Promise<unknown[]> {
+	const response = await apiFetch<unknown>(`/kinesiology-evaluations?${query}`, { cookies });
+	if (!record(response) || !Array.isArray(response.items)) throw new Error('La respuesta de evaluaciones no es válida.');
+	return response.items;
+}
+
 async function listContextEvaluations(context: EvaluationContext, cookies: AstroCookies): Promise<Evaluation[]> {
 	contextId(context.patient_id, 'paciente');
 	contextId(context.subject_id, 'asignatura');
 	contextId(context.academic_group_id, 'grupo');
-	const query = new URLSearchParams(context);
-	const response = await apiFetch<unknown>(`/kinesiology-evaluations?${query}`, { cookies });
-	if (!record(response) || !Array.isArray(response.items)) throw new Error('La respuesta de evaluaciones no es válida.');
-	return response.items.map((item) => validateResponse(item, context));
+	return (await fetchEvaluationItems(new URLSearchParams(context), cookies)).map((item) => validateResponse(item, context));
 }
 
 export async function listEvaluations(context: EvaluationContext, cookies: AstroCookies): Promise<Evaluation[]> {
 	return (await listContextEvaluations(context, cookies)).filter((item) => item.status === 'draft');
 }
 
-/** Submitted and validated records for the assignment view; the draft list above stays unchanged. */
+/**
+ * Submitted and validated records for the assignment view. Filtered by patient only, so a cross-context
+ * reader receives the authorized snapshot with its origin ids. Drafts are excluded here, whatever their origin:
+ * the patient-only list can legitimately return the author's own drafts from another assignment. Malformed rows
+ * and rows of another patient still throw.
+ */
 export async function listSubmittedEvaluations(context: EvaluationContext, cookies: AstroCookies): Promise<Evaluation[]> {
-	return (await listContextEvaluations(context, cookies)).filter((item) => item.status !== 'draft');
+	contextId(context.patient_id, 'paciente');
+	contextId(context.subject_id, 'asignatura');
+	contextId(context.academic_group_id, 'grupo');
+	return (await fetchEvaluationItems(new URLSearchParams({ patient_id: context.patient_id }), cookies))
+		.map((item) => validateResponse(item, { patient_id: context.patient_id }))
+		.filter((item) => item.status !== 'draft');
 }
 
 /** Submit the stored draft exactly once. Sends no content: the backend snapshots what is saved. */

@@ -1,7 +1,8 @@
 ---
 import type { CorrectionEvent, Submission } from '../../pods/kinesiology-evaluation/api';
-interface Props { submission: Submission; corrections?: CorrectionEvent[] }
-const { submission, corrections = [] } = Astro.props;
+interface Props { submission: Submission; corrections?: CorrectionEvent[]; crossContext?: boolean }
+const { submission, corrections = [], crossContext = false } = Astro.props;
+// Cross-context readers never see correction reasons or the paper consent record of another origin.
 const versionCorrections = corrections.filter((correction) => correction.submission_id === submission.id);
 const content = submission.clinical_content;
 const headingId = `submission-${submission.ordinal}`;
@@ -27,18 +28,18 @@ const antecedents = { hta: 'Hipertensión arterial', dbt: 'Diabetes', diu: 'Disp
    return <div><dt>{label}</dt><dd>{value === undefined ? 'Sin registrar' : value === null ? 'Sin determinar' : value === true ? 'Sí' : value === false ? 'No' : value}</dd></div>;
   })}
  </dl>
- {versionCorrections.length > 0 && <section aria-label="Correcciones solicitadas">
+ {!crossContext && versionCorrections.length > 0 && <section aria-label="Correcciones solicitadas">
   <h4>Corrección solicitada</h4>
   {versionCorrections.map((correction) => <div><p>{correction.reason}</p><p>Solicitada por: {correction.reviewed_by}</p><p>Fecha: {correction.requested_at}</p></div>)}
  </section>}
  <h4>Estudios complementarios</h4>
  {submission.studies.length ? <ul>{submission.studies.map((study) => <li><strong>{study.type}</strong><p>{study.description}</p><p>{study.date ?? 'Fecha sin registrar'}</p></li>)}</ul> : <p>Sin estudios registrados.</p>}
- <h4>Consentimiento en papel · solo lectura</h4>
- <dl>
+ {!crossContext && <h4>Consentimiento en papel · solo lectura</h4>}
+ {!crossContext && <dl>
   <div><dt>Fecha de firma en papel</dt><dd>{submission.consent.paper_signature_date}</dd></div>
   <div><dt>Registrado por</dt><dd>{submission.consent.verified_by}</dd></div>
   <div><dt>Fecha de registro</dt><dd>{submission.consent.verified_at}</dd></div>
- </dl>
+ </dl>}
 </section>
 <style>
  section { margin: 1rem 0; padding: 1rem; border: 1px solid var(--line); background: var(--paper); border-radius: .65rem; }

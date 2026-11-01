@@ -17,6 +17,8 @@ const patientId = 'a1b2c3d4-e5f6-7890-abcd-ef0123456789';
 const subjectId = '01234567-89ab-4def-8123-456789abcdef';
 const groupId = 'abcdef01-2345-6789-abcd-ef0123456789';
 const authorId = '11111111-2222-4333-8444-555555555555';
+const otherSubjectId = '22222222-3333-4444-8555-666666666666';
+const otherGroupId = '33333333-4444-4555-8666-777777777777';
 const largeId = '9223372036854775807';
 const iso = '2026-06-10T12:00:00Z';
 const content = {
@@ -122,7 +124,7 @@ async function evaluatePageFrontmatter(path, options = {}) {
  const frontmatter = page.match(/^---\r?\n([\s\S]*?)\r?\n---/);
  assert.ok(frontmatter, `${path} has frontmatter`);
  const declarations = frontmatter[1].replace(/^import .*;\s*$/gm, '').replace(/^export const prerender = false;\s*$/m, '');
- const script = `async function renderPage() {${declarations}\nreturn { createHref: typeof createHref === 'undefined' ? undefined : createHref, actionHref: typeof actionHref === 'undefined' ? undefined : actionHref, assignment: typeof assignment === 'undefined' ? undefined : assignment, drafts: typeof drafts === 'undefined' ? undefined : drafts, evaluation: typeof evaluation === 'undefined' ? undefined : evaluation, eligible: typeof eligible === 'undefined' ? undefined : eligible, submitted: typeof submitted === 'undefined' ? undefined : submitted, canSubmit: typeof canSubmit === 'undefined' ? undefined : canSubmit, submitUncertain: typeof submitUncertain === 'undefined' ? undefined : submitUncertain, submitHref: typeof submitHref === 'undefined' ? undefined : submitHref, loadError: typeof loadError === 'undefined' ? undefined : loadError, unavailable: typeof unavailable === 'undefined' ? undefined : unavailable, c: typeof c === 'undefined' ? undefined : c, submissions: typeof submissions === 'undefined' ? undefined : submissions, historyError: typeof historyError === 'undefined' ? undefined : historyError, corrections: typeof corrections === 'undefined' ? undefined : corrections, correctionsError: typeof correctionsError === 'undefined' ? undefined : correctionsError, correctionDraft: typeof correctionDraft === 'undefined' ? undefined : correctionDraft }; }\nglobalThis.renderPage = renderPage;`;
+ const script = `async function renderPage() {${declarations}\nreturn { createHref: typeof createHref === 'undefined' ? undefined : createHref, actionHref: typeof actionHref === 'undefined' ? undefined : actionHref, assignment: typeof assignment === 'undefined' ? undefined : assignment, drafts: typeof drafts === 'undefined' ? undefined : drafts, evaluation: typeof evaluation === 'undefined' ? undefined : evaluation, eligible: typeof eligible === 'undefined' ? undefined : eligible, submitted: typeof submitted === 'undefined' ? undefined : submitted, canSubmit: typeof canSubmit === 'undefined' ? undefined : canSubmit, submitUncertain: typeof submitUncertain === 'undefined' ? undefined : submitUncertain, submitHref: typeof submitHref === 'undefined' ? undefined : submitHref, loadError: typeof loadError === 'undefined' ? undefined : loadError, unavailable: typeof unavailable === 'undefined' ? undefined : unavailable, c: typeof c === 'undefined' ? undefined : c, submissions: typeof submissions === 'undefined' ? undefined : submissions, historyError: typeof historyError === 'undefined' ? undefined : historyError, corrections: typeof corrections === 'undefined' ? undefined : corrections, correctionsError: typeof correctionsError === 'undefined' ? undefined : correctionsError, correctionDraft: typeof correctionDraft === 'undefined' ? undefined : correctionDraft, crossContext: typeof crossContext === 'undefined' ? undefined : crossContext }; }\nglobalThis.renderPage = renderPage;`;
  const output = ts.transpileModule(script, { compilerOptions: { module: ts.ModuleKind.None, target: ts.ScriptTarget.ES2022 } }).outputText;
  const action = (name) => ({ toString: () => `/_actions/${name}?_action=${name}` });
  const submitAction = action('submitKinesiologyEvaluation');
@@ -597,6 +599,162 @@ test('editor loads version history only for non-draft records and keeps the reco
  const template = await source(page);
  assert.match(template, /Historial de versiones/);
  assert.match(template, /SubmissionSnapshot/);
+});
+
+test('cross-context submitted section fetches by patient only and accepts other-origin non-draft snapshots', async () => {
+ const context = { patient_id: patientId, subject_id: subjectId, academic_group_id: groupId };
+ const projected = [
+  evaluation({ id: '2', status: 'submitted', origin_subject_id: otherSubjectId, origin_group_id: otherGroupId }),
+  evaluation({ id: '3', status: 'validated', origin_subject_id: otherSubjectId, origin_group_id: otherGroupId }),
+ ];
+ const result = await apiHarness({ body: { items: projected } });
+ const rows = await result.mod.namespace.listSubmittedEvaluations(context, result.cookies);
+ assert.equal(result.requests.length, 1);
+ assert.equal(result.requests[0].url, `https://backend.invalid/kinesiology-evaluations?patient_id=${patientId}`);
+ assert.deepEqual(rows.map((row) => [row.id, row.status, row.origin_subject_id, row.origin_group_id]), [
+  ['2', 'submitted', otherSubjectId, otherGroupId], ['3', 'validated', otherSubjectId, otherGroupId],
+ ]);
+});
+
+test('draft list rejects other-origin drafts; submitted list excludes them and still rejects other-patient rows', async () => {
+ const context = { patient_id: patientId, subject_id: subjectId, academic_group_id: groupId };
+ const otherOriginDraft = evaluation({ origin_subject_id: otherSubjectId, origin_group_id: otherGroupId });
+ const draftApi = await apiHarness({ body: { items: [otherOriginDraft] } });
+ await assert.rejects(() => draftApi.mod.namespace.listEvaluations(context, draftApi.cookies), /no coincide/);
+ const submittedApi = await apiHarness({ body: { items: [otherOriginDraft, evaluation({ id: '2', status: 'submitted', origin_subject_id: otherSubjectId, origin_group_id: otherGroupId })] } });
+ assert.deepEqual((await submittedApi.mod.namespace.listSubmittedEvaluations(context, submittedApi.cookies)).map((row) => row.id), ['2']);
+ for (const list of ['listEvaluations', 'listSubmittedEvaluations']) {
+  const wrongPatient = await apiHarness({ body: { items: [evaluation({ id: '4', status: 'submitted', patient_id: subjectId, patient: null })] } });
+  await assert.rejects(() => wrongPatient.mod.namespace[list](context, wrongPatient.cookies), /no coincide/);
+ }
+});
+
+test('author with another-origin draft of the same patient sees only submitted rows on the assignment view, with no load error', async () => {
+ const ownOtherDraft = evaluation({ id: '21', origin_subject_id: otherSubjectId, origin_group_id: otherGroupId });
+ const submittedRow = evaluation({ id: '2', status: 'submitted', origin_subject_id: otherSubjectId, origin_group_id: otherGroupId });
+ const api = await apiHarness({ body: { items: [ownOtherDraft, submittedRow] } });
+ const page = await evaluatePageFrontmatter('src/pages/my-patients/[assignmentId].astro', {
+  listEvaluations: async () => [],
+  listSubmittedEvaluations: (value) => api.mod.namespace.listSubmittedEvaluations(value, api.cookies),
+ });
+ assert.equal(page.loadError, '');
+ assert.deepEqual(page.drafts, []);
+ assert.deepEqual(page.submitted.map((row) => [row.id, row.status]), [['2', 'submitted']]);
+ assert.equal(api.requests.length, 1);
+ assert.equal(api.requests[0].url, `https://backend.invalid/kinesiology-evaluations?patient_id=${patientId}`);
+});
+
+test('assignment view for a cross-context reader lists the projected submitted row and keeps the draft request scoped', async () => {
+ const context = { patient_id: patientId, subject_id: subjectId, academic_group_id: groupId };
+ const draftApi = await apiHarness({ body: { items: [] } });
+ await draftApi.mod.namespace.listEvaluations(context, draftApi.cookies);
+ assert.equal(draftApi.requests[0].url, `https://backend.invalid/kinesiology-evaluations?patient_id=${patientId}&subject_id=${subjectId}&academic_group_id=${groupId}`);
+ const projected = evaluation({ id: '2', status: 'submitted', origin_subject_id: otherSubjectId, origin_group_id: otherGroupId });
+ const api = await apiHarness({ body: { items: [projected] } });
+ const page = await evaluatePageFrontmatter('src/pages/my-patients/[assignmentId].astro', {
+  listEvaluations: async () => [],
+  listSubmittedEvaluations: (value) => api.mod.namespace.listSubmittedEvaluations(value, api.cookies),
+ });
+ assert.equal(page.loadError, '');
+ assert.deepEqual(page.drafts, []);
+ assert.deepEqual(page.submitted.map((row) => [row.id, row.origin_subject_id]), [['2', otherSubjectId]]);
+ assert.equal(api.requests.length, 1);
+ assert.equal(api.requests[0].url, `https://backend.invalid/kinesiology-evaluations?patient_id=${patientId}`);
+ assert.match(await source('src/pages/my-patients/[assignmentId].astro'), /Ver ficha enviada/);
+});
+
+test('cross-context submitted snapshot renders read-only: no corrections, consent or actionable controls', async () => {
+ const page = 'src/pages/kinesiology-evaluations/[id].astro';
+ const url = '/kinesiology-evaluations/9223372036854775807?assignment_id=17&limit=50&offset=0';
+ const version = submission({ id: '9223372036854775805' });
+ const correction = { submission_id: version.id, reason: 'Motivo de corrección', reviewed_by: authorId, requested_at: iso };
+ const otherStudent = { sub: patientId, role: 'student', permissions: ['kinesiology-evaluations:write', 'kinesiology-evaluations:submit'] };
+ for (const actor of [undefined, otherStudent]) {
+  let correctionReads = 0;
+  const cross = await evaluatePageFrontmatter(page, {
+   url, actor, getEvaluation: async () => evaluation({ status: 'submitted', origin_subject_id: otherSubjectId, origin_group_id: otherGroupId }),
+   listCorrections: async () => { correctionReads++; return { evaluation_id: largeId, items: [correction] }; },
+   listSubmissions: async () => ({ evaluation_id: largeId, items: [version] }),
+  });
+  assert.equal(cross.unavailable, false);
+  assert.equal(cross.crossContext, true);
+  assert.equal(cross.evaluation.id, largeId);
+  assert.equal(cross.eligible, false);
+  assert.equal(cross.canSubmit, false);
+  assert.equal(cross.correctionDraft, false);
+  assert.equal(correctionReads, 0);
+  assert.deepEqual(plain(cross.corrections), []);
+  assert.deepEqual(plain(cross.submissions.map((item) => item.id)), [version.id]);
+  assert.equal(cross.loadError, '');
+  assert.equal(cross.historyError, '');
+ }
+ const template = await source(page);
+ assert.match(template, /\{!crossContext && <form method="POST" action=\{actionHref\} id="evaluation-form">/);
+ assert.match(template, /crossContext=\{crossContext\}/);
+ assert.match(template, /Esta ficha fue registrada en otra asignatura o grupo y se muestra en modo de solo lectura\./);
+ const snapshot = await source('src/components/clinical/SubmissionSnapshot.astro');
+ assert.match(snapshot, /crossContext = false/);
+ assert.match(snapshot, /\{!crossContext && <h4>Consentimiento en papel/);
+ assert.match(snapshot, /\{!crossContext && versionCorrections\.length > 0/);
+});
+
+test('author own other-origin submitted row opens through the same cross-context read-only view', async () => {
+ const page = 'src/pages/kinesiology-evaluations/[id].astro';
+ const url = '/kinesiology-evaluations/9223372036854775807?assignment_id=17&limit=50&offset=0';
+ const author = { sub: authorId, role: 'student', permissions: ['kinesiology-evaluations:write', 'kinesiology-evaluations:submit'] };
+ let correctionReads = 0;
+ const own = await evaluatePageFrontmatter(page, {
+  url, actor: author,
+  getEvaluation: async () => evaluation({ status: 'submitted', author_id: authorId, origin_subject_id: otherSubjectId, origin_group_id: otherGroupId }),
+  listCorrections: async () => { correctionReads++; return { evaluation_id: largeId, items: [] }; },
+  listSubmissions: async () => ({ evaluation_id: largeId, items: [submission()] }),
+ });
+ assert.equal(own.unavailable, false);
+ assert.equal(own.crossContext, true);
+ assert.equal(own.eligible, false);
+ assert.equal(own.canSubmit, false);
+ assert.equal(own.correctionDraft, false);
+ assert.equal(correctionReads, 0);
+ assert.deepEqual(plain(own.corrections), []);
+ assert.deepEqual(plain(own.submissions.map((item) => item.id)), [submission().id]);
+});
+
+test('never-submitted draft from another origin stays unavailable with no history or corrections', async () => {
+ let reads = 0;
+ const draft = await evaluatePageFrontmatter('src/pages/kinesiology-evaluations/[id].astro', {
+  url: '/kinesiology-evaluations/9223372036854775807?assignment_id=17&limit=50&offset=0',
+  getEvaluation: async () => evaluation({ origin_subject_id: otherSubjectId, origin_group_id: otherGroupId }),
+  listCorrections: async () => { reads++; return { evaluation_id: largeId, items: [] }; },
+  listSubmissions: async () => { reads++; return { evaluation_id: largeId, items: [] }; },
+ });
+ assert.equal(draft.unavailable, true);
+ assert.equal(draft.evaluation, null);
+ assert.notEqual(draft.crossContext, true);
+ assert.equal(draft.canSubmit, false);
+ assert.deepEqual(plain(draft.submissions), []);
+ assert.deepEqual(plain(draft.corrections), []);
+ assert.equal(reads, 0);
+});
+
+test('cross-context history keeps the 401 redirect, treats other history failures as history-only, and keeps other read errors', async () => {
+ const page = 'src/pages/kinesiology-evaluations/[id].astro';
+ const url = '/kinesiology-evaluations/9223372036854775807?assignment_id=17&limit=50&offset=0';
+ const crossSubmitted = { getEvaluation: async () => evaluation({ status: 'submitted', origin_subject_id: otherSubjectId, origin_group_id: otherGroupId }) };
+ const expired = await evaluatePageFrontmatter(page, { url, ...crossSubmitted, listSubmissions: async () => { throw new FakeApiError(401); } });
+ assert.match(String(expired.redirect), /^\/auth\/login\?returnTo=/);
+ const failed = await evaluatePageFrontmatter(page, { url, ...crossSubmitted, listSubmissions: async () => { throw new Error('offline'); } });
+ assert.equal(failed.unavailable, false);
+ assert.equal(failed.evaluation.id, largeId);
+ assert.equal(failed.loadError, '');
+ assert.match(failed.historyError, /historial/);
+ const denied = await evaluatePageFrontmatter(page, { url, getEvaluation: async () => { throw new FakeApiError(403); } });
+ assert.equal(denied.loadError, 'No se pudo verificar esta ficha. Volvé a la lista antes de intentar otra acción.');
+ assert.equal(denied.evaluation, null);
+});
+
+test('teacher-clinical snapshot call keeps the default props, so consent and corrections still render', async () => {
+ const teacher = await source('src/pages/teacher-clinical/[id].astro');
+ assert.match(teacher, /<SubmissionSnapshot submission=\{submission\} corrections=\{corrections\} \/>/);
 });
 
 test('student editor compiles with the installed Astro compiler', async () => {

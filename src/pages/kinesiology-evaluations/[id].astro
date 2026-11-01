@@ -27,6 +27,7 @@ let corrections: CorrectionEvent[] = [];
 let correctionsError = '';
 let correctionsLoaded = false;
 let correctionDraft = false;
+let crossContext = false;
 const result = Astro.getActionResult(actions.updateKinesiologyEvaluation);
 let retainedContent: EvaluationContent | undefined = result?.data?.success === false ? result.data.content : undefined;
 let errorText = result?.data?.success === false ? result.data.error : '';
@@ -66,11 +67,13 @@ try {
 		if (!assignment) unavailable = true;
 		else {
 			const record = await getEvaluation(id, Astro.cookies);
-			if (record.id !== id || record.patient_id !== assignment.patient_id
-				|| record.origin_subject_id !== assignment.subject_id || record.origin_group_id !== assignment.academic_group_id) {
+			const sameContext = record.origin_subject_id === assignment.subject_id && record.origin_group_id === assignment.academic_group_id;
+			// Another origin is readable only as a submitted snapshot; a draft from another origin never renders.
+			if (record.id !== id || record.patient_id !== assignment.patient_id || (!sameContext && record.status === 'draft')) {
 				unavailable = true;
 			} else {
 				evaluation = record;
+				crossContext = !sameContext;
 				patientLabel = record.patient
 					? `${record.patient.apellidos}, ${record.patient.nombres} · ${record.patient.documento}`
 					: 'Datos del paciente no disponibles';
@@ -79,8 +82,8 @@ try {
 				const role = actor?.role === 'student' || actor?.role === 'estudiante';
 				const canWrite = Array.isArray(actor?.permissions)
 					&& actor.permissions.includes('kinesiology-evaluations:write');
-				eligible = record.status === 'draft' && actor?.sub === record.author_id && role && canWrite;
-				const originAuthor = role && actor?.sub === record.author_id;
+				eligible = !crossContext && record.status === 'draft' && actor?.sub === record.author_id && role && canWrite;
+				const originAuthor = !crossContext && role && actor?.sub === record.author_id;
 				// Correction reasons and working content stay with the original author in the verified assignment context.
 				if (originAuthor) {
 					try {
@@ -165,9 +168,10 @@ const textFields = [
 			{errorText && <p class="notice error" role="alert">{errorText}</p>}
 			{submitError && <p class="notice error" role="alert">{submitError}</p>}
 			{correctionsError && <p class="notice error" role="alert">{correctionsError}</p>}
-			{!eligible && <p class="notice">Esta ficha se muestra en modo de solo lectura. Solo el autor de un borrador en una asignación vigente puede editarla; el servicio vuelve a comprobar los permisos al guardar.</p>}
+			{crossContext && <p class="notice">Esta ficha fue registrada en otra asignatura o grupo y se muestra en modo de solo lectura.</p>}
+			{!eligible && !crossContext && <p class="notice">Esta ficha se muestra en modo de solo lectura. Solo el autor de un borrador en una asignación vigente puede editarla; el servicio vuelve a comprobar los permisos al guardar.</p>}
 			{eligible && <p class="notice">Evitá editar este borrador al mismo tiempo que otra persona. El guardado reemplaza el contenido completo y no detecta cambios simultáneos.</p>}
-			<form method="POST" action={actionHref} id="evaluation-form">
+			{!crossContext && <form method="POST" action={actionHref} id="evaluation-form">
 				<input type="hidden" name="id" value={evaluation.id} />
 				<input type="hidden" name="assignment_id" value={assignmentId} />
 				<input type="hidden" name="limit" value={limit} />
@@ -216,7 +220,7 @@ const textFields = [
 					<button id="add-study" class="button secondary" type="button">Agregar estudio</button>
 				</fieldset>
 				{eligible && <button class="button" type="submit">Guardar borrador</button>}
-			</form>
+			</form>}
 			{canSubmit && !submitUncertain && <form method="POST" action={submitHref} id="submit-form" class="submit-panel">
 				<input type="hidden" name="id" value={evaluation.id} />
 				<input type="hidden" name="assignment_id" value={assignmentId} />
@@ -230,7 +234,7 @@ const textFields = [
 			</form>}
 		{(evaluation.status !== 'draft' || correctionDraft) && <section class="history" aria-labelledby="history-title">
 				<h2 id="history-title">Historial de versiones</h2>
-				{historyError ? <p class="notice error" role="alert">{historyError}</p> : submissions.length ? submissions.map((submission) => <SubmissionSnapshot submission={submission} corrections={corrections} />) : <p>No hay versiones enviadas para esta ficha.</p>}
+				{historyError ? <p class="notice error" role="alert">{historyError}</p> : submissions.length ? submissions.map((submission) => <SubmissionSnapshot submission={submission} corrections={corrections} crossContext={crossContext} />) : <p>No hay versiones enviadas para esta ficha.</p>}
 			</section>}
 		</> : <section class="notice error" role="alert">
 			<h1 id="title">No se pudo cargar la ficha</h1>
