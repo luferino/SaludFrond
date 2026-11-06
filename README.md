@@ -48,6 +48,7 @@ All commands are run from the root of the project, from a terminal:
 
 - [Kinesiology evaluation submission](docs/kinesiology-submission.md): explicit student submission of the saved draft only (no implicit save, single POST, uncertain outcomes are never shown as success) and the **Fichas enviadas** list on `/my-patients/[assignmentId]`, and read-only version history on the student editor and the teacher detail page. Cross-context readers of an assignment see the authorized submitted snapshot read-only under **Fichas enviadas**; drafts from another origin are excluded from that list and never shown.
 - [Teacher clinical access and paper consent](docs/teacher-clinical-access-consent.md): `/teacher-clinical`, contextual teacher read access to initial kinesiology records and their read-only version history; current-assignment discovery is not a historical catalog.
+- [Oral Surgery I](docs/oral-surgery.md): subject discovery through `GET /oral-surgery-subjects/mine`, student drafts at `/oral-surgery-drafts/[id]` with version-checked full-content saves and the signed-paper consent declaration (not an electronic signature), and version-bound teacher authorization at `/teacher-clinical/oral-surgery/[id]`.
 
 These screens do not add reassignment, queues, reservations, student claiming, registration, clinical state changes, or academic-link creation. Validation uses isolated synthetic fixtures; a successful local build does not establish live backend availability.
 
