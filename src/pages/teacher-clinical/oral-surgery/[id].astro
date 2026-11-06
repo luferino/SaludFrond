@@ -1,0 +1,142 @@
+---
+export const prerender = false;
+import { actions, isInputError } from 'astro:actions';
+import Layout from '../../../layouts/Layout.astro';
+import OralSurgeryReadOnly from '../../../components/clinical/OralSurgeryReadOnly.astro';
+import { ApiError } from '../../../shared/apiClient';
+import { actionHrefWithContext } from '../../../pods/kinesiology-evaluation/api';
+import { parseClinicalContext, teacherGrant, type ClinicalContext } from '../../../pods/teacher-clinical/api';
+import { getAuthorizationHistory, getConsentHistory, getOralSurgeryDraft, type AuthorizationHistory, type ConsentHistory, type OralSurgeryDraft } from '../../../pods/oral-surgery-draft/api';
+import { oralSurgeryTimestampLabel } from '../../../pods/oral-surgery-draft/labels';
+
+Astro.response.headers.set('Cache-Control', 'no-store');
+const UNAVAILABLE = 'El borrador no está disponible en este contexto de origen.';
+const loginRedirect = () => Astro.redirect(`/auth/login?returnTo=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`);
+let draft: OralSurgeryDraft | null = null;
+let error = '';
+let consent: ConsentHistory | null = null;
+let consentError = '';
+let authorizations: AuthorizationHistory | null = null;
+let authorizationError = '';
+const result = Astro.getActionResult(actions.authorizeOralSurgeryDraft);
+const resultData = result?.data;
+const actionError = result?.error ? (isInputError(result.error) ? 'Revisá los campos del formulario.' : 'No se pudo procesar la autorización. Consultá el estado antes de volver a intentarlo.') : resultData?.success === false ? resultData.error : '';
+const uncertain = resultData?.success === false && resultData.uncertain || !!result?.error && !isInputError(result.error);
+if (resultData?.success === false && /sesión venció/i.test(resultData.error)) return loginRedirect();
+if (resultData?.success) {
+ const returnParams = new URLSearchParams({ patient_id: resultData.patient_id, subject_id: resultData.subject_id, academic_group_id: resultData.academic_group_id, authorized: '1' });
+ return Astro.redirect(`/teacher-clinical/oral-surgery/${resultData.id}?${returnParams}`);
+}
+const allowed = teacherGrant(Astro.cookies, 'oral-surgery-drafts:read');
+const canAuthorize = teacherGrant(Astro.cookies, 'oral-surgery-drafts:authorize');
+if (allowed) {
+ // Origin guard first: an invalid or foreign context never reaches the history reads.
+ let selected: ClinicalContext | null = null;
+ try { selected = parseClinicalContext(Astro.url.searchParams); } catch { selected = null; }
+ if (!selected) {
+  error = UNAVAILABLE;
+ } else {
+  try {
+   const loaded = await getOralSurgeryDraft(Astro.params.id ?? '', Astro.cookies);
+   if (loaded.patient_id === selected.patient_id && loaded.origin_subject_id === selected.subject_id && loaded.origin_group_id === selected.academic_group_id) draft = loaded;
+   else error = UNAVAILABLE;
+  } catch (failure) {
+   if (failure instanceof ApiError && failure.status === 401) return loginRedirect();
+   error = failure instanceof ApiError && failure.status === 404 ? UNAVAILABLE
+    : failure instanceof ApiError && failure.status === 403 ? 'No tenés permiso vigente para consultar este borrador.'
+    : 'No se pudo cargar el borrador en este contexto de origen.';
+  }
+ }
+}
+if (draft) {
+ try { consent = await getConsentHistory(draft.id, Astro.cookies); }
+ catch (failure) {
+  if (failure instanceof ApiError && failure.status === 401) return loginRedirect();
+  consentError = 'No se pudo consultar el consentimiento de este borrador. No se habilita la autorización.';
+ }
+ try { authorizations = await getAuthorizationHistory(draft.id, Astro.cookies); }
+ catch (failure) {
+  if (failure instanceof ApiError && failure.status === 401) return loginRedirect();
+  authorizationError = 'No se pudo consultar el historial de autorizaciones. No se habilita la autorización.';
+ }
+}
+// Both histories must describe the exact version rendered; an edit between reads blocks authorization.
+const versionsMatch = !!draft && consent?.draft_version === draft.version && authorizations?.draft_version === draft.version;
+const versionChanged = !!draft && !!consent && !!authorizations && !versionsMatch;
+const currentAuthorizationId = authorizations?.current_authorization_id ?? null;
+const authorizedForVersion = !!draft && authorizations?.authorizations.find((item) => item.id === currentAuthorizationId)?.draft_version === draft.version;
+const declarationId = consent?.current_declaration_id ?? null;
+const canShowForm = canAuthorize && !!draft && versionsMatch && declarationId !== null && !authorizedForVersion && !uncertain;
+const cleanParams = draft ? new URLSearchParams({ patient_id: draft.patient_id, subject_id: draft.origin_subject_id, academic_group_id: draft.origin_group_id }) : new URLSearchParams();
+const actionHref = actionHrefWithContext(actions.authorizeOralSurgeryDraft.toString(), Object.fromEntries(cleanParams), Astro.url.href);
+---
+<Layout>
+ <main>
+  <a href="/teacher-clinical">Volver al acceso clínico docente</a>
+  <h1>Cirugía Oral I · consulta docente</h1>
+  {!allowed ? <p role="alert">No tenés permiso para consultar este borrador como docente.</p> : error ? <p role="alert">{error}</p> : draft && <>
+   {Astro.url.searchParams.get('authorized') === '1' && <p role="status">Autorización registrada para la versión actual.</p>}
+   {actionError && <p role="alert">{actionError}</p>}
+   {uncertain && <p role="status">Consultá el estado antes de volver a autorizar.</p>}
+   <p>Paciente: {draft.patient_id}<br />Asignatura de origen: {draft.origin_subject_id}<br />Grupo de origen: {draft.origin_group_id}</p>
+   <p>Versión actual: {draft.version}</p>
+   <section aria-labelledby="content-title">
+    <h2 id="content-title">Contenido del borrador</h2>
+    <OralSurgeryReadOnly content={draft.content} />
+   </section>
+   <section aria-labelledby="consent-title">
+    <h2 id="consent-title">Consentimiento firmado en papel</h2>
+    {consentError ? <p role="alert">{consentError}</p> : consent && <>
+     {declarationId !== null ? <p>Declaración vigente: {declarationId}</p> : <p>No hay una declaración vigente para el plan de tratamiento guardado.</p>}
+     {consent.declarations.length ? <ol>{consent.declarations.map((declaration) => <li>
+      <p>Declaración {declaration.id} · versión del borrador {declaration.draft_version} · plan revisión {declaration.plan_revision} · declarada <time datetime={declaration.declared_at}>{oralSurgeryTimestampLabel(declaration.declared_at)}</time></p>
+      {declaration.treatment_plan ? <details><summary>Plan de tratamiento declarado</summary><OralSurgeryReadOnly content={{ treatment_plan: declaration.treatment_plan }} sections={['treatment_plan']} /></details> : <p>Sin plan de tratamiento registrado.</p>}
+     </li>)}</ol> : <p>No hay declaraciones registradas.</p>}
+    </>}
+   </section>
+   <section aria-labelledby="authorization-title">
+    <h2 id="authorization-title">Autorización docente</h2>
+    {authorizationError ? <p role="alert">{authorizationError}</p> : authorizations && <>
+     <p>{authorizedForVersion ? `Autorización docente vigente para la versión ${draft.version}.` : `Sin autorización vigente para la versión actual (${draft.version}). Cada edición del alumno exige volver a autorizar.`}</p>
+     {authorizations.authorizations.length ? <ol>{authorizations.authorizations.map((authorization) => <li>
+      <p>Autorización {authorization.id} · versión {authorization.draft_version} · declaración {authorization.consent_declaration_id} · autorizada <time datetime={authorization.authorized_at}>{oralSurgeryTimestampLabel(authorization.authorized_at)}</time>{authorization.id === currentAuthorizationId ? ' · vigente' : ''}</p>
+      <details><summary>Contenido revisado</summary><OralSurgeryReadOnly content={authorization.reviewed_content} /></details>
+     </li>)}</ol> : <p>No hay autorizaciones registradas.</p>}
+    </>}
+    {versionChanged && <p role="alert">El borrador cambió mientras se cargaba. Recargá antes de autorizar.</p>}
+    {canShowForm && <form method="POST" action={actionHref} id="authorize-form">
+     <input type="hidden" name="id" value={draft.id} />
+     <input type="hidden" name="patient_id" value={draft.patient_id} />
+     <input type="hidden" name="subject_id" value={draft.origin_subject_id} />
+     <input type="hidden" name="academic_group_id" value={draft.origin_group_id} />
+     <input type="hidden" name="expected_version" value={draft.version} />
+     <input type="hidden" name="consent_declaration_id" value={declarationId!} />
+     <label><input type="checkbox" name="paper_consent_verified" value="on" required /> Verifiqué el consentimiento firmado en papel</label>
+     <p>Autorizás la versión {draft.version} tal como se muestra arriba. Cada edición del alumno exige volver a autorizar.</p>
+     <button type="submit">Autorizar esta versión</button>
+    </form>}
+    {!canAuthorize && <p>Esta consulta no otorga permiso para autorizar.</p>}
+    {canAuthorize && consent && declarationId === null && <p>Para autorizar hace falta una declaración vigente de consentimiento en papel.</p>}
+   </section>
+  </>}
+ </main>
+ <script>
+  const protectSubmit = (form: HTMLFormElement, busyText: string) => form.addEventListener('submit', (event) => {
+   if (form.dataset.submitting === 'true') { event.preventDefault(); return; }
+   form.dataset.submitting = 'true';
+   const button = form.querySelector<HTMLButtonElement>('button[type="submit"]');
+   if (button) { button.disabled = true; button.textContent = busyText; }
+  });
+  const authorizeForm = document.querySelector<HTMLFormElement>('#authorize-form');
+  if (authorizeForm) protectSubmit(authorizeForm, 'Autorizando…');
+ </script>
+</Layout>
+<style>
+ main { max-width: 58rem; margin: auto; overflow-wrap: anywhere; }
+ section { margin: 1rem 0; padding: 1rem; background: var(--paper); border: 1px solid var(--line); border-radius: .65rem; }
+ label { display: grid; gap: .5rem; } input { padding: .6rem; border: 1px solid var(--field-line); background: var(--field); color: var(--ink); }
+ button { padding: .65rem; background: var(--rust); color: white; border: 1px solid var(--rust-deep); border-radius: .4rem; }
+ button:disabled { opacity: .65; cursor: wait; } dd { margin: .25rem 0 .75rem; }
+ a { color: var(--rust-deep); text-decoration: underline; }
+ [role="alert"] { border: 1px solid var(--rust-line); padding: 1rem; background: var(--rust-soft); }
+</style>
