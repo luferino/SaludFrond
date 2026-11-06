@@ -11,6 +11,7 @@ import type { FormValues } from '../../pods/oral-surgery-draft/actions/drafts';
 import { authorizationStatusLine, formValuesFromContent, ORAL_SURGERY_COPY, ORAL_SURGERY_FORM_CONTROLS, ORAL_SURGERY_FORM_SECTIONS, oralSurgeryTextareaText } from '../../pods/oral-surgery-draft/actions/drafts';
 import { ORAL_SURGERY_FIELD_LABELS, ORAL_SURGERY_SECTION_LABELS, oralSurgeryTimestampLabel } from '../../pods/oral-surgery-draft/labels';
 import { decodeJwt } from '../../shared/jwt';
+import { actionHrefWithContext } from '../../pods/kinesiology-evaluation/api';
 
 type Unsaved = { label: string; value: string };
 
@@ -132,6 +133,10 @@ const canDeclare = !!draft && eligible && !!consent && !consentError && consent.
 const saved = search.get('saved') === '1';
 const declared = search.get('declared') === '1';
 const contextHref = `/my-patients/${encodeURIComponent(assignmentId)}?limit=${limit}&offset=${offset}`;
+// Keep the assignment context on the form posts: a failed result re-renders this page, which needs it.
+const actionContext = { assignment_id: assignmentId, limit: String(limit), offset: String(offset) };
+const saveHref = actionHrefWithContext(actions.updateOralSurgeryDraft.toString(), actionContext, Astro.url.href);
+const declareHref = actionHrefWithContext(actions.declareOralSurgeryConsent.toString(), actionContext, Astro.url.href);
 ---
 <Layout>
 	<main class="clinical-page" aria-labelledby="title">
@@ -158,7 +163,7 @@ const contextHref = `/my-patients/${encodeURIComponent(assignmentId)}?limit=${li
 				<h2 id="authorization-title">Autorización docente</h2>
 				{authorizationError ? <p class="notice error" role="alert">{authorizationError}</p> : <p>{authorizationStatus}</p>}
 			</section>
-			{formValues && <form method="POST" action={actions.updateOralSurgeryDraft} id="draft-form">
+			{formValues && <form method="POST" action={saveHref} id="draft-form">
 				<input type="hidden" name="id" value={draft.id} />
 				<input type="hidden" name="expected_version" value={formVersion} />
 				<input type="hidden" name="assignment_id" value={assignmentId} />
@@ -194,7 +199,7 @@ const contextHref = `/my-patients/${encodeURIComponent(assignmentId)}?limit=${li
 							</details>
 						</li>)}
 					</ol>}
-					{canDeclare && <form method="POST" action={actions.declareOralSurgeryConsent} id="declare-form">
+					{canDeclare && <form method="POST" action={declareHref} id="declare-form">
 						<input type="hidden" name="id" value={draft.id} />
 						<input type="hidden" name="expected_version" value={draft.version} />
 						<input type="hidden" name="assignment_id" value={assignmentId} />

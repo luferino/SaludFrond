@@ -150,7 +150,7 @@ async function environment(routes = {}) {
 			.replace(/^import \w+ from '[^']+\.astro';\s*$/gm, '')
 			.replace(/^import (\{[^}]*\}) from '([^']+)';\s*$/gm, (_, names, specifier) => `const ${names.replace(/\s+as\s+/g, ': ')} = await __import('${specifier}');`);
 		const state = ['unavailable', 'loadError', 'eligible', 'editHint', 'draft', 'formValues', 'formVersion', 'unsaved', 'saveError',
-			'canDeclare', 'declareError', 'consent', 'consentError', 'authorizationStatus', 'authorizationError', 'saved', 'declared', 'limit', 'offset'];
+			'canDeclare', 'declareError', 'consent', 'consentError', 'authorizationStatus', 'authorizationError', 'saved', 'declared', 'limit', 'offset', 'saveHref', 'declareHref'];
 		const script = `async function renderPage() {${declarations}\nreturn { ${state.join(', ')} };\n}`;
 		const output = ts.transpileModule(script, { compilerOptions: { module: ts.ModuleKind.None, target: ts.ScriptTarget.ES2022 } }).outputText;
 		vm.runInContext(output, sandbox);
@@ -254,6 +254,20 @@ test('D2 the editor renders every contract control with stored answers as browse
 	assert.match(source, /Sin responder/);
 	assert.match(source, /<option value="true"[^>]*>Sí<\/option>/);
 	assert.match(source, /<option value="false"[^>]*>No<\/option>/);
+});
+
+test('D4 save and declare forms post with the assignment context so a failed result re-renders the editor, not the unavailable page', async () => {
+	const env = await environment(baseRoutes());
+	const page = await env.renderPage(pagePath, { url: `${draftPath}?assignment_id=17&limit=20&offset=40` });
+	assert.equal(page.saveHref, '/_actions/updateOralSurgeryDraft?assignment_id=17&limit=20&offset=40');
+	assert.equal(page.declareHref, '/_actions/declareOralSurgeryConsent?assignment_id=17&limit=20&offset=40');
+	const source = await readFile(new URL(pagePath, root), 'utf8');
+	assert.match(source, /<form method="POST" action={saveHref} id="draft-form">/);
+	assert.match(source, /<form method="POST" action={declareHref} id="declare-form">/);
+	const conflict = await env.renderPage(pagePath, { url: `${draftPath}?_action=updateOralSurgeryDraft&assignment_id=17&limit=20&offset=40`, results: { updateOralSurgeryDraft: { data: { success: false, uncertain: false, conflict: true, error: 'conflict copy', expected_version: '2', values: { 'treatment_plan.procedure': 'Nuevo plan' } } } } });
+	assert.equal(conflict.unavailable, false);
+	assert.equal(conflict.saveError, 'conflict copy');
+	assert.equal(conflict.formVersion, '3');
 });
 
 // D3: save action (one PATCH, exact replacement, conflict before PATCH).
