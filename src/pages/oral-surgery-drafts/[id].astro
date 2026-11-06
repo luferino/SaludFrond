@@ -1,0 +1,320 @@
+---
+export const prerender = false;
+import { actions, isInputError } from 'astro:actions';
+import Layout from '../../layouts/Layout.astro';
+import OralSurgeryReadOnly from '../../components/clinical/OralSurgeryReadOnly.astro';
+import { ApiError } from '../../shared/apiClient';
+import { listAssignedPatients, parseAssignmentPagination } from '../../pods/patient-assignment/api';
+import type { AuthorizationHistory, ConsentHistory, OralSurgeryDraft } from '../../pods/oral-surgery-draft/api';
+import { getAuthorizationHistory, getConsentHistory, getOralSurgeryDraft, validId } from '../../pods/oral-surgery-draft/api';
+import type { FormValues } from '../../pods/oral-surgery-draft/actions/drafts';
+import { authorizationStatusLine, formValuesFromContent, ORAL_SURGERY_COPY, ORAL_SURGERY_FORM_CONTROLS, ORAL_SURGERY_FORM_SECTIONS } from '../../pods/oral-surgery-draft/actions/drafts';
+import { ORAL_SURGERY_FIELD_LABELS, ORAL_SURGERY_SECTION_LABELS, oralSurgeryTimestampLabel } from '../../pods/oral-surgery-draft/labels';
+import { decodeJwt } from '../../shared/jwt';
+
+type Unsaved = { label: string; value: string };
+
+const id = Astro.params.id ?? '';
+const search = Astro.url.searchParams;
+const assignmentParams = search.getAll('assignment_id');
+const assignmentId = assignmentParams.length === 1 ? assignmentParams[0] : '';
+const loginRedirect = `/auth/login?returnTo=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`;
+
+/** Labels and shown values of the controls that carry an answer; empty controls are not listed. */
+function unsavedAnswers(values: FormValues | undefined): Unsaved[] {
+	return Object.entries(values ?? {}).flatMap(([name, value]) => {
+		const control = ORAL_SURGERY_FORM_CONTROLS.get(name);
+		if (!control || value === '') return [];
+		const shown = control.kind === 'boolean' ? (value === 'true' ? 'Sí' : 'No') : value;
+		const label = control.section ? ORAL_SURGERY_FIELD_LABELS[control.section][control.field] : 'Fecha de ingreso';
+		return [{ label, value: shown }];
+	});
+}
+
+const saveResult = Astro.getActionResult(actions.updateOralSurgeryDraft);
+const saveData = saveResult?.data;
+if (saveData?.success) {
+	// Redirect from the context the action validated, before any fallible read.
+	const returnParams = new URLSearchParams({ assignment_id: saveData.assignment_id, limit: saveData.limit, offset: saveData.offset, saved: '1' });
+	return Astro.redirect(`/oral-surgery-drafts/${encodeURIComponent(saveData.id)}?${returnParams}`);
+}
+const declareResult = Astro.getActionResult(actions.declareOralSurgeryConsent);
+const declareData = declareResult?.data;
+if (declareData?.success) {
+	const returnParams = new URLSearchParams({ assignment_id: declareData.assignment_id, limit: declareData.limit, offset: declareData.offset, declared: '1' });
+	return Astro.redirect(`/oral-surgery-drafts/${encodeURIComponent(declareData.id)}?${returnParams}`);
+}
+const saveFailure = saveData?.success === false ? saveData : undefined;
+const declareFailure = declareData?.success === false ? declareData : undefined;
+let saveError = saveFailure?.error ?? '';
+if (saveResult?.error) saveError = isInputError(saveResult.error) ? ORAL_SURGERY_COPY.formInput : ORAL_SURGERY_COPY.saveUncertain;
+let declareError = declareFailure?.error ?? '';
+let declareUncertain = declareFailure?.uncertain ?? false;
+if (declareResult?.error) {
+	declareUncertain = !isInputError(declareResult.error);
+	declareError = declareUncertain ? ORAL_SURGERY_COPY.declareUncertain : ORAL_SURGERY_COPY.declareMissingConfirmation;
+}
+if (/sesión venció/i.test(saveError) || /sesión venció/i.test(declareError)) return Astro.redirect(loginRedirect);
+
+// Values the student submitted and the browser never saved; they are never sent again with the current version.
+const retainedValues = saveFailure?.values;
+let limit = 50;
+let offset = 0;
+let draft: OralSurgeryDraft | null = null;
+let eligible = false;
+let unavailable = false;
+let loadError = '';
+let formValues: FormValues | undefined;
+let formVersion = '';
+let consent: ConsentHistory | null = null;
+let consentError = '';
+let authorization: AuthorizationHistory | null = null;
+let authorizationError = '';
+try {
+	const pagination = parseAssignmentPagination(search);
+	limit = pagination.limit;
+	offset = pagination.offset;
+	if (!validId(assignmentId) || !validId(id)) {
+		unavailable = true;
+	} else {
+		const page = await listAssignedPatients(pagination, Astro.cookies);
+		const assignment = page.items.find((item) => item.id === assignmentId && item.ended_at === null);
+		if (!assignment) {
+			unavailable = true;
+		} else {
+			const record = await getOralSurgeryDraft(id, Astro.cookies);
+			if (record.patient_id !== assignment.patient_id || record.origin_subject_id !== assignment.subject_id || record.origin_group_id !== assignment.academic_group_id) {
+				unavailable = true;
+			} else {
+				draft = record;
+				const token = Astro.cookies.get('session')?.value;
+				const actor = token ? decodeJwt(token) : null;
+				const student = actor?.role === 'estudiante' || actor?.role === 'student';
+				// Presentation only: the backend re-checks authorship and permissions on every write.
+				eligible = !!actor && actor.sub === record.author_id && student && !!actor.permissions?.includes('oral-surgery-drafts:write');
+				// A failed save keeps the submitted values with the version they were written against; a conflict shows the stored version.
+				if (retainedValues && !saveFailure?.conflict) {
+					formValues = retainedValues;
+					formVersion = saveFailure?.expected_version ?? record.version;
+				} else {
+					formValues = formValuesFromContent(record.content);
+					formVersion = record.version;
+				}
+				try {
+					consent = await getConsentHistory(id, Astro.cookies);
+				} catch (consentFailure) {
+					if (consentFailure instanceof ApiError && consentFailure.status === 401) throw consentFailure;
+					consentError = 'No se pudo cargar el consentimiento. El borrador se muestra igual; intentá recargar la página.';
+				}
+				try {
+					authorization = await getAuthorizationHistory(id, Astro.cookies);
+				} catch (authorizationFailure) {
+					if (authorizationFailure instanceof ApiError && authorizationFailure.status === 401) throw authorizationFailure;
+					authorizationError = 'No se pudo cargar la autorización docente. El borrador se muestra igual; intentá recargar la página.';
+				}
+			}
+		}
+	}
+} catch (error) {
+	if (error instanceof ApiError && error.status === 401) return Astro.redirect(loginRedirect);
+	if (error instanceof ApiError && error.status === 404) unavailable = true;
+	else loadError = 'No se pudo verificar este borrador. Volvé a la lista antes de intentar otra acción.';
+}
+
+const unsaved: Unsaved[] = draft && !saveFailure?.conflict ? [] : unsavedAnswers(retainedValues);
+const fields: FormValues = formValues ?? {};
+const editHint = eligible ? ORAL_SURGERY_COPY.editable : ORAL_SURGERY_COPY.readOnly;
+const authorizationStatus = draft && authorization ? authorizationStatusLine(authorization, draft.version) : '';
+const currentDeclaration = consent?.declarations.find((item) => item.id === consent?.current_declaration_id);
+// Declaring attests the stored plan, so it needs the same version on both reads and no unsaved answers.
+const canDeclare = !!draft && eligible && !!consent && !consentError && consent.current_declaration_id === null
+	&& consent.draft_version === draft.version && !retainedValues && !declareUncertain;
+const saved = search.get('saved') === '1';
+const declared = search.get('declared') === '1';
+const contextHref = `/my-patients/${encodeURIComponent(assignmentId)}?limit=${limit}&offset=${offset}`;
+---
+<Layout>
+	<main class="clinical-page" aria-labelledby="title">
+		<p class="eyebrow"><a href={contextHref}>Volver a la asignación</a></p>
+		{unavailable ? <section class="notice" role="status">
+			<h1 id="title">Borrador no disponible</h1>
+			<p>No se pudo confirmar que este borrador pertenezca a la asignación seleccionada. Volvé a elegir el contexto vigente.</p>
+			<a class="button secondary" href="/my-patients">Volver a mis pacientes</a>
+		</section> : loadError ? <section class="notice error" role="alert">
+			<h1 id="title">No se pudo cargar el borrador</h1>
+			<p>{loadError}</p>
+			<a href={contextHref}>Volver a la asignación</a>
+		</section> : draft ? <>
+			<header>
+				<h1 id="title">Borrador de Cirugía Oral I</h1>
+				<p class="context">Asignatura · <span class="identifier">{draft.origin_subject_id}</span><br />Grupo académico · <span class="identifier">{draft.origin_group_id}</span></p>
+				<p>Versión guardada: <strong>{draft.version}</strong></p>
+			</header>
+			{saved && <p class="success" role="status">Borrador guardado.</p>}
+			{declared && <p class="success" role="status">Declaración registrada. No es una firma electrónica y no se adjuntó ningún documento.</p>}
+			{saveError && <p class="notice error" role="alert">{saveError}</p>}
+			<p class="notice" id="edit-hint">{editHint}</p>
+			<section class="status" aria-labelledby="authorization-title">
+				<h2 id="authorization-title">Autorización docente</h2>
+				{authorizationError ? <p class="notice error" role="alert">{authorizationError}</p> : <p>{authorizationStatus}</p>}
+			</section>
+			{formValues && <form method="POST" action={actions.updateOralSurgeryDraft} id="draft-form">
+				<input type="hidden" name="id" value={draft.id} />
+				<input type="hidden" name="expected_version" value={formVersion} />
+				<input type="hidden" name="assignment_id" value={assignmentId} />
+				<input type="hidden" name="limit" value={limit} />
+				<input type="hidden" name="offset" value={offset} />
+				<fieldset disabled={!eligible}>
+					<legend>Datos de admisión</legend>
+					<label>Fecha de ingreso <input name="admission_date" type="date" value={fields.admission_date} /></label>
+				</fieldset>
+				{ORAL_SURGERY_FORM_SECTIONS.map(({ section, booleans, texts }) => <fieldset disabled={!eligible}>
+					<legend>{ORAL_SURGERY_SECTION_LABELS[section]}</legend>
+					{booleans.map((field) => <label>{ORAL_SURGERY_FIELD_LABELS[section][field]} <select name={`${section}.${field}`}>
+						<option value="" selected={fields[`${section}.${field}`] === ''}>Sin responder</option>
+						<option value="true" selected={fields[`${section}.${field}`] === 'true'}>Sí</option>
+						<option value="false" selected={fields[`${section}.${field}`] === 'false'}>No</option>
+					</select></label>)}
+					{texts.map((field) => <label>{ORAL_SURGERY_FIELD_LABELS[section][field]} <textarea name={`${section}.${field}`}>{fields[`${section}.${field}`]}</textarea></label>)}
+				</fieldset>)}
+				{eligible && <button class="button" type="submit">Guardar borrador</button>}
+			</form>}
+			<section class="consent" aria-labelledby="consent-title">
+				<h2 id="consent-title">Consentimiento en papel</h2>
+				{consentError ? <p class="notice error" role="alert">{consentError}</p> : consent && <>
+					<p>{currentDeclaration
+						? `Declaración vigente ${currentDeclaration.id} · declarada el ${oralSurgeryTimestampLabel(currentDeclaration.declared_at)} · plan revisión ${currentDeclaration.plan_revision}`
+						: 'No hay una declaración vigente para el plan de tratamiento guardado.'}</p>
+					{consent.declarations.length > 0 && <ol class="declarations">
+						{consent.declarations.map((item) => <li>
+							<p>Declaración {item.id} · versión {item.draft_version} · plan revisión {item.plan_revision} · <time datetime={item.declared_at}>{oralSurgeryTimestampLabel(item.declared_at)}</time></p>
+							<details>
+								<summary>Plan declarado</summary>
+								<OralSurgeryReadOnly content={item.treatment_plan ? { treatment_plan: item.treatment_plan } : {}} sections={['treatment_plan']} />
+							</details>
+						</li>)}
+					</ol>}
+					{canDeclare && <form method="POST" action={actions.declareOralSurgeryConsent} id="declare-form">
+						<input type="hidden" name="id" value={draft.id} />
+						<input type="hidden" name="expected_version" value={draft.version} />
+						<input type="hidden" name="assignment_id" value={assignmentId} />
+						<input type="hidden" name="limit" value={limit} />
+						<input type="hidden" name="offset" value={offset} />
+						<label class="confirm"><input type="checkbox" name="paper_signed" value="on" required /> Confirmo que el paciente firmó el consentimiento en papel para el plan de tratamiento guardado. No es una firma electrónica y no se adjunta el documento.</label>
+						<p id="dirty-notice" class="notice error" role="status" hidden>Hay cambios sin guardar. Guardá el borrador antes de declarar el consentimiento.</p>
+						<button id="declare-button" class="button" type="submit">Declarar consentimiento en papel</button>
+					</form>}
+				</>}
+				{declareError && <p class="notice error" role="alert">{declareError}</p>}
+			</section>
+		</> : <section class="notice error" role="alert">
+			<h1 id="title">No se pudo cargar el borrador</h1>
+			<p>Volvé a la asignación e intentá nuevamente.</p>
+			<a href={contextHref}>Volver a la asignación</a>
+		</section>}
+		{unsaved.length > 0 && <section class="preserved" aria-labelledby="unsaved-title">
+			<h2 id="unsaved-title">Valores no guardados</h2>
+			<p>Estos valores no se guardaron y no se enviarán con la versión actual. Copialos antes de volver a cargar.</p>
+			<dl>{unsaved.map((entry) => <div>
+				<dt>{entry.label}</dt>
+				<dd>{entry.value}</dd>
+			</div>)}</dl>
+		</section>}
+	</main>
+	<script>
+		const form = document.querySelector<HTMLFormElement>('#draft-form');
+		const declareForm = document.querySelector<HTMLFormElement>('#declare-form');
+		const declareButton = document.querySelector<HTMLButtonElement>('#declare-button');
+		const dirtyNotice = document.querySelector<HTMLElement>('#dirty-notice');
+		let dirty = false;
+		// Declaring attests the saved plan only, so unsaved edits block it until they are saved.
+		const markDirty = () => {
+			dirty = true;
+			if (declareButton) declareButton.disabled = true;
+			if (dirtyNotice) dirtyNotice.hidden = false;
+		};
+		form?.addEventListener('input', markDirty);
+		form?.addEventListener('change', markDirty);
+		form?.addEventListener('submit', (event) => {
+			if (form.dataset.submitting === 'true') {
+				event.preventDefault();
+				return;
+			}
+			form.dataset.submitting = 'true';
+		});
+		// Each declaration is a separate record, so a second submit is ignored.
+		declareForm?.addEventListener('submit', (event) => {
+			if (dirty || declareForm.dataset.submitting === 'true') {
+				event.preventDefault();
+				return;
+			}
+			declareForm.dataset.submitting = 'true';
+			if (declareButton) {
+				declareButton.disabled = true;
+				declareButton.textContent = 'Declarando…';
+			}
+		});
+	</script>
+</Layout>
+
+<style>
+	.clinical-page {
+		max-width: 58rem;
+		margin: 0 auto;
+		padding: 1.5rem 0 3rem;
+		color: var(--ink);
+	}
+	.eyebrow a { color: var(--rust-deep); text-decoration: underline; }
+	.context { line-height: 1.6; }
+	.identifier { overflow-wrap: anywhere; }
+	.notice, .success, .error, .preserved {
+		margin: 1rem 0;
+		padding: 1rem;
+		border: 1px solid var(--line);
+		border-radius: 0.65rem;
+		background: var(--paper);
+	}
+	.error { border-color: var(--rust-line); background: var(--rust-soft); }
+	.success { border-color: var(--sage); background: var(--sage-soft); }
+	.status, .consent { margin: 1rem 0; padding: 1rem 1.25rem; border: 1px solid var(--line); border-radius: 0.75rem; background: var(--paper); }
+	.status h2, .consent h2 { margin: 0 0 0.5rem; font-size: 1.1rem; }
+	.declarations { padding-left: 1.25rem; }
+	.button:disabled { opacity: 0.65; cursor: not-allowed; }
+	fieldset {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 1rem;
+		margin: 1rem 0;
+		padding: 1.25rem;
+		border: 1px solid var(--line);
+		border-radius: 0.75rem;
+		background: var(--paper);
+	}
+	legend { padding: 0 0.5rem; font-weight: 700; }
+	label { display: grid; gap: 0.35rem; font-weight: 600; }
+	label.confirm { display: flex; align-items: flex-start; gap: 0.5rem; margin: 0 0 0.75rem; }
+	input, textarea, select {
+		min-width: 0;
+		padding: 0.65rem;
+		border: 1px solid var(--field-line);
+		border-radius: 0.35rem;
+		background: var(--field);
+		color: var(--ink);
+		font: inherit;
+	}
+	textarea { min-height: 5rem; resize: vertical; }
+	.button {
+		padding: 0.7rem 0.95rem;
+		border: 1px solid var(--rust-deep);
+		border-radius: 0.4rem;
+		background: var(--rust);
+		color: white;
+		font: inherit;
+		font-weight: 700;
+		cursor: pointer;
+	}
+	.button.secondary { border-color: var(--sage-deep); background: var(--sage-soft); color: var(--ink); }
+	@media (max-width: 760px) {
+		fieldset { grid-template-columns: minmax(0, 1fr); }
+	}
+</style>

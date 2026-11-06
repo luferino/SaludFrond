@@ -101,8 +101,10 @@ async function evaluate(path, options = {}) {
      '../pods/teacher-assignment/actions': ['createTeacherAssignment'],
      '../pods/teacher-clinical/actions/consent': ['handleRecordTeacherConsent'],
      '../pods/teacher-clinical/actions/reviews': ['handleValidateTeacherSubmission', 'handleRequestTeacherCorrection'],
+     '../pods/oral-surgery-draft/actions/drafts': ['ORAL_SURGERY_FORM_FIELDS', 'handleCreateOralSurgeryDraft', 'handleDeclareOralSurgeryConsent', 'handleUpdateOralSurgeryDraft'],
+     '../pods/oral-surgery-draft/actions/authorizations': ['handleAuthorizeOralSurgeryDraft'],
     };
-    return new vm.SyntheticModule(exports[specifier], function () { for (const n of exports[specifier]) this.setExport(n, () => undefined); }, { context: sandbox });
+    return new vm.SyntheticModule(exports[specifier], function () { for (const n of exports[specifier]) this.setExport(n, n === 'ORAL_SURGERY_FORM_FIELDS' ? [] : () => undefined); }, { context: sandbox });
    }
    const resolved = new URL(specifier.endsWith('.ts') ? specifier : `${specifier}.ts`, parent.identifier);
    return compile(await readFile(resolved, 'utf8'), resolved.href);

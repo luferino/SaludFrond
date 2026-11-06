@@ -1,0 +1,30 @@
+---
+import { ORAL_SURGERY_SECTIONS, type OralSurgeryContent, type OralSurgerySectionName } from '../../pods/oral-surgery-draft/api';
+import { ORAL_SURGERY_FIELD_LABELS, ORAL_SURGERY_SECTION_LABELS, oralSurgeryAnswerLabel } from '../../pods/oral-surgery-draft/labels';
+
+interface Props { content: OralSurgeryContent; sections?: OralSurgerySectionName[] }
+const { content, sections = Object.keys(ORAL_SURGERY_SECTIONS) as OralSurgerySectionName[] } = Astro.props;
+const showAdmission = sections.length === Object.keys(ORAL_SURGERY_SECTIONS).length;
+---
+<div class="oral-surgery-readonly">
+	{showAdmission && <p><strong>Fecha de ingreso:</strong> {content.admission_date ?? 'Sin responder'}</p>}
+	{sections.map((name) => {
+		const section = content[name];
+		const labels = ORAL_SURGERY_FIELD_LABELS[name];
+		return <section>
+			<h3>{ORAL_SURGERY_SECTION_LABELS[name]}</h3>
+			{section === undefined ? <p>Sección sin completar.</p> : <dl>
+				{Object.keys(labels).map((key) => <div>
+					<dt>{labels[key]}</dt>
+					<dd>{oralSurgeryAnswerLabel(section[key])}</dd>
+				</div>)}
+			</dl>}
+		</section>;
+	})}
+</div>
+<style>
+	.oral-surgery-readonly section { margin: 1rem 0; }
+	.oral-surgery-readonly dl { display: grid; grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); gap: 0.5rem 1.5rem; }
+	.oral-surgery-readonly dt { font-weight: 700; }
+	.oral-surgery-readonly dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+</style>
