@@ -100,12 +100,30 @@ export function formValuesFromContent(content: OralSurgeryContent): FormValues {
 	return values;
 }
 
-/** Empty controls keep an absent, null or '' answer exactly as stored; a cleared answer becomes null. */
+/**
+ * Textarea body for a stored text. The HTML parser drops one line break right after `<textarea>`, so a leading
+ * line break is added to keep a stored leading line break.
+ */
+export function oralSurgeryTextareaText(value: string): string {
+	return `\n${value}`;
+}
+
+function sameLines(a: string, b: string): boolean {
+	const lines = (text: string) => text.replace(/\r\n|\r/g, '\n');
+	return lines(a) === lines(b);
+}
+
+/**
+ * Empty controls keep an absent, null or '' answer exactly as stored; a cleared answer becomes null.
+ * Browsers submit textarea line breaks as CRLF, so text that differs from the stored one only in line
+ * endings keeps the stored text.
+ */
 function answerFor(raw: string, kind: AnswerKind, stored: unknown): Answer | undefined {
 	if (raw === '') {
 		return stored === undefined || stored === null || stored === '' ? (stored as Answer | undefined) : null;
 	}
-	return kind === 'boolean' ? raw === 'true' : raw;
+	if (kind === 'boolean') return raw === 'true';
+	return typeof stored === 'string' && sameLines(raw, stored) ? stored : raw;
 }
 
 /** Replacement content from the submitted controls. The stored draft decides what an empty control means. */

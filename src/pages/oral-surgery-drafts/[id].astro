@@ -8,7 +8,7 @@ import { listAssignedPatients, parseAssignmentPagination } from '../../pods/pati
 import type { AuthorizationHistory, ConsentHistory, OralSurgeryDraft } from '../../pods/oral-surgery-draft/api';
 import { getAuthorizationHistory, getConsentHistory, getOralSurgeryDraft, validId } from '../../pods/oral-surgery-draft/api';
 import type { FormValues } from '../../pods/oral-surgery-draft/actions/drafts';
-import { authorizationStatusLine, formValuesFromContent, ORAL_SURGERY_COPY, ORAL_SURGERY_FORM_CONTROLS, ORAL_SURGERY_FORM_SECTIONS } from '../../pods/oral-surgery-draft/actions/drafts';
+import { authorizationStatusLine, formValuesFromContent, ORAL_SURGERY_COPY, ORAL_SURGERY_FORM_CONTROLS, ORAL_SURGERY_FORM_SECTIONS, oralSurgeryTextareaText } from '../../pods/oral-surgery-draft/actions/drafts';
 import { ORAL_SURGERY_FIELD_LABELS, ORAL_SURGERY_SECTION_LABELS, oralSurgeryTimestampLabel } from '../../pods/oral-surgery-draft/labels';
 import { decodeJwt } from '../../shared/jwt';
 
@@ -175,7 +175,7 @@ const contextHref = `/my-patients/${encodeURIComponent(assignmentId)}?limit=${li
 						<option value="true" selected={fields[`${section}.${field}`] === 'true'}>Sí</option>
 						<option value="false" selected={fields[`${section}.${field}`] === 'false'}>No</option>
 					</select></label>)}
-					{texts.map((field) => <label>{ORAL_SURGERY_FIELD_LABELS[section][field]} <textarea name={`${section}.${field}`}>{fields[`${section}.${field}`]}</textarea></label>)}
+					{texts.map((field) => <label>{ORAL_SURGERY_FIELD_LABELS[section][field]} <textarea name={`${section}.${field}`}>{oralSurgeryTextareaText(fields[`${section}.${field}`])}</textarea></label>)}
 				</fieldset>)}
 				{eligible && <button class="button" type="submit">Guardar borrador</button>}
 			</form>}

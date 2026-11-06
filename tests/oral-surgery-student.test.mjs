@@ -274,6 +274,27 @@ test('D3 untouched saves reproduce stored content exactly, keeping absent, null 
 	}
 });
 
+/** What a browser submits for a textarea rendered with `text`: the parser drops one leading LF, submission normalizes newlines to CRLF. */
+function browserTextarea(text) {
+	return text.replace(/^\n/, '').replace(/\r\n|\r|\n/g, '\r\n');
+}
+
+test('D3 untouched saves keep stored text with line breaks exactly after the browser round trip of the textarea', async () => {
+	const content = { treatment_plan: { procedure: '\nExodoncia 38\nControl a 7 dias', anomalies_or_pathology: 'Linea 1\r\nLinea 2' }, intraoral_exam: { lips: 'Sin lesiones\n' } };
+	const env = await environment(baseRoutes({ [`GET ${draftPath}`]: readDraft(content), [`PATCH ${draftPath}`]: patchEcho }));
+	const pod = await env.importModule(draftsPath);
+	const source = await readFile(new URL(pagePath, root), 'utf8');
+	assert.match(source, /<textarea name=\{`\$\{section\}\.\$\{field\}`\}>\{oralSurgeryTextareaText\(fields\[`\$\{section\}\.\$\{field\}`\]\)\}<\/textarea>/);
+	const rendered = controlsFor(env, content);
+	const submitted = Object.fromEntries(Object.entries(rendered).map(([name, value]) => [name, name.includes('.') && pod.ORAL_SURGERY_FORM_CONTROLS.get(name).kind === 'text' ? browserTextarea(pod.oralSurgeryTextareaText(value)) : value]));
+	const result = plain(await pod.handleUpdateOralSurgeryDraft({ ...saveInput(env, content), ...submitted }, { cookies: env.cookies }));
+	assert.equal(result.success, true);
+	assert.deepEqual(plain(env.requests.at(-1).body), { expected_version: '3', content });
+	const edited = plain(await pod.handleUpdateOralSurgeryDraft({ ...saveInput(env, content), ...submitted, 'treatment_plan.procedure': 'Exodoncia 38\r\nControl a 10 dias' }, { cookies: env.cookies }));
+	assert.equal(edited.success, true);
+	assert.equal(env.requests.at(-1).body.content.treatment_plan.procedure, 'Exodoncia 38\r\nControl a 10 dias');
+});
+
 test('D3 cleared answers become null, typed answers replace stored ones, and unrelated stored answers keep their form', async () => {
 	const env = await environment(baseRoutes({ [`PATCH ${draftPath}`]: patchEcho }));
 	const pod = await env.importModule(draftsPath);
