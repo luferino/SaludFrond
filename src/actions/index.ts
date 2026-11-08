@@ -21,6 +21,11 @@ import { searchAvailablePatient, enablePatientAvailability, withdrawPatientAvail
 import { createTeacherAssignment } from '../pods/teacher-assignment/actions';
 import { handleRecordTeacherConsent } from '../pods/teacher-clinical/actions/consent';
 import { handleRequestTeacherCorrection, handleValidateTeacherSubmission } from '../pods/teacher-clinical/actions/reviews';
+import { ORAL_SURGERY_FORM_FIELDS, handleCreateOralSurgeryDraft, handleDeclareOralSurgeryConsent, handleUpdateOralSurgeryDraft } from '../pods/oral-surgery-draft/actions/drafts';
+import { handleAuthorizeOralSurgeryDraft } from '../pods/oral-surgery-draft/actions/authorizations';
+
+const UUID_INPUT = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+const ID_INPUT = z.string().regex(/^[1-9]\d{0,18}$/);
 
 export const server = {
 	recordTeacherConsent: defineAction({
@@ -182,6 +187,39 @@ export const server = {
 			confirm: z.literal('on'),
 		}).strict(),
 		handler: handleCreateKinesiologyAmendment,
+	}),
+	createOralSurgeryDraft: defineAction({
+		accept: 'form',
+		input: z.object({
+			patient_id: UUID_INPUT, subject_id: UUID_INPUT, academic_group_id: UUID_INPUT,
+			assignment_id: z.string(), limit: z.string(), offset: z.string(),
+		}).strict(),
+		handler: handleCreateOralSurgeryDraft,
+	}),
+	updateOralSurgeryDraft: defineAction({
+		accept: 'form',
+		input: z.object({
+			id: z.string(), expected_version: z.string(), assignment_id: z.string(), limit: z.string(), offset: z.string(),
+			...Object.fromEntries(ORAL_SURGERY_FORM_FIELDS.map((name) => [name, z.string().optional()])),
+		}).strict(),
+		handler: handleUpdateOralSurgeryDraft,
+	}),
+	declareOralSurgeryConsent: defineAction({
+		accept: 'form',
+		input: z.object({
+			id: z.string(), expected_version: z.string(), assignment_id: z.string(), limit: z.string(), offset: z.string(),
+			paper_signed: z.literal('on'),
+		}).strict(),
+		handler: handleDeclareOralSurgeryConsent,
+	}),
+	authorizeOralSurgeryDraft: defineAction({
+		accept: 'form',
+		input: z.object({
+			id: ID_INPUT, patient_id: UUID_INPUT, subject_id: UUID_INPUT, academic_group_id: UUID_INPUT,
+			expected_version: ID_INPUT, consent_declaration_id: ID_INPUT,
+			paper_consent_verified: z.literal('on'),
+		}).strict(),
+		handler: handleAuthorizeOralSurgeryDraft,
 	}),
 	createPatient: defineAction({
 		accept: 'form',

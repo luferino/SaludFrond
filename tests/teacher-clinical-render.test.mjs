@@ -10,8 +10,10 @@ const root = new URL('../', import.meta.url);
 const patient = '11111111-1111-4111-8111-111111111111';
 const subject = '22222222-2222-4222-8222-222222222222';
 const group = '33333333-3333-4333-8333-333333333333';
+const otherGroup = '44444444-4444-4444-8444-444444444444';
 const id = '9007199254741061';
 const latestSubmissionId = '9007199254741063';
+const oralDraft = (overrides = {}) => ({ id: '9007199254741070', clinical_record_id: '9007199254741069', patient_id: patient, author_id: patient, origin_student_habilitation_id: '99999999-8888-4777-8666-555555555555', origin_subject_id: subject, origin_group_id: group, content: {}, status: 'draft', version: '4', created_at: '2026-11-06T12:00:00Z', updated_at: '2026-11-06T12:00:00Z', ...overrides });
 const clinicalContext = { patient_id: patient, subject_id: subject, academic_group_id: group };
 const query = new URLSearchParams(clinicalContext).toString();
 const row = { id, ...clinicalContext, nombres: 'Ana', apellidos: 'Prueba', documento: 'QA' };
@@ -25,11 +27,12 @@ async function html(value) {
 }
 async function render(path, options = {}) {
  const requests = [];
+ const oralListings = [];
  const Astro = { props: options.props ?? {}, params: { id }, cookies: {}, url: new URL(`https://fixture.invalid/${path.includes('[id]') ? `teacher-clinical/${id}` : 'teacher-clinical'}?${options.query ?? query}`), request: new Request('https://fixture.invalid'), getActionResult: (action) => options.results?.[action] ?? (action === 'record' ? options.result : undefined), response: { headers: new Headers() }, redirect: (url) => `REDIRECT:${url}` };
  const mocks = {
-  Layout: null, Fragment: null, EvaluationReadOnly: null, ApiError: class ApiError extends Error {},
+  Layout: null, Fragment: null, EvaluationReadOnly: null, ApiError: class ApiError extends Error { constructor(status) { super('api'); this.status = status; } },
   actions: { recordTeacherConsent: 'record', validateTeacherSubmission: 'validate', requestTeacherCorrection: 'correct' }, isInputError: () => false,
-  teacherGrant: (_cookies, grant) => options.denied ? false : grant === 'kinesiology-evaluations:verify-consent' ? !!options.verify : grant === 'kinesiology-evaluations:review' ? options.review !== false : true,
+  teacherGrant: (_cookies, grant) => options.denied ? false : grant === 'kinesiology-evaluations:verify-consent' ? !!options.verify : grant === 'kinesiology-evaluations:review' ? options.review !== false : grant === 'oral-surgery-drafts:read' ? !!options.oralSurgeryRead : true,
   parseTeacherPagination: () => ({ limit: 50, offset: options.offset ?? 0 }),
   parseClinicalContext: (params) => {
    if (options.rejectQuery || !params?.has('patient_id') || !params?.has('subject_id') || !params?.has('academic_group_id')) throw new Error('invalid query context');
@@ -37,6 +40,9 @@ async function render(path, options = {}) {
   },
   listTeacherPatients: async () => { requests.push('assignments'); if (options.failure) throw new Error('failed'); return { items: options.empty ? [] : [row], limit: 50, offset: options.offset ?? 0 }; },
   listTeacherEvaluations: async () => { requests.push('list'); return options.emptyEvaluations ? [] : [evaluation]; },
+  listOralSurgeryContexts: async () => { requests.push('discovery'); if (options.discoveryStatus) throw new mocks.ApiError(options.discoveryStatus); if (options.discoveryFailure) throw new Error('offline'); if (options.forbidden) return { status: 'forbidden' }; return { status: 'ok', items: options.contexts ?? [] }; },
+  isOralSurgeryContext: (contexts, subjectId, groupId) => contexts.some((item) => item.subject_id === subjectId && item.academic_group_id === groupId),
+  listOralSurgeryDrafts: async (context, _cookies, page) => { requests.push('oral-list'); oralListings.push({ context, page }); return options.oralDrafts ?? []; },
   getTeacherEvaluation: async () => { requests.push('detail'); if (options.detailFailure) throw new Error('failed'); return { ...evaluation, status: options.evaluationStatus ?? 'draft' }; },
   getConsent: async () => { requests.push('consent'); if (options.consentFailure) throw new Error('failed'); return { evaluation_id: id, status: 'pending', evidence: null }; },
   listTeacherSubmissions: async () => { requests.push('history'); if (options.historyFailure) throw new Error('failed'); return { evaluation_id: id, items: options.submissions ?? [] }; },
@@ -63,7 +69,7 @@ async function render(path, options = {}) {
   mocks.SubmissionSnapshot = await compile('src/components/clinical/SubmissionSnapshot.astro');
  }
  const component = await compile(path);
- return { html: await html(component({ createAstro: () => Astro }, {}, {})), requests };
+ return { html: await html(component({ createAstro: () => Astro }, {}, {})), requests, oralListings };
 }
 
 test('teacher discovery renders selected contextual patient and all-status list without mutation controls', async () => {
@@ -255,4 +261,59 @@ test('teacher read-only renderer shows actual clinical content, false/null antec
  assert.match(result.html, /RX/);
  assert.match(result.html, /Descripción de prueba/);
  assert.doesNotMatch(result.html, /<form|<input|<textarea|<button/);
+});
+
+// Oral Surgery I discovery branch (D12): only with the oral-surgery read grant and a selected assignment.
+test('teacher discovery with an enabled pair lists Oral Surgery drafts instead of Kinesiology records', async () => {
+ const result = await render('src/pages/teacher-clinical.astro', { query: `assignment_id=${id}`, oralSurgeryRead: true, contexts: [{ subject_id: subject, academic_group_id: group }], oralDrafts: [oralDraft()] });
+ assert.deepEqual(result.requests, ['assignments', 'discovery', 'oral-list']);
+ assert.deepEqual(result.oralListings, [{ context: { patient_id: patient, subject_id: subject, academic_group_id: group }, page: { limit: 50, offset: 0 } }]);
+ assert.match(result.html, /Abrir borrador de Cirugía Oral I · versión 4/);
+ assert.match(result.html, /\/teacher-clinical\/oral-surgery\/9007199254741070\?patient_id=/);
+ assert.match(result.html, new RegExp(`subject_id=${subject}`));
+ assert.match(result.html, new RegExp(`academic_group_id=${group}`));
+ assert.doesNotMatch(result.html, /Abrir ficha|\/teacher-clinical\/9007199254741061\?|Fichas de/);
+});
+
+test('teacher Oral Surgery list shows the 50-row notice only when the page is full', async () => {
+ const full = Array.from({ length: 50 }, (_, index) => oralDraft({ id: String(9007199254741100n + BigInt(index)) }));
+ assert.match((await render('src/pages/teacher-clinical.astro', { query: `assignment_id=${id}`, oralSurgeryRead: true, contexts: [{ subject_id: subject, academic_group_id: group }], oralDrafts: full })).html, /Se muestran los 50 borradores más recientes\./);
+ assert.doesNotMatch((await render('src/pages/teacher-clinical.astro', { query: `assignment_id=${id}`, oralSurgeryRead: true, contexts: [{ subject_id: subject, academic_group_id: group }], oralDrafts: full.slice(0, 49) })).html, /Se muestran los 50 borradores más recientes\./);
+});
+
+test('teacher without the oral-surgery read grant makes no discovery request and keeps the Kinesiology list', async () => {
+ const result = await render('src/pages/teacher-clinical.astro', { query: `assignment_id=${id}` });
+ assert.deepEqual(result.requests, ['assignments', 'list']);
+ assert.match(result.html, /Abrir ficha · Borrador/);
+ assert.doesNotMatch(result.html, /Cirugía Oral I/);
+});
+
+test('teacher discovery with no matching pair keeps the Kinesiology list and no Oral Surgery list request', async () => {
+ const result = await render('src/pages/teacher-clinical.astro', { query: `assignment_id=${id}`, oralSurgeryRead: true, contexts: [{ subject_id: subject, academic_group_id: otherGroup }] });
+ assert.deepEqual(result.requests, ['assignments', 'discovery', 'list']);
+ assert.match(result.html, /Abrir ficha · Borrador/);
+ assert.doesNotMatch(result.html, /Cirugía Oral I|oral-surgery|No tenés permiso/);
+});
+
+test('teacher forbidden discovery shows the permission notice and keeps the Kinesiology list unchanged', async () => {
+ const result = await render('src/pages/teacher-clinical.astro', { query: `assignment_id=${id}`, oralSurgeryRead: true, forbidden: true });
+ assert.deepEqual(result.requests, ['assignments', 'discovery', 'list']);
+ assert.deepEqual(result.oralListings, []);
+ assert.match(result.html, /No tenés permiso para consultar si este contexto usa Cirugía Oral I\. No se muestran acciones de Cirugía Oral\./);
+ assert.match(result.html, /Abrir ficha · Borrador/);
+ assert.doesNotMatch(result.html, /Abrir borrador de Cirugía Oral I|Borradores de Cirugía Oral I|oral-surgery\//);
+});
+
+test('teacher discovery failure shows the discovery alert with no list of either kind', async () => {
+ const result = await render('src/pages/teacher-clinical.astro', { query: `assignment_id=${id}`, oralSurgeryRead: true, discoveryFailure: true });
+ assert.deepEqual(result.requests, ['assignments', 'discovery']);
+ assert.match(result.html, /role="alert"[^>]*>No se pudo determinar qué ficha clínica corresponde a este contexto\./);
+ assert.doesNotMatch(result.html, /Abrir ficha|Abrir borrador|Fichas de|Borradores de/);
+});
+
+test('teacher discovery 401 redirects to login and no discovery runs without a selected assignment', async () => {
+ const expired = await render('src/pages/teacher-clinical.astro', { query: `assignment_id=${id}`, oralSurgeryRead: true, discoveryStatus: 401 });
+ assert.deepEqual(expired.requests, ['assignments', 'discovery']);
+ assert.equal(expired.html, 'REDIRECT:/auth/login?returnTo=%2Fteacher-clinical');
+ assert.deepEqual((await render('src/pages/teacher-clinical.astro', { query: '', oralSurgeryRead: true })).requests, ['assignments']);
 });

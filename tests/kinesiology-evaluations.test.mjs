@@ -101,8 +101,10 @@ async function evaluate(path, options = {}) {
      '../pods/teacher-assignment/actions': ['createTeacherAssignment'],
      '../pods/teacher-clinical/actions/consent': ['handleRecordTeacherConsent'],
      '../pods/teacher-clinical/actions/reviews': ['handleValidateTeacherSubmission', 'handleRequestTeacherCorrection'],
+     '../pods/oral-surgery-draft/actions/drafts': ['ORAL_SURGERY_FORM_FIELDS', 'handleCreateOralSurgeryDraft', 'handleDeclareOralSurgeryConsent', 'handleUpdateOralSurgeryDraft'],
+     '../pods/oral-surgery-draft/actions/authorizations': ['handleAuthorizeOralSurgeryDraft'],
     };
-    return new vm.SyntheticModule(exports[specifier], function () { for (const n of exports[specifier]) this.setExport(n, () => undefined); }, { context: sandbox });
+    return new vm.SyntheticModule(exports[specifier], function () { for (const n of exports[specifier]) this.setExport(n, n === 'ORAL_SURGERY_FORM_FIELDS' ? [] : () => undefined); }, { context: sandbox });
    }
    const resolved = new URL(specifier.endsWith('.ts') ? specifier : `${specifier}.ts`, parent.identifier);
    return compile(await readFile(resolved, 'utf8'), resolved.href);
@@ -124,20 +126,21 @@ async function evaluatePageFrontmatter(path, options = {}) {
  const frontmatter = page.match(/^---\r?\n([\s\S]*?)\r?\n---/);
  assert.ok(frontmatter, `${path} has frontmatter`);
  const declarations = frontmatter[1].replace(/^import .*;\s*$/gm, '').replace(/^export const prerender = false;\s*$/m, '');
- const script = `async function renderPage() {${declarations}\nreturn { createHref: typeof createHref === 'undefined' ? undefined : createHref, actionHref: typeof actionHref === 'undefined' ? undefined : actionHref, assignment: typeof assignment === 'undefined' ? undefined : assignment, drafts: typeof drafts === 'undefined' ? undefined : drafts, evaluation: typeof evaluation === 'undefined' ? undefined : evaluation, eligible: typeof eligible === 'undefined' ? undefined : eligible, submitted: typeof submitted === 'undefined' ? undefined : submitted, canSubmit: typeof canSubmit === 'undefined' ? undefined : canSubmit, submitUncertain: typeof submitUncertain === 'undefined' ? undefined : submitUncertain, submitHref: typeof submitHref === 'undefined' ? undefined : submitHref, loadError: typeof loadError === 'undefined' ? undefined : loadError, unavailable: typeof unavailable === 'undefined' ? undefined : unavailable, c: typeof c === 'undefined' ? undefined : c, submissions: typeof submissions === 'undefined' ? undefined : submissions, historyError: typeof historyError === 'undefined' ? undefined : historyError, corrections: typeof corrections === 'undefined' ? undefined : corrections, correctionsError: typeof correctionsError === 'undefined' ? undefined : correctionsError, correctionDraft: typeof correctionDraft === 'undefined' ? undefined : correctionDraft, crossContext: typeof crossContext === 'undefined' ? undefined : crossContext, canAmend: typeof canAmend === 'undefined' ? undefined : canAmend, amendHref: typeof amendHref === 'undefined' ? undefined : amendHref, amendUncertain: typeof amendUncertain === 'undefined' ? undefined : amendUncertain, amendError: typeof amendError === 'undefined' ? undefined : amendError, justAmended: typeof justAmended === 'undefined' ? undefined : justAmended }; }\nglobalThis.renderPage = renderPage;`;
+ const script = `async function renderPage() {${declarations}\nreturn { createHref: typeof createHref === 'undefined' ? undefined : createHref, actionHref: typeof actionHref === 'undefined' ? undefined : actionHref, assignment: typeof assignment === 'undefined' ? undefined : assignment, drafts: typeof drafts === 'undefined' ? undefined : drafts, evaluation: typeof evaluation === 'undefined' ? undefined : evaluation, eligible: typeof eligible === 'undefined' ? undefined : eligible, submitted: typeof submitted === 'undefined' ? undefined : submitted, canSubmit: typeof canSubmit === 'undefined' ? undefined : canSubmit, submitUncertain: typeof submitUncertain === 'undefined' ? undefined : submitUncertain, submitHref: typeof submitHref === 'undefined' ? undefined : submitHref, loadError: typeof loadError === 'undefined' ? undefined : loadError, unavailable: typeof unavailable === 'undefined' ? undefined : unavailable, c: typeof c === 'undefined' ? undefined : c, submissions: typeof submissions === 'undefined' ? undefined : submissions, historyError: typeof historyError === 'undefined' ? undefined : historyError, corrections: typeof corrections === 'undefined' ? undefined : corrections, correctionsError: typeof correctionsError === 'undefined' ? undefined : correctionsError, correctionDraft: typeof correctionDraft === 'undefined' ? undefined : correctionDraft, crossContext: typeof crossContext === 'undefined' ? undefined : crossContext, canAmend: typeof canAmend === 'undefined' ? undefined : canAmend, amendHref: typeof amendHref === 'undefined' ? undefined : amendHref, amendUncertain: typeof amendUncertain === 'undefined' ? undefined : amendUncertain, amendError: typeof amendError === 'undefined' ? undefined : amendError, justAmended: typeof justAmended === 'undefined' ? undefined : justAmended, oralSurgeryEnabled: typeof oralSurgeryEnabled === 'undefined' ? undefined : oralSurgeryEnabled, oralSurgeryDrafts: typeof oralSurgeryDrafts === 'undefined' ? undefined : oralSurgeryDrafts, discoveryError: typeof discoveryError === 'undefined' ? undefined : discoveryError }; }\nglobalThis.renderPage = renderPage;`;
  const output = ts.transpileModule(script, { compilerOptions: { module: ts.ModuleKind.None, target: ts.ScriptTarget.ES2022 } }).outputText;
  const action = (name) => ({ toString: () => `/_actions/${name}?_action=${name}` });
  const submitAction = action('submitKinesiologyEvaluation');
  const amendAction = action('createKinesiologyAmendment');
+ const oralSurgeryAction = action('createOralSurgeryDraft');
  const sandbox = vm.createContext({
   URL, URLSearchParams, BigInt, Date, console,
-  actions: { createKinesiologyEvaluation: action('createKinesiologyEvaluation'), updateKinesiologyEvaluation: action('updateKinesiologyEvaluation'), submitKinesiologyEvaluation: submitAction, createKinesiologyAmendment: amendAction },
+  actions: { createKinesiologyEvaluation: action('createKinesiologyEvaluation'), updateKinesiologyEvaluation: action('updateKinesiologyEvaluation'), submitKinesiologyEvaluation: submitAction, createKinesiologyAmendment: amendAction, createOralSurgeryDraft: oralSurgeryAction },
   isInputError: () => false,
   Astro: {
    params: options.params ?? { assignmentId: '17', id: largeId },
    url: new URL(options.url ?? '/my-patients/17?limit=50&offset=0', 'http://localhost'),
    cookies: { get: () => ({ value: 'token' }) },
-   getActionResult: (name) => name === submitAction ? options.submitResult : name === amendAction ? options.amendResult : options.actionResult,
+   getActionResult: (name) => name === submitAction ? options.submitResult : name === amendAction ? options.amendResult : name === oralSurgeryAction ? options.oralSurgeryResult : options.actionResult,
    redirect: (href) => ({ redirect: href }),
    request: { clone: () => ({ formData: async () => new FormData() }) },
   },
@@ -152,6 +155,9 @@ async function evaluatePageFrontmatter(path, options = {}) {
   listSubmittedEvaluations: options.listSubmittedEvaluations ?? (async () => []),
   listSubmissions: options.listSubmissions ?? (async () => ({ evaluation_id: largeId, items: [] })),
   listCorrections: options.listCorrections ?? (async () => ({ evaluation_id: largeId, items: [] })),
+  listOralSurgeryContexts: options.listOralSurgeryContexts ?? (async () => ({ status: 'ok', items: [] })),
+  isOralSurgeryContext: (contexts, subjectId, groupId) => contexts.some((item) => item.subject_id === subjectId && item.academic_group_id === groupId),
+  listOralSurgeryDrafts: options.listOralSurgeryDrafts ?? (async () => []),
   EVALUATION_STATUS_LABELS: (await apiHarness()).mod.namespace.EVALUATION_STATUS_LABELS,
  });
  vm.runInContext(output, sandbox);
@@ -1077,4 +1083,28 @@ test('confirmed amendment redirects to the new draft through the validated conte
  assert.match(template, /Enmienda creada/);
  assert.match(template, /amendment_of_evaluation_id/);
  assert.match(template, /Crear enmienda/);
+});
+
+// Oral Surgery I discovery branch on the student assignment page (D11): Kinesiology must stay exactly as today.
+test('assignment frontmatter without the oral-surgery read grant makes no discovery request and keeps Kinesiology lists', async () => {
+ let discoveries = 0;
+ const page = await evaluatePageFrontmatter('src/pages/my-patients/[assignmentId].astro', { listOralSurgeryContexts: async () => { discoveries += 1; return { status: 'ok', items: [{ subject_id: subjectId, academic_group_id: groupId }] }; } });
+ assert.equal(discoveries, 0);
+ assert.equal(page.oralSurgeryEnabled, false);
+ assert.equal(page.createHref, '/_actions/createKinesiologyEvaluation?_action=createKinesiologyEvaluation&assignment_id=17&limit=50&offset=0');
+ assert.equal(page.drafts.length, 1);
+ assert.equal(page.oralSurgeryDrafts.length, 0);
+});
+
+test('assignment frontmatter with the grant but no matching pair keeps the Kinesiology lists and requests no Oral Surgery drafts', async () => {
+ let oralLists = 0;
+ const page = await evaluatePageFrontmatter('src/pages/my-patients/[assignmentId].astro', {
+  permissions: ['oral-surgery-drafts:read'],
+  listOralSurgeryContexts: async () => ({ status: 'ok', items: [{ subject_id: otherSubjectId, academic_group_id: otherGroupId }] }),
+  listOralSurgeryDrafts: async () => { oralLists += 1; return []; },
+ });
+ assert.equal(oralLists, 0);
+ assert.equal(page.oralSurgeryEnabled, false);
+ assert.equal(page.drafts.length, 1);
+ assert.equal(page.createHref, '/_actions/createKinesiologyEvaluation?_action=createKinesiologyEvaluation&assignment_id=17&limit=50&offset=0');
 });

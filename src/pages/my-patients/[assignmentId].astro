@@ -3,8 +3,11 @@ export const prerender = false;
 import { actions } from 'astro:actions';
 import Layout from '../../layouts/Layout.astro';
 import { ApiError } from '../../shared/apiClient';
+import { decodeJwt } from '../../shared/jwt';
 import { listAssignedPatients, parseAssignmentPagination } from '../../pods/patient-assignment/api';
 import { actionHrefWithContext, EVALUATION_STATUS_LABELS, listEvaluations, listSubmittedEvaluations, type Evaluation } from '../../pods/kinesiology-evaluation/api';
+import { listOralSurgeryDrafts, type OralSurgeryDraft } from '../../pods/oral-surgery-draft/api';
+import { isOralSurgeryContext, listOralSurgeryContexts } from '../../pods/oral-surgery-draft/discovery';
 
 const assignmentId = Astro.params.assignmentId ?? '';
 const decimalId = /^[1-9]\d{0,18}$/.test(assignmentId) && BigInt(assignmentId) <= 9223372036854775807n;
@@ -13,12 +16,22 @@ let pagination = { limit: 50, offset: 0 };
 let assignment: Awaited<ReturnType<typeof listAssignedPatients>>['items'][number] | null = null;
 let drafts: Evaluation[] = [];
 let submitted: Evaluation[] = [];
+let oralSurgeryEnabled = false;
+let oralSurgeryDrafts: OralSurgeryDraft[] = [];
+let discoveryError = false;
+let discoveryForbidden = false;
 let unavailable = false;
 let loadError = '';
+const oralSurgeryPage = { limit: 50, offset: 0 };
 const result = Astro.getActionResult(actions.createKinesiologyEvaluation);
 if (result?.data?.success === false && /sesión venció/i.test(result.data.error)) {
 	return Astro.redirect(`/auth/login?returnTo=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`);
 }
+// Presentation hint only: the backend checks the grant on every discovery request.
+const token = Astro.cookies.get('session')?.value;
+const actor = token ? decodeJwt(token) : null;
+const permissions = actor?.permissions;
+const mayReadOralSurgery = Array.isArray(permissions) && permissions.includes('oral-surgery-drafts:read');
 try {
 	pagination = parseAssignmentPagination(query);
 	if (!decimalId) unavailable = true;
@@ -32,10 +45,24 @@ try {
 				subject_id: assignment.subject_id,
 				academic_group_id: assignment.academic_group_id,
 			};
-			[drafts, submitted] = await Promise.all([
-				listEvaluations(context, Astro.cookies),
-				listSubmittedEvaluations(context, Astro.cookies),
-			]);
+			if (mayReadOralSurgery) {
+				try {
+					const contexts = await listOralSurgeryContexts(Astro.cookies);
+					if (contexts.status === 'forbidden') discoveryForbidden = true;
+					else oralSurgeryEnabled = isOralSurgeryContext(contexts.items, assignment.subject_id, assignment.academic_group_id);
+				} catch (error) {
+					if (error instanceof ApiError && error.status === 401) throw error;
+					discoveryError = true;
+				}
+			}
+			if (oralSurgeryEnabled) {
+				oralSurgeryDrafts = await listOralSurgeryDrafts(context, Astro.cookies, oralSurgeryPage);
+			} else if (!discoveryError) {
+				[drafts, submitted] = await Promise.all([
+					listEvaluations(context, Astro.cookies),
+					listSubmittedEvaluations(context, Astro.cookies),
+				]);
+			}
 		}
 	}
 } catch (error) {
@@ -44,18 +71,31 @@ try {
 	}
 	loadError = 'No se pudieron cargar las asignaciones y sus fichas. No se muestra una lista vacía porque el resultado no está disponible.';
 }
+// Read only after discovery: the action is registered by the Oral Surgery integration, not needed for Kinesiology.
+const oralSurgeryResult = oralSurgeryEnabled ? Astro.getActionResult(actions.createOralSurgeryDraft) : undefined;
+if (oralSurgeryResult?.data?.success === false && /sesión venció/i.test(oralSurgeryResult.data.error)) {
+	return Astro.redirect(`/auth/login?returnTo=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`);
+}
 if (result?.data?.success && assignment && decimalId) {
 	return Astro.redirect(`/kinesiology-evaluations/${result.data.evaluation.id}?assignment_id=${encodeURIComponent(assignment.id)}&limit=${pagination.limit}&offset=${pagination.offset}`);
+}
+if (oralSurgeryResult?.data?.success && oralSurgeryEnabled && assignment && decimalId) {
+	return Astro.redirect(`/oral-surgery-drafts/${oralSurgeryResult.data.draft.id}?assignment_id=${encodeURIComponent(assignment.id)}&limit=${pagination.limit}&offset=${pagination.offset}`);
 }
 const createHref = actionHrefWithContext(actions.createKinesiologyEvaluation.toString(), {
 	assignment_id: assignmentId,
 	limit: String(pagination.limit),
 	offset: String(pagination.offset),
 }, Astro.url.href);
+const createOralSurgeryHref = oralSurgeryEnabled ? actionHrefWithContext(actions.createOralSurgeryDraft.toString(), {
+	assignment_id: assignmentId,
+	limit: String(pagination.limit),
+	offset: String(pagination.offset),
+}, Astro.url.href) : '';
 ---
 <Layout>
 	<main class="clinical-page" aria-labelledby="title">
-		<p class="eyebrow"><a href="/my-patients">Mis pacientes asignados</a> / Ficha kinésica inicial</p>
+		<p class="eyebrow"><a href="/my-patients">Mis pacientes asignados</a> / {oralSurgeryEnabled ? 'Cirugía Oral I' : discoveryError ? 'Ficha clínica' : 'Ficha kinésica inicial'}</p>
 		{unavailable ? <section class="notice" role="status">
 			<h1 id="title">Asignación no disponible</h1>
 			<p>No se encontró esa asignación en esta página. Volvé a la lista para elegir el contexto vigente.</p>
@@ -71,7 +111,17 @@ const createHref = actionHrefWithContext(actions.createKinesiologyEvaluation.toS
 					<p>Documento: {assignment.documento}</p>
 					<p>Asignatura · <span class="identifier">{assignment.subject_id}</span><br />Grupo académico · <span class="identifier">{assignment.academic_group_id}</span></p>
 				</div>
-				<form method="POST" action={createHref} id="new-draft">
+				{oralSurgeryEnabled ? <form method="POST" action={createOralSurgeryHref} id="new-draft">
+					<input type="hidden" name="patient_id" value={assignment.patient_id} />
+					<input type="hidden" name="subject_id" value={assignment.subject_id} />
+					<input type="hidden" name="academic_group_id" value={assignment.academic_group_id} />
+					<input type="hidden" name="assignment_id" value={assignment.id} />
+					<input type="hidden" name="limit" value={pagination.limit} />
+					<input type="hidden" name="offset" value={pagination.offset} />
+					<button class="button" type="submit">Crear nuevo borrador de Cirugía Oral I</button>
+					<p class="hint">Cada creación inicia un encuentro clínico nuevo. Para continuar uno existente, abrilo desde la lista.</p>
+				</form> : null}
+				{!oralSurgeryEnabled && !discoveryError ? <form method="POST" action={createHref} id="new-draft">
 					<input type="hidden" name="patient_id" value={assignment.patient_id} />
 					<input type="hidden" name="subject_id" value={assignment.subject_id} />
 					<input type="hidden" name="academic_group_id" value={assignment.academic_group_id} />
@@ -81,25 +131,39 @@ const createHref = actionHrefWithContext(actions.createKinesiologyEvaluation.toS
 					<input type="hidden" name="content" value="{}" />
 					<button class="button" type="submit">Crear nuevo borrador</button>
 					<p class="hint">Cada creación inicia un borrador nuevo y vacío.</p>
-				</form>
+				</form> : null}
 			</header>
-			{result?.data?.success === false && <p class="error" role="alert">{result.data.error}</p>}
-			<section aria-labelledby="drafts-title">
-				<h2 id="drafts-title">Borradores de ficha inicial</h2>
-				{drafts.length ? <ul class="draft-list">{drafts.map((draft) => <li>
-					<a href={`/kinesiology-evaluations/${draft.id}?assignment_id=${assignment.id}&limit=${pagination.limit}&offset=${pagination.offset}`}>
-						Abrir borrador de ficha · actualizado {new Date(draft.updated_at).toLocaleDateString('es')}
+			{discoveryForbidden && <p class="notice" role="status">No tenés permiso para consultar si esta asignatura usa Cirugía Oral I. No se muestran acciones de Cirugía Oral.</p>}
+			{discoveryError && <p class="error" role="alert">No se pudo determinar qué ficha clínica corresponde a esta asignatura. No se muestran acciones para evitar crear la ficha equivocada.</p>}
+			{oralSurgeryEnabled && oralSurgeryResult?.data?.success === false && <p class="error" role="alert">{oralSurgeryResult.data.error}</p>}
+			{oralSurgeryEnabled ? <section aria-labelledby="oral-drafts-title">
+				<h2 id="oral-drafts-title">Borradores de Cirugía Oral I</h2>
+				{oralSurgeryDrafts.length ? <ul class="draft-list">{oralSurgeryDrafts.map((draft) => <li>
+					<a href={`/oral-surgery-drafts/${draft.id}?assignment_id=${assignment.id}&limit=${pagination.limit}&offset=${pagination.offset}`}>
+						Abrir borrador · versión {draft.version} · actualizado {new Date(draft.updated_at).toLocaleDateString('es')}
 					</a>
-				</li>)}</ul> : <p>Todavía no hay borradores para esta asignación.</p>}
-			</section>
-			<section aria-labelledby="submitted-title">
-				<h2 id="submitted-title">Fichas enviadas</h2>
-				{submitted.length ? <ul class="draft-list">{submitted.map((record) => <li>
-					<a href={`/kinesiology-evaluations/${record.id}?assignment_id=${assignment.id}&limit=${pagination.limit}&offset=${pagination.offset}`}>
-						Ver ficha enviada · {EVALUATION_STATUS_LABELS[record.status]} · actualizada {new Date(record.updated_at).toLocaleDateString('es')}
-					</a>
-				</li>)}</ul> : <p>Todavía no hay fichas enviadas para esta asignación.</p>}
-			</section>
+				</li>)}</ul> : <p>Todavía no hay borradores de Cirugía Oral I para esta asignación.</p>}
+				{oralSurgeryDrafts.length === oralSurgeryPage.limit && <p class="hint">Se muestran los {oralSurgeryPage.limit} borradores más recientes.</p>}
+			</section> : null}
+			{!oralSurgeryEnabled && !discoveryError ? <>
+				{result?.data?.success === false && <p class="error" role="alert">{result.data.error}</p>}
+				<section aria-labelledby="drafts-title">
+					<h2 id="drafts-title">Borradores de ficha inicial</h2>
+					{drafts.length ? <ul class="draft-list">{drafts.map((draft) => <li>
+						<a href={`/kinesiology-evaluations/${draft.id}?assignment_id=${assignment.id}&limit=${pagination.limit}&offset=${pagination.offset}`}>
+							Abrir borrador de ficha · actualizado {new Date(draft.updated_at).toLocaleDateString('es')}
+						</a>
+					</li>)}</ul> : <p>Todavía no hay borradores para esta asignación.</p>}
+				</section>
+				<section aria-labelledby="submitted-title">
+					<h2 id="submitted-title">Fichas enviadas</h2>
+					{submitted.length ? <ul class="draft-list">{submitted.map((record) => <li>
+						<a href={`/kinesiology-evaluations/${record.id}?assignment_id=${assignment.id}&limit=${pagination.limit}&offset=${pagination.offset}`}>
+							Ver ficha enviada · {EVALUATION_STATUS_LABELS[record.status]} · actualizada {new Date(record.updated_at).toLocaleDateString('es')}
+						</a>
+					</li>)}</ul> : <p>Todavía no hay fichas enviadas para esta asignación.</p>}
+				</section>
+			</> : null}
 		</> : null}
 	</main>
 	<script>

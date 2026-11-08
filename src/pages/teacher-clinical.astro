@@ -4,12 +4,17 @@ import Layout from '../layouts/Layout.astro';
 import { ApiError } from '../shared/apiClient';
 import { listTeacherPatients, listTeacherEvaluations, parseTeacherPagination, teacherGrant, type TeacherPatient } from '../pods/teacher-clinical/api';
 import type { Evaluation } from '../pods/kinesiology-evaluation/api';
+import { listOralSurgeryDrafts, type OralSurgeryDraft } from '../pods/oral-surgery-draft/api';
+import { isOralSurgeryContext, listOralSurgeryContexts } from '../pods/oral-surgery-draft/discovery';
 Astro.response.headers.set('Cache-Control', 'no-store');
 const allowed = teacherGrant(Astro.cookies, 'patient-assignments:read') && teacherGrant(Astro.cookies, 'kinesiology-evaluations:read');
 let pagination = { limit: 50, offset: 0 };
 let patients: TeacherPatient[] = [];
 let selected: TeacherPatient | undefined;
 let evaluations: Evaluation[] = [];
+let oralSurgeryEnabled = false;
+let oralSurgeryForbidden = false;
+let oralSurgeryDrafts: OralSurgeryDraft[] = [];
 let error = '';
 const choices = Astro.url.searchParams.getAll('assignment_id');
 try {
@@ -20,7 +25,22 @@ try {
   if (choices.length) {
    selected = choices.length === 1 ? patients.find((row) => row.id === choices[0]) : undefined;
    if (!selected) error = 'La asignación seleccionada no está disponible en esta página. Volvé a elegir el contexto.';
-   else evaluations = await listTeacherEvaluations({ patient_id: selected.patient_id, subject_id: selected.subject_id, academic_group_id: selected.academic_group_id }, Astro.cookies);
+   else {
+    let discoveryFailed = false;
+    if (teacherGrant(Astro.cookies, 'oral-surgery-drafts:read')) {
+     try {
+      const contexts = await listOralSurgeryContexts(Astro.cookies);
+      if (contexts.status === 'forbidden') oralSurgeryForbidden = true;
+      else oralSurgeryEnabled = isOralSurgeryContext(contexts.items, selected.subject_id, selected.academic_group_id);
+     } catch (failure) {
+      if (failure instanceof ApiError && failure.status === 401) throw failure;
+      discoveryFailed = true;
+     }
+    }
+    if (discoveryFailed) error = 'No se pudo determinar qué ficha clínica corresponde a este contexto.';
+    else if (oralSurgeryEnabled) oralSurgeryDrafts = await listOralSurgeryDrafts({ patient_id: selected.patient_id, subject_id: selected.subject_id, academic_group_id: selected.academic_group_id }, Astro.cookies, { limit: 50, offset: 0 });
+    else evaluations = await listTeacherEvaluations({ patient_id: selected.patient_id, subject_id: selected.subject_id, academic_group_id: selected.academic_group_id }, Astro.cookies);
+   }
   }
  }
 } catch (failure) {
@@ -53,9 +73,18 @@ const next = patients.length === pagination.limit && pagination.offset + paginat
     {previous !== null && <a href={link(previous)}>Anterior</a>}
     {next !== null && <a href={link(next)}>Siguiente</a>}
    </nav>}
-   {selected && !error && <section aria-labelledby="records-title">
+   {selected && !error && oralSurgeryEnabled && <section aria-labelledby="oral-records-title">
+    <h2 id="oral-records-title">Borradores de Cirugía Oral I de {selected.apellidos}, {selected.nombres}</h2>
+    <p>Asignatura: {selected.subject_id}<br />Grupo: {selected.academic_group_id}</p>
+    {oralSurgeryDrafts.length ? <ul>{oralSurgeryDrafts.map((draft) => <li>
+     <a href={`/teacher-clinical/oral-surgery/${draft.id}?${new URLSearchParams({ patient_id: selected!.patient_id, subject_id: selected!.subject_id, academic_group_id: selected!.academic_group_id })}`}>Abrir borrador de Cirugía Oral I · versión {draft.version}</a>
+    </li>)}</ul> : <p>No hay borradores de Cirugía Oral I para este paciente y contexto de origen.</p>}
+    {oralSurgeryDrafts.length === 50 && <p>Se muestran los 50 borradores más recientes.</p>}
+   </section>}
+   {selected && !error && !oralSurgeryEnabled && <section aria-labelledby="records-title">
     <h2 id="records-title">Fichas de {selected.apellidos}, {selected.nombres}</h2>
     <p>Asignatura: {selected.subject_id}<br />Grupo: {selected.academic_group_id}</p>
+    {oralSurgeryForbidden && <p role="status">No tenés permiso para consultar si este contexto usa Cirugía Oral I. No se muestran acciones de Cirugía Oral.</p>}
     {evaluations.length ? <ul>{evaluations.map((evaluation) => <li>
      <a href={`/teacher-clinical/${evaluation.id}?${new URLSearchParams({ patient_id: selected!.patient_id, subject_id: selected!.subject_id, academic_group_id: selected!.academic_group_id, limit: String(pagination.limit), offset: String(pagination.offset), assignment_id: selected!.id })}`}>Abrir ficha · {evaluation.status === 'draft' ? 'Borrador' : evaluation.status === 'submitted' ? 'Enviada' : 'Validada'}</a>
     </li>)}</ul> : <p>No hay fichas para este paciente y contexto de origen.</p>}
