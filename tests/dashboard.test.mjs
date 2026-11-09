@@ -113,7 +113,7 @@ test('availability and assignment navigation uses existing admin gate and permis
 test('reception navigation shows only reception links and hides academic, people and clinical links', async () => {
 	for (const role of ['reception']) {
 		const shell = await evaluate('src/layouts/Layout.astro', ['academicLinks', 'peopleLinks', 'clinicalLinks', 'receptionLinks', 'canRegister'], jwt({ ...valid, role, permissions: ['users:write', 'patient-assignments:write'] }));
-		assert.deepEqual(Array.from(shell.receptionLinks, (link) => link.href), ['/reception/patients']);
+		assert.deepEqual(Array.from(shell.receptionLinks, (link) => link.href), ['/reception/patients', '/reception/availability']);
 		assert.deepEqual(Array.from(shell.academicLinks), []);
 		assert.deepEqual(Array.from(shell.peopleLinks), []);
 		assert.deepEqual(Array.from(shell.clinicalLinks), []);
@@ -128,6 +128,8 @@ test('reception navigation shows only reception links and hides academic, people
 	}
 	const titled = await evaluate('src/layouts/Layout.astro', ['pageTitle'], jwt({ ...valid, role: 'reception' }), '/reception/patients?career=kinesiology');
 	assert.equal(titled.pageTitle, 'Pacientes de recepción');
+	const availabilityTitle = await evaluate('src/layouts/Layout.astro', ['pageTitle'], jwt({ ...valid, role: 'reception' }), '/reception/availability?career=odontology');
+	assert.equal(availabilityTitle.pageTitle, 'Disponibilidad de recepción');
 	const shellSource = await source('src/layouts/Layout.astro');
 	assert.match(shellSource, /receptionLinks\.length > 0 && <>[\s\S]*aria-label="Recepción"/);
 	assert.match(shellSource, /academicLinks\.length > 0 && <>[\s\S]*aria-label="Académico"/);

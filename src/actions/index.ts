@@ -19,6 +19,7 @@ import { handleCreateKinesiologyAmendment, handleCreateKinesiologyEvaluation, ha
 
 import { searchAvailablePatient, enablePatientAvailability, withdrawPatientAvailability } from '../pods/patient-availability/actions';
 import { createReceptionAccount, grantReceptionCareer, revokeReceptionCareerGrant } from '../pods/reception-account/actions';
+import { searchReceptionAvailabilityPatient, enableReceptionAvailability, withdrawReceptionAvailability } from '../pods/reception-availability/actions';
 import { matchReceptionPatient, reuseReceptionPatient, registerReceptionPatient, updateReceptionPatientContact } from '../pods/reception-patient/actions';
 import { createTeacherAssignment } from '../pods/teacher-assignment/actions';
 import { handleRecordTeacherConsent } from '../pods/teacher-clinical/actions/consent';
@@ -59,6 +60,9 @@ export const server = {
 	reuseReceptionPatient,
 	registerReceptionPatient,
 	updateReceptionPatientContact,
+	searchReceptionAvailabilityPatient,
+	enableReceptionAvailability,
+	withdrawReceptionAvailability,
 	createTeacherAssignment,
 	activateTeacherHabilitation,
 	revokeTeacherHabilitation,

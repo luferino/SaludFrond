@@ -18,6 +18,14 @@ Document lookup (`POST /reception/patients/match`, 4–8 digits) never reveals t
 
 A 404 on a career-scoped operation shows a neutral "career no longer enabled or patient not in that career" message without revealing activity from other careers. Backend messages are never displayed, and only a 401 clears the session.
 
+## Availability
+
+`/reception/availability` uses the same fresh career selection. Reception searches a patient enrolled in the selected career by exact document (4–8 digits, `GET /reception/availability/search`; the document is sent through a form action and never placed in the URL), enables availability on one of that career's subject/group contexts (`GET /reception/availability/contexts`, `POST /reception/availability`), reviews the patient's availability history (`GET /reception/availability/history`) and withdraws an active period after explicit confirmation (`POST /reception/availability/:id/withdraw`).
+
+Contexts and history are paginated with `contexts_limit`/`contexts_offset` and `history_limit`/`history_offset` (limit 1–100, offset 0–10000, no totals). History entries carry no labels, so subject and group names come from the contexts page on screen; other entries show neutral labels. The patient's name appears only right after a search in the same request; otherwise the page shows "Paciente seleccionado" to keep names out of URLs.
+
+Withdrawing availability keeps the patient–career link and does not assign patients to students; teacher assignments stay with teachers. A 404 means the career is no longer enabled, the patient is not enrolled in it, or the context or period belongs to another career; a 409 means an active availability already exists. There is no fallback to the global patient-availability endpoints.
+
 ## Verification
 
-Automated coverage uses scripted fetch mocks with synthetic identifiers (`tests/reception-accounts.test.mjs`, `tests/reception-patients.test.mjs`, `tests/dashboard.test.mjs`). Live behavior against the backend is part of the deferred manual end-to-end check; local test credentials stay in the backend repository and are never copied here.
+Automated coverage uses scripted fetch mocks with synthetic identifiers (`tests/reception-accounts.test.mjs`, `tests/reception-patients.test.mjs`, `tests/reception-availability.test.mjs`, `tests/dashboard.test.mjs`). Live behavior against the backend is part of the deferred manual end-to-end check; local test credentials stay in the backend repository and are never copied here.

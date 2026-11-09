@@ -1,0 +1,238 @@
+---
+export const prerender = false;
+
+import { actions, isInputError } from 'astro:actions';
+import Layout from '../../layouts/Layout.astro';
+import '../../styles/academic-panels.css';
+import { RECEPTION_CAREER_LABELS } from '../../pods/reception/careers';
+import type { ReceptionCareer } from '../../pods/reception/careers';
+import { activityLabels, loadReceptionAvailabilityState, resolveReceptionAvailabilityAccess, resultForCareer } from '../../pods/reception-availability/state';
+import { getSession } from '../../shared/session';
+
+Astro.response.headers.set('Cache-Control', 'no-store');
+const returnTo = '/auth/login?returnTo=%2Freception%2Favailability';
+const access = resolveReceptionAvailabilityAccess(getSession(Astro.cookies));
+if (access === 'login') return Astro.redirect(returnTo);
+if (access === 'home') return Astro.redirect('/');
+
+// Careers, contexts and history are read fresh for this request; nothing is cached between renders.
+const state = await loadReceptionAvailabilityState(Astro.url.searchParams, Astro.cookies);
+if (state.kind === 'session-expired') return Astro.redirect(returnTo);
+const view = state.kind === 'ready' ? state : null;
+const careers = state.careers;
+const career: ReceptionCareer | null = view?.career ?? null;
+
+const searchResult = Astro.getActionResult(actions.searchReceptionAvailabilityPatient);
+const enableResult = Astro.getActionResult(actions.enableReceptionAvailability);
+const withdrawResult = Astro.getActionResult(actions.withdrawReceptionAvailability);
+if ([searchResult, enableResult, withdrawResult].some((result) => result?.data?.unauthorized)) return Astro.redirect(returnTo);
+
+// A result is rendered only when it belongs to the career selected in this request; invalid-input errors carry no career.
+const ownSearch = career ? resultForCareer(searchResult?.data, career) : undefined;
+const ownEnable = career ? resultForCareer(enableResult?.data, career) : undefined;
+const ownWithdraw = career ? resultForCareer(withdrawResult?.data, career) : undefined;
+const errorFor = (result: { data?: { success: boolean; career: ReceptionCareer | null; error?: string }; error?: unknown } | undefined): string | undefined => {
+	if (!result) return undefined;
+	if (result.error) return isInputError(result.error) ? 'Revisá los datos enviados. Conservamos las selecciones válidas.' : 'No se pudo completar la operación. Probá de nuevo más tarde.';
+	const data = result.data;
+	return data && data.success === false && (data.career === career || data.career === null) ? data.error : undefined;
+};
+const searchError = errorFor(searchResult);
+const enableError = errorFor(enableResult);
+const withdrawError = errorFor(withdrawResult);
+
+const patientId = view?.patientId ?? null;
+const selectedName = patientId && ownSearch?.success
+	? ownSearch.patients.find((patient) => patient.patient_id.toLowerCase() === patientId.toLowerCase())
+	: undefined;
+const formatDateTime = (value: string) => new Date(value).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' });
+
+// Pagination keeps both sections' pages in the URL, so moving through one never resets the other.
+function linkFor(overrides: Record<string, string>): string {
+	if (!view) return '/reception/availability';
+	const query = new URLSearchParams({
+		career: view.career,
+		contexts_limit: String(view.contextsPage.limit),
+		contexts_offset: String(view.contextsPage.offset),
+		history_limit: String(view.historyPage.limit),
+		history_offset: String(view.historyPage.offset),
+	});
+	if (view.patientId) query.set('patient_id', view.patientId);
+	for (const [key, value] of Object.entries(overrides)) query.set(key, value);
+	return `?${query}`;
+}
+---
+
+<Layout>
+	<main class="academic-page reception-availability" aria-labelledby="reception-availability-title">
+		<header class="intro">
+			<p class="eyebrow">Recepción / Disponibilidad</p>
+			<h1 id="reception-availability-title">Disponibilidad de pacientes por carrera</h1>
+			<p>Buscá un paciente por documento exacto y habilitá o retirá su disponibilidad en la carrera seleccionada.</p>
+		</header>
+
+		{state.kind === 'no-careers' && (
+			<section class="panel" role="status"><h2>Sin carreras habilitadas</h2><p>Tu cuenta no tiene carreras habilitadas. Consultá con administración.</p></section>
+		)}
+		{state.kind === 'unavailable' && <p class="message error" role="alert">{state.message}</p>}
+		{state.kind === 'career-unavailable' && <p class="message error" role="alert">{state.message}</p>}
+		{state.kind === 'select' && state.requested !== null && (
+			<p class="message" role="alert">La carrera indicada no está habilitada para tu cuenta. Seleccioná una de tus carreras.</p>
+		)}
+		{view?.queryError && <p class="message error" role="alert">{view.queryError}</p>}
+
+		{careers.length > 0 && (
+			<section class="panel" aria-labelledby="career-title">
+				<h2 id="career-title">Carrera</h2>
+				<form method="GET" action="/reception/availability" class="inline-form">
+					<label for="career">Carrera habilitada</label>
+					<select id="career" name="career" required>
+						<option value="" selected={!career}>Seleccioná una carrera</option>
+						{careers.map((code) => (
+							<option value={code} selected={code === career}>{RECEPTION_CAREER_LABELS[code]}</option>
+						))}
+					</select>
+					<button>Ver disponibilidad</button>
+				</form>
+			</section>
+		)}
+
+		{view && (
+			<>
+				<section class="panel" aria-labelledby="search-title">
+					<h2 id="search-title">Buscar paciente por documento</h2>
+					{searchError && <p class="message error" role="alert">{searchError}</p>}
+					<form method="POST" action={actions.searchReceptionAvailabilityPatient} class="inline-form">
+						<input type="hidden" name="career" value={view.career} />
+						<input type="hidden" name="limit" value="50" />
+						<input type="hidden" name="offset" value="0" />
+						<label for="search-documento">N° de documento</label>
+						<input id="search-documento" name="documento" type="text" inputmode="numeric" required pattern="[0-9]{4,8}" maxlength="8" value={ownSearch?.documento ?? ''} aria-describedby="search-documento-hint" />
+						<p class="hint" id="search-documento-hint">4 a 8 dígitos. Se busca el documento exacto.</p>
+						<button>Buscar</button>
+					</form>
+
+					{ownSearch?.success && ownSearch.patients.length === 0 && (
+						<p role="status">No hay un paciente con ese documento en esta carrera.</p>
+					)}
+					{ownSearch?.success && ownSearch.patients.length > 0 && (
+						<ul class="patient-list">
+							{ownSearch.patients.map((patient) => (
+								<li>
+									<span><strong>{patient.apellidos}, {patient.nombres}</strong></span>
+									<a href={`?${new URLSearchParams({ career: view.career, patient_id: patient.patient_id })}`}>Ver disponibilidad</a>
+								</li>
+							))}
+						</ul>
+					)}
+					{ownSearch?.success && (ownSearch.navigation.previousOffset !== null || ownSearch.navigation.nextOffset !== null) && (
+						<nav class="pager" aria-label="Paginación de búsqueda">
+							{ownSearch.navigation.previousOffset !== null && (
+								<form method="POST" action={actions.searchReceptionAvailabilityPatient} class="inline-form">
+									<input type="hidden" name="career" value={view.career} />
+									<input type="hidden" name="documento" value={ownSearch.documento} />
+									<input type="hidden" name="limit" value={ownSearch.limit} />
+									<input type="hidden" name="offset" value={ownSearch.navigation.previousOffset} />
+									<button>Anterior</button>
+								</form>
+							)}
+							{ownSearch.navigation.nextOffset !== null && (
+								<form method="POST" action={actions.searchReceptionAvailabilityPatient} class="inline-form">
+									<input type="hidden" name="career" value={view.career} />
+									<input type="hidden" name="documento" value={ownSearch.documento} />
+									<input type="hidden" name="limit" value={ownSearch.limit} />
+									<input type="hidden" name="offset" value={ownSearch.navigation.nextOffset} />
+									<button>Siguiente</button>
+								</form>
+							)}
+						</nav>
+					)}
+				</section>
+
+				{view.patientError && <p class="message error" role="alert">{view.patientError}</p>}
+
+				{patientId && (
+					<section class="panel" aria-labelledby="patient-title">
+						<h2 id="patient-title">{selectedName ? `${selectedName.apellidos}, ${selectedName.nombres}` : 'Paciente seleccionado'}</h2>
+						{ownEnable?.success && <p class="message" role="status">Se habilitó una nueva disponibilidad.</p>}
+
+						<h3>Habilitar disponibilidad</h3>
+						<p class="hint">Habilitar crea una disponibilidad nueva; una disponibilidad retirada no se reactiva.</p>
+						{enableError && <p class="message error" role="alert">{enableError}</p>}
+						{view.contextsError && <p class="message error" role="alert">{view.contextsError}</p>}
+						{view.contexts.length === 0 && !view.contextsError && <p class="hint">No hay contextos disponibles para esta carrera en esta página.</p>}
+						<form method="POST" action={actions.enableReceptionAvailability} class="inline-form">
+							<input type="hidden" name="career" value={view.career} />
+							<input type="hidden" name="patient_id" value={patientId} />
+							<label for="context_pair">Asignatura y grupo</label>
+							<select id="context_pair" name="context_pair" required disabled={view.contexts.length === 0}>
+								<option value="">Seleccioná un contexto</option>
+								{view.contexts.map((context) => (
+									<option value={`${context.subject_id}:${context.academic_group_id}`}>{context.subject_name} · {context.academic_group_name}</option>
+								))}
+							</select>
+							<button disabled={view.contexts.length === 0}>Habilitar disponibilidad</button>
+						</form>
+						<nav class="pager" aria-label="Paginación de contextos">
+							{view.contextsNavigation.previousOffset !== null && <a href={linkFor({ contexts_offset: String(view.contextsNavigation.previousOffset) })}>Anterior</a>}
+							<span>Página {Math.floor(view.contextsPage.offset / view.contextsPage.limit) + 1}</span>
+							{view.contextsNavigation.nextOffset !== null && <a href={linkFor({ contexts_offset: String(view.contextsNavigation.nextOffset) })}>Siguiente</a>}
+						</nav>
+
+						<h3>Historial de disponibilidad</h3>
+						{ownWithdraw?.success && <p class="message" role="status">Se retiró la disponibilidad. El vínculo del paciente con la carrera se mantiene.</p>}
+						{withdrawError && <p class="message error" role="alert">{withdrawError}</p>}
+						{view.historyError && <p class="message error" role="alert">{view.historyError}</p>}
+						{!view.historyError && view.history.length === 0 && <p>No hay disponibilidades registradas para este paciente en esta página.</p>}
+						{view.history.length > 0 && (
+							<ul class="activity-list">
+								{view.history.map((activity) => {
+									const labels = activityLabels(activity, view.contexts);
+									return (
+										<li>
+											<span><strong>{labels.subject}</strong> · {labels.group}</span>
+											<span>Habilitada {formatDateTime(activity.enabled_at)} · {activity.withdrawn_at ? `retirada ${formatDateTime(activity.withdrawn_at)}` : 'activa'}</span>
+											{activity.withdrawn_at === null && (
+												<form method="POST" action={actions.withdrawReceptionAvailability} class="inline-form">
+													<input type="hidden" name="career" value={view.career} />
+													<input type="hidden" name="id" value={activity.id} />
+													<input type="hidden" name="patient_id" value={patientId} />
+													<label><input type="checkbox" name="confirm" value="yes" required /> Confirmo retirar esta disponibilidad</label>
+													<button>Retirar disponibilidad</button>
+												</form>
+											)}
+										</li>
+									);
+								})}
+							</ul>
+						)}
+						<nav class="pager" aria-label="Paginación del historial">
+							{view.historyNavigation.previousOffset !== null && <a href={linkFor({ history_offset: String(view.historyNavigation.previousOffset) })}>Anterior</a>}
+							<span>Página {Math.floor(view.historyPage.offset / view.historyPage.limit) + 1}</span>
+							{view.historyNavigation.nextOffset !== null && <a href={linkFor({ history_offset: String(view.historyNavigation.nextOffset) })}>Siguiente</a>}
+						</nav>
+					</section>
+				)}
+			</>
+		)}
+	</main>
+</Layout>
+
+<style>
+	main { max-width: 62rem; margin: auto; padding: 2rem 1rem; color: var(--ink); }
+	.intro { margin-bottom: 1.5rem; }
+	.intro p { margin: 0.5rem 0; color: var(--muted); }
+	.eyebrow { font: 0.65rem/1.6 Consolas, monospace; letter-spacing: 0.1em; text-transform: uppercase; }
+	h1 { margin: 0.5rem 0; font: 400 clamp(2rem, 3vw, 2.75rem)/1.15 var(--serif); }
+	.hint { margin: 0; color: var(--muted); font-size: 0.8125rem; }
+	.inline-form { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; margin: 0.75rem 0; }
+	.pager { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; margin: 0.5rem 0; }
+	.patient-list, .activity-list { list-style: none; padding: 0; margin: 0; }
+	.patient-list li, .activity-list li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.5rem; padding: 0.6rem 0; border-bottom: 1px solid var(--line); }
+	input, select, button { font: inherit; padding: 0.55rem; }
+	input:not([type="radio"]):not([type="checkbox"]), select { max-width: 100%; min-width: 0; }
+	button { border: 1px solid var(--rust); border-radius: 6px; background: var(--rust); color: var(--paper); cursor: pointer; }
+	button:hover { background: var(--rust-deep); }
+	button:disabled { opacity: 0.5; cursor: not-allowed; }
+	.message.error { color: var(--rust-deep); }
+</style>
