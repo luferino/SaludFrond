@@ -6,6 +6,7 @@ const token = getSession(Astro.cookies);
 const isLoggedIn = token !== null && isTokenValid(token);
 const payload = token ? decodeJwt(token) : null;
 const isAdmin = payload?.role === 'admin';
+const isReception = isLoggedIn && payload?.role === 'reception';
 // Presentation hint only; the backend checks current permissions on each request.
 const canRegister = isLoggedIn && Array.isArray(payload?.permissions)
 	&& payload.permissions.every((permission) => typeof permission === 'string')
@@ -25,6 +26,7 @@ const pageTitles: Record<string, string> = {
 	'/auth/reset-password': 'Restablecer contraseña',
 	'/subjects': 'Asignaturas', '/groups': 'Grupos académicos', '/subject-groups': 'Asignaturas y grupos',
 	'/teacher-habilitations': 'Habilitaciones docentes', '/student-habilitations': 'Habilitaciones de estudiantes',
+	'/reception/patients': 'Pacientes de recepción',
 };
 const pageTitle = currentPath.startsWith('/my-patients') ? 'Mis pacientes asignados'
 	: currentPath.startsWith('/kinesiology-evaluations') ? 'Evaluaciones kinésicas'
@@ -39,7 +41,11 @@ const peopleLinks = isLoggedIn && isAdmin ? [
 const clinicalLinks = isLoggedIn && ['estudiante', 'student'].includes(String(payload?.role).toLowerCase())
 	? [{ href: '/my-patients', label: 'Mis pacientes asignados' }]
 	: canReadClinical ? [{ href: '/teacher-clinical', label: 'Acceso clínico docente' }] : [];
-const academicLinks = isLoggedIn ? [
+// Reception works only through its career-scoped pages; academic catalogs are not part of its role.
+const receptionLinks = isReception ? [
+	{ href: '/reception/patients', label: 'Pacientes' },
+] : [];
+const academicLinks = isLoggedIn && !isReception ? [
 	{ href: '/subjects', label: 'Asignaturas' },
 	{ href: '/groups', label: 'Grupos académicos' },
 	{ href: '/subject-groups', label: 'Asignaturas y grupos' },
@@ -81,6 +87,14 @@ const academicLinks = isLoggedIn ? [
 								))}
 							</nav>
 						</>}
+						{receptionLinks.length > 0 && <>
+							<p class="nav-label">Recepción</p>
+							<nav class="module-nav" aria-label="Recepción">
+								{receptionLinks.map((link) => (
+									<a href={link.href} aria-current={currentPath === link.href ? 'page' : undefined}>{link.label} <span aria-hidden="true">↗</span></a>
+								))}
+							</nav>
+						</>}
 						{clinicalLinks.length > 0 && <>
 							<p class="nav-label">Atención clínica</p>
 							<nav class="module-nav" aria-label="Atención clínica">
@@ -89,12 +103,14 @@ const academicLinks = isLoggedIn ? [
 								))}
 							</nav>
 						</>}
-						<p class="nav-label">Académico</p>
-						<nav class="module-nav" aria-label="Académico">
-							{academicLinks.map((link) => (
-								<a href={link.href} aria-current={currentPath === link.href ? 'page' : undefined}>{link.label} <span aria-hidden="true">↗</span></a>
-							))}
-						</nav>
+						{academicLinks.length > 0 && <>
+							<p class="nav-label">Académico</p>
+							<nav class="module-nav" aria-label="Académico">
+								{academicLinks.map((link) => (
+									<a href={link.href} aria-current={currentPath === link.href ? 'page' : undefined}>{link.label} <span aria-hidden="true">↗</span></a>
+								))}
+							</nav>
+						</>}
 						<p class="nav-label" id="account-title">Cuenta</p>
 						<nav class="account-nav" aria-labelledby="account-title">
 							{canRegister && <a href="/auth/register">Registrar usuario</a>}
