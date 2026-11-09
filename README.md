@@ -52,6 +52,10 @@ All commands are run from the root of the project, from a terminal:
 
 These screens do not add reassignment, queues, reservations, student claiming, registration, clinical state changes, or academic-link creation. Validation uses isolated synthetic fixtures; a successful local build does not establish live backend availability.
 
+## Reception workflows
+
+- [Reception](docs/reception.md): career-scoped `reception` accounts (`kinesiology` / `odontology`, one explicit grant per career). `/reception/patients` lists the career's patients, links existing institutional patients only after explicit confirmation, registers new ones and edits contact data only. No clinical, catalog, habilitation or assignment access.
+
 Run public regression tests with `node --experimental-vm-modules --test tests/*.test.mjs`, then `pnpm astro check` and `pnpm build`.
 
 ## 👀 Want to learn more?

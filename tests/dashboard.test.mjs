@@ -109,6 +109,29 @@ test('availability and assignment navigation uses existing admin gate and permis
 	}
 });
 
+test('reception navigation shows only reception links and hides academic, people and clinical links', async () => {
+	for (const role of ['reception']) {
+		const shell = await evaluate('src/layouts/Layout.astro', ['academicLinks', 'peopleLinks', 'clinicalLinks', 'receptionLinks', 'canRegister'], jwt({ ...valid, role, permissions: ['users:write', 'patient-assignments:write'] }));
+		assert.deepEqual(Array.from(shell.receptionLinks, (link) => link.href), ['/reception/patients']);
+		assert.deepEqual(Array.from(shell.academicLinks), []);
+		assert.deepEqual(Array.from(shell.peopleLinks), []);
+		assert.deepEqual(Array.from(shell.clinicalLinks), []);
+	}
+	for (const payload of [valid, { ...valid, role: 'admin' }, { ...valid, role: 'teacher' }, { ...valid, role: 'Reception' }]) {
+		const shell = await evaluate('src/layouts/Layout.astro', ['receptionLinks'], jwt(payload));
+		assert.deepEqual(Array.from(shell.receptionLinks), []);
+	}
+	for (const token of [undefined, 'invalid', jwt({ ...valid, role: 'reception', exp: 1 })]) {
+		const anonymous = await evaluate('src/layouts/Layout.astro', ['receptionLinks'], token);
+		assert.deepEqual(Array.from(anonymous.receptionLinks), []);
+	}
+	const titled = await evaluate('src/layouts/Layout.astro', ['pageTitle'], jwt({ ...valid, role: 'reception' }), '/reception/patients?career=kinesiology');
+	assert.equal(titled.pageTitle, 'Pacientes de recepción');
+	const shellSource = await source('src/layouts/Layout.astro');
+	assert.match(shellSource, /receptionLinks\.length > 0 && <>[\s\S]*aria-label="Recepción"/);
+	assert.match(shellSource, /academicLinks\.length > 0 && <>[\s\S]*aria-label="Académico"/);
+});
+
 test('teacher clinical navigation requires teacher role and both read grants while student entry stays unchanged', async () => {
  const grants = ['patient-assignments:read', 'kinesiology-evaluations:read'];
  for (const [role, permissions, expected] of [

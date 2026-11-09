@@ -1,0 +1,244 @@
+---
+export const prerender = false;
+
+import { actions, isInputError } from 'astro:actions';
+import Layout from '../../layouts/Layout.astro';
+import '../../styles/academic-panels.css';
+import { RECEPTION_CAREER_LABELS } from '../../pods/reception/careers';
+import type { ReceptionCareer } from '../../pods/reception/careers';
+import { isUuid } from '../../pods/reception-patient/api';
+import { loadReceptionPatientsState, resolveReceptionPatientsAccess } from '../../pods/reception-patient/state';
+import { getSession } from '../../shared/session';
+
+Astro.response.headers.set('Cache-Control', 'no-store');
+const returnTo = '/auth/login?returnTo=%2Freception%2Fpatients';
+const access = resolveReceptionPatientsAccess(getSession(Astro.cookies));
+if (access === 'login') return Astro.redirect(returnTo);
+if (access === 'home') return Astro.redirect('/');
+
+// Careers and patients are read fresh for this request; nothing is cached between renders.
+const state = await loadReceptionPatientsState(Astro.url.searchParams, Astro.cookies);
+if (state.kind === 'session-expired') return Astro.redirect(returnTo);
+const careers = state.careers;
+const career: ReceptionCareer | null = state.kind === 'list' ? state.career : null;
+
+const matchResult = Astro.getActionResult(actions.matchReceptionPatient);
+const reuseResult = Astro.getActionResult(actions.reuseReceptionPatient);
+const registerResult = Astro.getActionResult(actions.registerReceptionPatient);
+const contactResult = Astro.getActionResult(actions.updateReceptionPatientContact);
+if ([matchResult, reuseResult, registerResult, contactResult].some((result) => result?.data?.unauthorized)) return Astro.redirect(returnTo);
+
+// A result is rendered only when it belongs to the career selected in this request; invalid-input errors carry no data.
+const forThisCareer = <T extends { career: ReceptionCareer | null }>(result: { data?: T } | undefined): T | undefined =>
+	result?.data && result.data.career === career ? result.data : undefined;
+const errorFor = (result: { data?: { success: boolean; career: ReceptionCareer | null; error?: string } ; error?: unknown } | undefined): string | undefined => {
+	if (!result) return undefined;
+	if (result.error) return isInputError(result.error) ? 'Revisá los datos enviados. Conservamos las selecciones válidas.' : 'No se pudo completar la operación. Probá de nuevo más tarde.';
+	const data = result.data;
+	return data && data.success === false && (data.career === career || data.career === null) ? data.error : undefined;
+};
+const matchData = forThisCareer(matchResult);
+const reuseData = forThisCareer(reuseResult);
+const registerData = forThisCareer(registerResult);
+const contactData = forThisCareer(contactResult);
+const matchError = errorFor(matchResult);
+const registerError = errorFor(registerResult);
+const reuseError = errorFor(reuseResult);
+const contactError = errorFor(contactResult);
+
+const editId = Astro.url.searchParams.get('patient_id') ?? '';
+const editPatient = state.kind === 'list' && isUuid(editId)
+	? state.patients.find((patient) => patient.id.toLowerCase() === editId.toLowerCase())
+	: undefined;
+const showRegister = (matchData?.success === true && matchData.match === false) || registerError !== undefined;
+const registerDocumento = registerData?.documento ?? matchData?.documento ?? '';
+const today = new Date().toISOString().split('T')[0];
+const formatBirthDate = (value: string | null) => (value ? value.split('-').reverse().join('/') : 'Sin fecha registrada');
+---
+
+<Layout>
+	<main class="academic-page reception-patients" aria-labelledby="reception-patients-title">
+		<header class="intro">
+			<p class="eyebrow">Recepción / Pacientes</p>
+			<h1 id="reception-patients-title">Pacientes por carrera</h1>
+			<p>Registrá o vinculá pacientes institucionales y actualizá su contacto para la carrera seleccionada.</p>
+		</header>
+
+		{state.kind === 'no-careers' && (
+			<section class="panel" role="status"><h2>Sin carreras habilitadas</h2><p>Tu cuenta no tiene carreras habilitadas. Consultá con administración.</p></section>
+		)}
+		{state.kind === 'unavailable' && <p class="message error" role="alert">{state.message}</p>}
+		{state.kind === 'career-unavailable' && <p class="message error" role="alert">{state.message}</p>}
+		{state.kind === 'select' && state.requested !== null && (
+			<p class="message" role="alert">La carrera indicada no está habilitada para tu cuenta. Seleccioná una de tus carreras.</p>
+		)}
+
+		{careers.length > 0 && (
+			<section class="panel" aria-labelledby="career-title">
+				<h2 id="career-title">Carrera</h2>
+				<form method="GET" action="/reception/patients" class="inline-form">
+					<label for="career">Carrera habilitada</label>
+					<select id="career" name="career" required>
+						<option value="" selected={!career}>Seleccioná una carrera</option>
+						{careers.map((code) => (
+							<option value={code} selected={code === career}>{RECEPTION_CAREER_LABELS[code]}</option>
+						))}
+					</select>
+					<button>Ver pacientes</button>
+				</form>
+			</section>
+		)}
+
+		{state.kind === 'list' && career && (
+			<>
+				{reuseData?.success && <p class="message" role="status">Paciente vinculado a la carrera.</p>}
+				{reuseError && <p class="message error" role="alert">{reuseError}</p>}
+				{registerData?.success && <p class="message" role="status">Paciente registrado.</p>}
+
+				<section class="panel" aria-labelledby="patients-title">
+					<h2 id="patients-title">Pacientes de {RECEPTION_CAREER_LABELS[career]}</h2>
+					{state.patients.length === 0 ? (
+						<p>Todavía no hay pacientes vinculados a esta carrera.</p>
+					) : (
+						<ul class="patient-list">
+							{state.patients.map((patient) => (
+								<li>
+									<span><strong>{patient.apellidos}, {patient.nombres}</strong> · Doc. {patient.documento}</span>
+									<a href={`?${new URLSearchParams({ career, patient_id: patient.id })}`}>Editar contacto</a>
+								</li>
+							))}
+						</ul>
+					)}
+				</section>
+
+				<section class="panel" aria-labelledby="search-title">
+					<h2 id="search-title">Buscar por documento</h2>
+					{matchError && <p class="message error" role="alert">{matchError}</p>}
+					<form method="POST" action={actions.matchReceptionPatient} class="inline-form">
+						<input type="hidden" name="career" value={career} />
+						<label for="match-documento">N° de documento</label>
+						<input id="match-documento" name="documento" type="text" inputmode="numeric" required pattern="[0-9]{4,8}" maxlength="8" value={matchData?.documento ?? ''} aria-describedby="match-documento-hint" />
+						<p class="hint" id="match-documento-hint">4 a 8 dígitos</p>
+						<button>Buscar por documento</button>
+					</form>
+
+					{matchData?.success && matchData.match === false && (
+						<p role="status">No hay un paciente institucional con ese documento. Podés registrarlo abajo.</p>
+					)}
+					{matchData?.success && matchData.match === true && (
+						<div class="confirm" role="region" aria-labelledby="link-title">
+							<h3 id="link-title">Paciente institucional existente</h3>
+							<p>Ya existe un paciente institucional con ese documento. Para habilitarlo en {RECEPTION_CAREER_LABELS[career]}, confirmá la vinculación. Sus datos no se muestran hasta vincularlo.</p>
+							<form method="POST" action={actions.reuseReceptionPatient} class="inline-form">
+								<input type="hidden" name="career" value={career} />
+								<input type="hidden" name="patient_id" value={matchData.patientId} />
+								<input type="hidden" name="documento" value={matchData.documento} />
+								<button>Vincular</button>
+							</form>
+						</div>
+					)}
+				</section>
+
+				{showRegister && (
+					<section class="panel" aria-labelledby="register-title">
+						<h2 id="register-title">Registrar paciente</h2>
+						<p class="hint">Todos los campos son obligatorios.</p>
+						{registerError && <p class="message error" role="alert">{registerError}</p>}
+						<form method="POST" action={actions.registerReceptionPatient} class="form-grid">
+							<input type="hidden" name="career" value={career} />
+							<label for="reg-documento">N° de documento</label>
+							<input id="reg-documento" name="documento" type="text" inputmode="numeric" required pattern="[0-9]{4,8}" maxlength="8" value={registerDocumento} />
+							<label for="reg-fecha_nacimiento">Fecha de nacimiento</label>
+							<input id="reg-fecha_nacimiento" name="fecha_nacimiento" type="text" required pattern="[0-9]{2}/[0-9]{2}/[0-9]{4}" placeholder="dd/mm/yyyy" maxlength="10" data-max={today} data-birth-date aria-describedby="reg-fecha-hint" />
+							<p class="hint" id="reg-fecha-hint">dd/mm/yyyy (día/mes/año). No puede ser posterior a hoy.</p>
+							<label for="reg-nombres">Nombres</label>
+							<input id="reg-nombres" name="nombres" type="text" required />
+							<label for="reg-apellidos">Apellidos</label>
+							<input id="reg-apellidos" name="apellidos" type="text" required />
+							<fieldset class="sex-field">
+								<legend>Sexo</legend>
+								<label><input type="radio" name="sexo" value="M" required /> Masculino</label>
+								<label><input type="radio" name="sexo" value="F" required /> Femenino</label>
+							</fieldset>
+							<label for="reg-email">Email</label>
+							<input id="reg-email" name="email" type="email" required autocomplete="email" />
+							<label for="reg-celular">Celular</label>
+							<input id="reg-celular" name="celular" type="tel" required />
+							<label for="reg-direccion">Dirección</label>
+							<input id="reg-direccion" name="direccion" type="text" required />
+							<button>Registrar paciente</button>
+						</form>
+					</section>
+				)}
+
+				{editId !== '' && !editPatient && (
+					<p class="message error" role="alert">No encontramos ese paciente en la carrera seleccionada.</p>
+				)}
+				{editPatient && (
+					<section class="panel" aria-labelledby="edit-title">
+						<h2 id="edit-title">Contacto de {editPatient.nombres} {editPatient.apellidos}</h2>
+						{contactData?.success && contactData.patientId === editPatient.id && <p class="message" role="status">Contacto actualizado.</p>}
+						{contactError && <p class="message error" role="alert">{contactError}</p>}
+						<dl class="identity">
+							<dt>Documento</dt><dd>{editPatient.documento}</dd>
+							<dt>Nombres</dt><dd>{editPatient.nombres}</dd>
+							<dt>Apellidos</dt><dd>{editPatient.apellidos}</dd>
+							<dt>Fecha de nacimiento</dt><dd>{formatBirthDate(editPatient.fecha_nacimiento)}</dd>
+							<dt>Sexo</dt><dd>{editPatient.sexo}</dd>
+						</dl>
+						<p class="hint">Los datos de identidad y la fecha de nacimiento los corrige administración.</p>
+						<form method="POST" action={actions.updateReceptionPatientContact} class="form-grid">
+							<input type="hidden" name="career" value={career} />
+							<input type="hidden" name="id" value={editPatient.id} />
+							<label for="edit-email">Email</label>
+							<input id="edit-email" name="email" type="email" required value={editPatient.email} />
+							<label for="edit-celular">Celular</label>
+							<input id="edit-celular" name="celular" type="tel" required value={editPatient.celular} />
+							<label for="edit-direccion">Dirección</label>
+							<input id="edit-direccion" name="direccion" type="text" required value={editPatient.direccion} />
+							<button>Guardar contacto</button>
+						</form>
+					</section>
+				)}
+			</>
+		)}
+	</main>
+</Layout>
+
+<script>
+	import { birthDateError, parseBirthDate } from '../../pods/paciente/birth-date';
+
+	document.querySelectorAll<HTMLInputElement>('input[data-birth-date]').forEach((input) => {
+		const validate = () => {
+			const valid = !input.value || parseBirthDate(input.value, input.dataset.max);
+			input.setCustomValidity(valid ? '' : birthDateError);
+		};
+		input.addEventListener('input', validate);
+		input.addEventListener('change', validate);
+		validate();
+	});
+</script>
+
+<style>
+	main { max-width: 62rem; margin: auto; padding: 2rem 1rem; color: var(--ink); }
+	.intro { margin-bottom: 1.5rem; }
+	.intro p { margin: 0.5rem 0; color: var(--muted); }
+	.eyebrow { font: 0.65rem/1.6 Consolas, monospace; letter-spacing: 0.1em; text-transform: uppercase; }
+	h1 { margin: 0.5rem 0; font: 400 clamp(2rem, 3vw, 2.75rem)/1.15 var(--serif); }
+	.hint { margin: 0; color: var(--muted); font-size: 0.8125rem; }
+	.inline-form, .form-grid { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; margin: 0.75rem 0; }
+	.form-grid { display: grid; grid-template-columns: max-content minmax(0, 1fr); align-items: center; }
+	.form-grid > button { grid-column: 1 / -1; justify-self: start; }
+	.sex-field { display: flex; gap: 1rem; grid-column: 1 / -1; border: 0; padding: 0; margin: 0; }
+	.identity { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 1rem; }
+	.identity dt { font-weight: 600; }
+	.identity dd { margin: 0; }
+	.patient-list { list-style: none; padding: 0; margin: 0; }
+	.patient-list li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.5rem; padding: 0.6rem 0; border-bottom: 1px solid var(--line); }
+	.confirm { margin-top: 1rem; padding: 1rem; border: 1px solid var(--sage-deep); border-radius: 8px; background: var(--sage-soft); }
+	input, select, button { font: inherit; padding: 0.55rem; }
+	input:not([type="radio"]), select { max-width: 100%; min-width: 0; }
+	button { border: 1px solid var(--rust); border-radius: 6px; background: var(--rust); color: var(--paper); cursor: pointer; }
+	button:hover { background: var(--rust-deep); }
+	.message.error { color: var(--rust-deep); }
+</style>
