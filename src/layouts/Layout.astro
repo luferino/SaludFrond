@@ -26,7 +26,7 @@ const pageTitles: Record<string, string> = {
 	'/auth/reset-password': 'Restablecer contraseña',
 	'/subjects': 'Asignaturas', '/groups': 'Grupos académicos', '/subject-groups': 'Asignaturas y grupos',
 	'/teacher-habilitations': 'Habilitaciones docentes', '/student-habilitations': 'Habilitaciones de estudiantes',
-	'/reception/patients': 'Pacientes de recepción',
+	'/reception/patients': 'Pacientes de recepción', '/reception-accounts': 'Cuentas de recepción',
 };
 const pageTitle = currentPath.startsWith('/my-patients') ? 'Mis pacientes asignados'
 	: currentPath.startsWith('/kinesiology-evaluations') ? 'Evaluaciones kinésicas'
@@ -37,6 +37,7 @@ const peopleLinks = isLoggedIn && isAdmin ? [
 	{ href: '/patient-availability', label: 'Disponibilidad de pacientes' },
 	{ href: '/students', label: 'Estudiantes' },
 	{ href: '/teachers', label: 'Profesores' },
+	{ href: '/reception-accounts', label: 'Cuentas de recepción' },
 ] : [];
 const clinicalLinks = isLoggedIn && ['estudiante', 'student'].includes(String(payload?.role).toLowerCase())
 	? [{ href: '/my-patients', label: 'Mis pacientes asignados' }]
