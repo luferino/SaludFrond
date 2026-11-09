@@ -6,6 +6,7 @@ import Layout from '../../layouts/Layout.astro';
 import '../../styles/academic-panels.css';
 import { RECEPTION_CAREER_LABELS } from '../../pods/reception/careers';
 import type { ReceptionCareer } from '../../pods/reception/careers';
+import { receptionActionUrl } from '../../pods/reception/action-url';
 import { isUuid } from '../../pods/reception-patient/api';
 import { loadReceptionPatientsState, resolveReceptionPatientsAccess } from '../../pods/reception-patient/state';
 import { getSession } from '../../shared/session';
@@ -114,7 +115,7 @@ const formatBirthDate = (value: string | null) => (value ? value.split('-').reve
 				<section class="panel" aria-labelledby="search-title">
 					<h2 id="search-title">Buscar por documento</h2>
 					{matchError && <p class="message error" role="alert">{matchError}</p>}
-					<form method="POST" action={actions.matchReceptionPatient} class="inline-form">
+					<form method="POST" action={receptionActionUrl(Astro.url, String(actions.matchReceptionPatient))} class="inline-form">
 						<input type="hidden" name="career" value={career} />
 						<label for="match-documento">N° de documento</label>
 						<input id="match-documento" name="documento" type="text" inputmode="numeric" required pattern="[0-9]{4,8}" maxlength="8" value={matchData?.documento ?? ''} aria-describedby="match-documento-hint" />
@@ -129,7 +130,7 @@ const formatBirthDate = (value: string | null) => (value ? value.split('-').reve
 						<div class="confirm" role="region" aria-labelledby="link-title">
 							<h3 id="link-title">Paciente institucional existente</h3>
 							<p>Ya existe un paciente institucional con ese documento. Para habilitarlo en {RECEPTION_CAREER_LABELS[career]}, confirmá la vinculación. Sus datos no se muestran hasta vincularlo.</p>
-							<form method="POST" action={actions.reuseReceptionPatient} class="inline-form">
+							<form method="POST" action={receptionActionUrl(Astro.url, String(actions.reuseReceptionPatient))} class="inline-form">
 								<input type="hidden" name="career" value={career} />
 								<input type="hidden" name="patient_id" value={matchData.patientId} />
 								<input type="hidden" name="documento" value={matchData.documento} />
@@ -144,7 +145,7 @@ const formatBirthDate = (value: string | null) => (value ? value.split('-').reve
 						<h2 id="register-title">Registrar paciente</h2>
 						<p class="hint">Todos los campos son obligatorios.</p>
 						{registerError && <p class="message error" role="alert">{registerError}</p>}
-						<form method="POST" action={actions.registerReceptionPatient} class="form-grid">
+						<form method="POST" action={receptionActionUrl(Astro.url, String(actions.registerReceptionPatient))} class="form-grid">
 							<input type="hidden" name="career" value={career} />
 							<label for="reg-documento">N° de documento</label>
 							<input id="reg-documento" name="documento" type="text" inputmode="numeric" required pattern="[0-9]{4,8}" maxlength="8" value={registerDocumento} />
@@ -187,7 +188,7 @@ const formatBirthDate = (value: string | null) => (value ? value.split('-').reve
 							<dt>Sexo</dt><dd>{editPatient.sexo}</dd>
 						</dl>
 						<p class="hint">Los datos de identidad y la fecha de nacimiento los corrige administración.</p>
-						<form method="POST" action={actions.updateReceptionPatientContact} class="form-grid">
+						<form method="POST" action={receptionActionUrl(Astro.url, String(actions.updateReceptionPatientContact))} class="form-grid">
 							<input type="hidden" name="career" value={career} />
 							<input type="hidden" name="id" value={editPatient.id} />
 							<label for="edit-email">Email</label>

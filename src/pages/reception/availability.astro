@@ -6,6 +6,7 @@ import Layout from '../../layouts/Layout.astro';
 import '../../styles/academic-panels.css';
 import { RECEPTION_CAREER_LABELS } from '../../pods/reception/careers';
 import type { ReceptionCareer } from '../../pods/reception/careers';
+import { receptionActionUrl } from '../../pods/reception/action-url';
 import { activityLabels, loadReceptionAvailabilityState, resolveReceptionAvailabilityAccess, resultForCareer } from '../../pods/reception-availability/state';
 import { getSession } from '../../shared/session';
 
@@ -102,7 +103,7 @@ function linkFor(overrides: Record<string, string>): string {
 				<section class="panel" aria-labelledby="search-title">
 					<h2 id="search-title">Buscar paciente por documento</h2>
 					{searchError && <p class="message error" role="alert">{searchError}</p>}
-					<form method="POST" action={actions.searchReceptionAvailabilityPatient} class="inline-form">
+					<form method="POST" action={receptionActionUrl(Astro.url, String(actions.searchReceptionAvailabilityPatient))} class="inline-form">
 						<input type="hidden" name="career" value={view.career} />
 						<input type="hidden" name="limit" value="50" />
 						<input type="hidden" name="offset" value="0" />
@@ -128,7 +129,7 @@ function linkFor(overrides: Record<string, string>): string {
 					{ownSearch?.success && (ownSearch.navigation.previousOffset !== null || ownSearch.navigation.nextOffset !== null) && (
 						<nav class="pager" aria-label="Paginación de búsqueda">
 							{ownSearch.navigation.previousOffset !== null && (
-								<form method="POST" action={actions.searchReceptionAvailabilityPatient} class="inline-form">
+								<form method="POST" action={receptionActionUrl(Astro.url, String(actions.searchReceptionAvailabilityPatient))} class="inline-form">
 									<input type="hidden" name="career" value={view.career} />
 									<input type="hidden" name="documento" value={ownSearch.documento} />
 									<input type="hidden" name="limit" value={ownSearch.limit} />
@@ -137,7 +138,7 @@ function linkFor(overrides: Record<string, string>): string {
 								</form>
 							)}
 							{ownSearch.navigation.nextOffset !== null && (
-								<form method="POST" action={actions.searchReceptionAvailabilityPatient} class="inline-form">
+								<form method="POST" action={receptionActionUrl(Astro.url, String(actions.searchReceptionAvailabilityPatient))} class="inline-form">
 									<input type="hidden" name="career" value={view.career} />
 									<input type="hidden" name="documento" value={ownSearch.documento} />
 									<input type="hidden" name="limit" value={ownSearch.limit} />
@@ -161,7 +162,7 @@ function linkFor(overrides: Record<string, string>): string {
 						{enableError && <p class="message error" role="alert">{enableError}</p>}
 						{view.contextsError && <p class="message error" role="alert">{view.contextsError}</p>}
 						{view.contexts.length === 0 && !view.contextsError && <p class="hint">No hay contextos disponibles para esta carrera en esta página.</p>}
-						<form method="POST" action={actions.enableReceptionAvailability} class="inline-form">
+						<form method="POST" action={receptionActionUrl(Astro.url, String(actions.enableReceptionAvailability))} class="inline-form">
 							<input type="hidden" name="career" value={view.career} />
 							<input type="hidden" name="patient_id" value={patientId} />
 							<label for="context_pair">Asignatura y grupo</label>
@@ -193,7 +194,7 @@ function linkFor(overrides: Record<string, string>): string {
 											<span><strong>{labels.subject}</strong> · {labels.group}</span>
 											<span>Habilitada {formatDateTime(activity.enabled_at)} · {activity.withdrawn_at ? `retirada ${formatDateTime(activity.withdrawn_at)}` : 'activa'}</span>
 											{activity.withdrawn_at === null && (
-												<form method="POST" action={actions.withdrawReceptionAvailability} class="inline-form">
+												<form method="POST" action={receptionActionUrl(Astro.url, String(actions.withdrawReceptionAvailability))} class="inline-form">
 													<input type="hidden" name="career" value={view.career} />
 													<input type="hidden" name="id" value={activity.id} />
 													<input type="hidden" name="patient_id" value={patientId} />
