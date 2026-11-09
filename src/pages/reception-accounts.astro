@@ -1,0 +1,192 @@
+---
+export const prerender = false;
+
+import { actions } from 'astro:actions';
+import Layout from '../layouts/Layout.astro';
+import '../styles/academic-panels.css';
+import {
+	isAccountId, listReceptionCareerGrants, parseAccountSelection, receptionCareerLabels, receptionCareers,
+} from '../pods/reception-account/api';
+import type { GrantListResult, ReceptionAccount, ReceptionCareerGrant } from '../pods/reception-account/api';
+import { decodeJwt } from '../shared/jwt';
+import { getSession } from '../shared/session';
+
+const token = getSession(Astro.cookies);
+if (!token) return Astro.redirect('/auth/login?returnTo=%2Freception-accounts');
+const payload = decodeJwt(token);
+// Presentation hint only; the backend checks the current permissions on each request.
+if (!payload || payload.role !== 'admin') return Astro.redirect('/auth/login');
+
+const createResult = Astro.getActionResult(actions.createReceptionAccount);
+const grantResult = Astro.getActionResult(actions.grantReceptionCareer);
+const revokeResult = Astro.getActionResult(actions.revokeReceptionCareerGrant);
+const createData = createResult?.data as { success?: boolean; error?: string; account?: ReceptionAccount } | undefined;
+const grantData = grantResult?.data as { success?: boolean; error?: string; grant?: ReceptionCareerGrant } | undefined;
+const revokeData = revokeResult?.data as { success?: boolean; error?: string; id?: string; grant?: ReceptionCareerGrant } | undefined;
+
+let queryError = '';
+let selectedAccount = '';
+try {
+	selectedAccount = parseAccountSelection(Astro.url.searchParams);
+} catch (error) {
+	queryError = error instanceof Error ? error.message : 'La cuenta seleccionada no es válida.';
+}
+if (Astro.request.method === 'POST') {
+	try {
+		const submitted = await Astro.request.clone().formData();
+		const submittedAccount = submitted.get('account_id');
+		if (typeof submittedAccount === 'string' && isAccountId(submittedAccount)) selectedAccount = submittedAccount;
+	} catch { /* Keep the URL selection if framework input cannot be recovered. */ }
+}
+// Backend audit rows decide the selection after a successful write.
+if (createData?.success && createData.account) selectedAccount = createData.account.id;
+else if (grantData?.success && grantData.grant) selectedAccount = grantData.grant.user_id;
+else if (revokeData?.success && revokeData.grant) selectedAccount = revokeData.grant.user_id;
+
+let grants: ReceptionCareerGrant[] = [];
+let grantState: GrantListResult['state'] | 'idle' = 'idle';
+if (selectedAccount && !queryError) {
+	try {
+		const result = await listReceptionCareerGrants(selectedAccount, Astro.cookies);
+		grantState = result.state;
+		if (result.state === 'success') grants = result.items;
+	} catch {
+		return Astro.redirect('/auth/login?returnTo=%2Freception-accounts');
+	}
+}
+---
+
+<Layout>
+	<main class="academic-page" aria-labelledby="reception-accounts-title">
+		<header class="intro">
+			<p class="eyebrow">Administración / Cuentas de recepción</p>
+			<h1 id="reception-accounts-title">Cuentas de recepción</h1>
+			<p>Creá cuentas de recepción y administrá sus accesos por carrera. Cada carrera requiere un acceso explícito; revocarlo conserva el historial.</p>
+		</header>
+
+		<section class="panel create-account" aria-labelledby="create-title">
+			<h2 id="create-title">Crear cuenta</h2>
+			<p class="hint">La cuenta se crea con rol de recepción. Al crearla queda seleccionada para gestionar sus carreras.</p>
+			{createData?.success && <p class="notice success" role="status">Cuenta creada: <strong>{createData.account!.username}</strong>. Id: <code>{createData.account!.id}</code>.</p>}
+			{createData && !createData.success && <p class="notice error" role="alert">{createData.error}</p>}
+			{createResult?.error && <p class="notice error" role="alert">{createResult.error.message}</p>}
+			<form class="account-form" method="POST" action={actions.createReceptionAccount}>
+				<input type="hidden" name="account_id" value={selectedAccount} />
+				<div class="field">
+					<label for="account-username">Nombre de usuario</label>
+					<input id="account-username" name="username" required autocomplete="off" />
+				</div>
+				<div class="field">
+					<label for="account-email">Correo electrónico</label>
+					<input id="account-email" name="email" type="email" required autocomplete="off" />
+				</div>
+				<div class="field">
+					<label for="account-password">Contraseña</label>
+					<input id="account-password" name="password" type="password" required autocomplete="new-password" />
+				</div>
+				<button type="submit">Crear cuenta</button>
+			</form>
+		</section>
+
+		<section class="panel account-selection" aria-labelledby="account-title">
+			<h2 id="account-title">Cuenta seleccionada</h2>
+			<p class="notice" role="note">Todavía no existe un listado de cuentas de recepción. Para gestionar una cuenta existente, ingresá su UUID; la cuenta creada en esta página queda seleccionada automáticamente.</p>
+			{queryError && <p class="notice error" role="alert">{queryError} <a href="/reception-accounts">Volver a los valores iniciales</a></p>}
+			<form class="account-lookup" method="GET" action="/reception-accounts">
+				<div class="field">
+					<label for="account-id">UUID de la cuenta</label>
+					<input id="account-id" name="account_id" value={selectedAccount} placeholder="00000000-0000-0000-0000-000000000000" />
+				</div>
+				<button type="submit">Seleccionar cuenta</button>
+			</form>
+		</section>
+
+		<section class="panel grants" aria-labelledby="grants-title">
+			<h2 id="grants-title">Carreras de la cuenta</h2>
+			{!selectedAccount && <p class="notice" role="status">Seleccioná una cuenta para ver y gestionar sus carreras.</p>}
+			{selectedAccount && <>
+				<p class="hint">Cuenta <code>{selectedAccount}</code></p>
+				{grantState === 'denied' && <p class="notice error" role="status">No tenés permiso para consultar las carreras de esta cuenta.</p>}
+				{grantState === 'failed' && <p class="notice error" role="alert">No se pudieron cargar las carreras de esta cuenta.</p>}
+				{grantState === 'success' && grants.length === 0 && <p class="notice" role="status">Esta cuenta todavía no tiene accesos de carrera registrados.</p>}
+				{grantState === 'success' && grants.length > 0 && <ul class="grant-list">
+					{grants.map((grant) => <li class="grant">
+						<div class="grant-heading">
+							<h3>{receptionCareerLabels[grant.career]}</h3>
+							<span class:list={['status', grant.revoked_at === null ? 'active' : 'revoked']}>{grant.revoked_at === null ? 'Activa' : 'Revocada'}</span>
+						</div>
+						<dl>
+							<div><dt>Otorgada</dt><dd><time datetime={grant.granted_at}>{grant.granted_at}</time> · actor <code>{grant.granted_by}</code></dd></div>
+							{grant.revoked_at && <div><dt>Revocada</dt><dd><time datetime={grant.revoked_at}>{grant.revoked_at}</time> · actor <code>{grant.revoked_by}</code></dd></div>}
+						</dl>
+						{grant.revoked_at === null && <details class="revoke">
+							<summary>Revocar acceso</summary>
+							<p>La revocación quita el acceso de recepción a esta carrera. Queda registrada en el historial y no se puede deshacer; un nuevo acceso crea otro período.</p>
+							<form method="POST" action={actions.revokeReceptionCareerGrant}>
+								<input type="hidden" name="account_id" value={selectedAccount} />
+								<input type="hidden" name="id" value={grant.id} />
+								<label class="confirm"><input type="checkbox" name="confirm" value="yes" required /> Confirmo que quiero revocar este acceso.</label>
+								<button type="submit" class="danger">Confirmar revocación</button>
+							</form>
+						</details>}
+					</li>)}
+				</ul>}
+				{grantData?.success && <p class="notice success" role="status">Carrera habilitada: {receptionCareerLabels[grantData.grant!.career]}.</p>}
+				{grantData && !grantData.success && <p class="notice error" role="alert">{grantData.error}</p>}
+				{grantResult?.error && <p class="notice error" role="alert">{grantResult.error.message}</p>}
+				{revokeData?.success && <p class="notice success" role="status">Acceso revocado. Actor y hora quedan registrados por el servidor.</p>}
+				{revokeData && !revokeData.success && <p class="notice error" role="alert">{revokeData.error}</p>}
+				{revokeResult?.error && <p class="notice error" role="alert">{revokeResult.error.message}</p>}
+				<form class="grant-form" method="POST" action={actions.grantReceptionCareer}>
+					<input type="hidden" name="account_id" value={selectedAccount} />
+					<div class="field">
+						<label for="grant-career">Carrera</label>
+						<select id="grant-career" name="career" required>
+							<option value="">Elegí una carrera…</option>
+							{receptionCareers.map((career) => <option value={career}>{receptionCareerLabels[career]}</option>)}
+						</select>
+					</div>
+					<button type="submit">Habilitar carrera</button>
+				</form>
+			</>}
+		</section>
+	</main>
+</Layout>
+
+<style>
+	main { max-width: 1180px; min-width: 0; margin: 0 auto; }
+	.intro { margin-bottom: 2rem; }
+	.intro p { margin: 0.75rem 0; color: var(--muted); }
+	.eyebrow { font: 0.65rem/1.6 Consolas, monospace; letter-spacing: 0.1em; text-transform: uppercase; }
+	h1 { margin: 0.5rem 0; font: 400 clamp(2rem, 3vw, 2.75rem)/1.15 var(--serif); }
+	h2 { margin: 0 0 1rem; font: 1.45rem/1.3 var(--serif); }
+	h3 { margin: 0; font: 1.2rem/1.3 var(--serif); }
+	.hint { color: var(--muted); }
+	.account-form, .account-lookup, .grant-form { display: grid; gap: 1rem; max-width: 48rem; margin-top: 1rem; }
+	.field { display: grid; gap: 0.4rem; min-width: 0; }
+	label { font-weight: 600; }
+	input:not([type="checkbox"]), select { width: 100%; min-width: 0; min-height: 44px; padding: 0.6rem 0.75rem; border: 1px solid var(--field-line); border-radius: 6px; background: var(--field); color: var(--ink); font: inherit; }
+	input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible, summary:focus-visible { outline: 3px solid var(--sage-deep); outline-offset: 3px; }
+	button { width: fit-content; padding: 0.65rem 1rem; border: 0; border-radius: 6px; background: var(--rust); color: var(--field); font: inherit; font-weight: 600; cursor: pointer; }
+	button:hover { background: var(--rust-deep); }
+	button:disabled { opacity: 0.55; cursor: not-allowed; }
+	.notice { padding: 0.9rem 1rem; border-inline-start: 4px solid var(--sage); border-radius: 0 6px 6px 0; background: var(--sage-soft); overflow-wrap: anywhere; }
+	.error, .danger { border-inline-start-color: var(--rust); }
+	.success { border-inline-start-color: var(--sage-deep); }
+	.grant-list { display: grid; gap: 1rem; margin: 1rem 0; padding: 0; list-style: none; }
+	.grant { min-width: 0; padding: 1.25rem; border: 1px solid var(--line); border-radius: 8px; background: var(--field); }
+	.grant-heading { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.6rem; align-items: baseline; }
+	.status { font-weight: 700; }
+	.status.revoked { color: var(--muted); }
+	dl { display: grid; gap: 0.9rem; margin: 1rem 0; }
+	dt { color: var(--muted); font-size: 0.85rem; font-weight: 600; }
+	dd { margin: 0.25rem 0 0; overflow-wrap: anywhere; }
+	code { color: var(--ink); font: 0.85rem/1.5 Consolas, monospace; overflow-wrap: anywhere; }
+	.revoke { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+	.revoke summary { width: fit-content; color: var(--rust-deep); font-weight: 700; cursor: pointer; }
+	.revoke form { display: flex; flex-wrap: wrap; gap: 1rem; margin-top: 0.75rem; }
+	.confirm { display: flex; align-items: center; gap: 0.5rem; }
+	.confirm input { width: 1.15rem; height: 1.15rem; }
+	.danger { background: var(--rust-deep); }
+	.grant-form { grid-template-columns: minmax(0, 1fr); }
+</style>

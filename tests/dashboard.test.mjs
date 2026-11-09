@@ -51,9 +51,9 @@ test('home keeps the session redirect for absent, malformed, and expired tokens'
 test('sidebar preserves role and permission visibility for grouped navigation', async () => {
 	const cases = [
 		[valid, []],
-		[{ ...valid, role: 'admin' }, ['/patients', '/patient-availability', '/students', '/teachers']],
+		[{ ...valid, role: 'admin' }, ['/patients', '/patient-availability', '/students', '/teachers', '/reception-accounts']],
 		[{ ...valid, permissions: ['users:write'] }, ['/auth/register']],
-		[{ ...valid, role: 'admin', permissions: ['users:write'] }, ['/patients', '/patient-availability', '/students', '/teachers', '/auth/register']],
+		[{ ...valid, role: 'admin', permissions: ['users:write'] }, ['/patients', '/patient-availability', '/students', '/teachers', '/reception-accounts', '/auth/register']],
 		...[null, [], {}, 'users:write', ['users:read'], ['users:write', null], ['academic:read'], ['subjects:write']]
 			.map((permissions) => [{ ...valid, permissions }, []]),
 		[{ ...valid, role: 'student', permissions: ['subjects:read', 'groups:write'] }, []],
@@ -81,6 +81,7 @@ test('shell resolves academic titles and keeps exact active paths across query s
 		['/subjects?limit=20', 'Asignaturas', '/subjects'], ['/groups/', 'Grupos académicos', '/groups'],
 		['/subject-groups/?subject_id=abc', 'Asignaturas y grupos', '/subject-groups'],
 		['/teacher-habilitations/', 'Habilitaciones docentes', '/teacher-habilitations'],
+		['/reception-accounts?account_id=abc', 'Cuentas de recepción', '/reception-accounts'],
 		['/student-habilitations?status=revoked', 'Habilitaciones de estudiantes', '/student-habilitations'],
 		['/my-patients?limit=50&offset=50', 'Mis pacientes asignados', '/my-patients'],
 		['/my-patients/123?limit=50', 'Mis pacientes asignados', '/my-patients/123'],

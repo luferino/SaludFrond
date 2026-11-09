@@ -54,7 +54,7 @@ These screens do not add reassignment, queues, reservations, student claiming, r
 
 ## Reception workflows
 
-- [Reception](docs/reception.md): career-scoped `reception` accounts (`kinesiology` / `odontology`, one explicit grant per career). `/reception/patients` lists the career's patients, links existing institutional patients only after explicit confirmation, registers new ones and edits contact data only. No clinical, catalog, habilitation or assignment access.
+- [Reception](docs/reception.md): career-scoped `reception` accounts (`kinesiology` / `odontology`, one explicit grant per career). Admins create accounts and grant or revoke careers at `/reception-accounts` (by returned id or UUID; no account listing exists yet). `/reception/patients` lists the career's patients, links existing institutional patients only after explicit confirmation, registers new ones and edits contact data only. No clinical, catalog, habilitation or assignment access.
 
 Run public regression tests with `node --experimental-vm-modules --test tests/*.test.mjs`, then `pnpm astro check` and `pnpm build`.
 
