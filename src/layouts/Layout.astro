@@ -26,7 +26,8 @@ const pageTitles: Record<string, string> = {
 	'/auth/reset-password': 'Restablecer contraseña',
 	'/subjects': 'Asignaturas', '/groups': 'Grupos académicos', '/subject-groups': 'Asignaturas y grupos',
 	'/teacher-habilitations': 'Habilitaciones docentes', '/student-habilitations': 'Habilitaciones de estudiantes',
-	'/reception/patients': 'Pacientes de recepción', '/reception-accounts': 'Cuentas de recepción',
+	'/reception/patients': 'Pacientes de recepción', '/reception/availability': 'Disponibilidad de recepción',
+	'/reception-accounts': 'Cuentas de recepción',
 };
 const pageTitle = currentPath.startsWith('/my-patients') ? 'Mis pacientes asignados'
 	: currentPath.startsWith('/kinesiology-evaluations') ? 'Evaluaciones kinésicas'
@@ -45,6 +46,7 @@ const clinicalLinks = isLoggedIn && ['estudiante', 'student'].includes(String(pa
 // Reception works only through its career-scoped pages; academic catalogs are not part of its role.
 const receptionLinks = isReception ? [
 	{ href: '/reception/patients', label: 'Pacientes' },
+	{ href: '/reception/availability', label: 'Disponibilidad' },
 ] : [];
 const academicLinks = isLoggedIn && !isReception ? [
 	{ href: '/subjects', label: 'Asignaturas' },
