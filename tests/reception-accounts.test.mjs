@@ -39,6 +39,7 @@ const GRANT_CONFLICT = 'La cuenta ya tiene un acceso activo para esta carrera.';
 const REVOKE_CONFLICT = 'El acceso ya no está disponible para revocar.';
 
 function defaultReply(method, path) {
+	if (method === 'GET' && path === ACCOUNT_PATH) return { status: 200, body: { items: [], limit: 50, offset: 0 } };
 	if (method === 'POST' && path === ACCOUNT_PATH) return { status: 201, body: account() };
 	if (method === 'GET' && /^\/auth\/accounts\/[^/]+\/careers$/.test(path)) return { status: 200, body: { items: [] } };
 	if (method === 'POST' && /^\/auth\/accounts\/[^/]+\/careers$/.test(path)) return { status: 201, body: grant({ user_id: path.split('/')[3] }) };
@@ -133,7 +134,7 @@ async function evaluatePage(query = '', options = {}) {
 			return options.actionResults?.[name];
 		},
 	};
-	const output = ts.transpileModule(`${code}\nreturn { queryError, selectedAccount, grantState, grants };`, { compilerOptions: { module: ts.ModuleKind.None, target: ts.ScriptTarget.ES2022 } }).outputText;
+	const output = ts.transpileModule(`${code}\nreturn { queryError, selectedAccount, grantState, grants, accountSearchState, accounts };`, { compilerOptions: { module: ts.ModuleKind.None, target: ts.ScriptTarget.ES2022 } }).outputText;
 	const value = await new vm.Script(`(async () => { ${output} })()`).runInContext(fixture.sandbox);
 	return { ...fixture, value, source };
 }
@@ -378,12 +379,95 @@ test('server-rendered page redirects missing sessions and non-admin roles before
 	}
 });
 
-test('admin page without a selected account performs no grant read and states the account lookup limitation', async () => {
-	const result = await evaluatePage('');
-	assert.equal(result.value.selectedAccount, '');
-	assert.equal(result.value.grantState, 'idle');
-	assert.deepEqual(result.requests, []);
-	assert.match(result.source, /Todavía no existe un listado de cuentas de recepción/);
+test('account search rejects duplicate, unknown, invalid-career, and out-of-range URL filters', async () => {
+	const fixture = await evaluate();
+	const search = await fixture.load('src/pods/reception-account/search.ts');
+	for (const query of ['q=a&q=b', 'admin=true', 'career=dentistry', 'limit=0', 'limit=101', 'offset=-1', 'offset=10001', 'limit=1.5']) {
+		assert.throws(() => search.parseReceptionAccountSearch(new URLSearchParams(query)), /filtros de búsqueda/);
+	}
+	assert.deepEqual(plain(search.parseReceptionAccountSearch(new URLSearchParams('q=%20ana%20&limit=1&offset=10000'))), { q: 'ana', career: '', limit: 1, offset: 10000 });
+});
+
+test('account search limits the trimmed term to 100 characters', async () => {
+	const fixture = await evaluate();
+	const search = await fixture.load('src/pods/reception-account/search.ts');
+	const hundred = 'a'.repeat(100);
+	assert.throws(() => search.parseReceptionAccountSearch(new URLSearchParams({ q: `${hundred}b` })), /filtros de búsqueda/);
+	assert.equal(search.parseReceptionAccountSearch(new URLSearchParams({ q: hundred })).q, hundred);
+	assert.equal(search.parseReceptionAccountSearch(new URLSearchParams({ q: `  ${hundred}  ` })).q, hundred);
+});
+
+test('account search offers a next page only while the next offset stays within 10000', async () => {
+	const fixture = await evaluate();
+	const search = await fixture.load('src/pods/reception-account/search.ts');
+	assert.equal(search.nextReceptionAccountOffset(9950, 50, 50), 10000);
+	assert.equal(search.nextReceptionAccountOffset(9999, 1, 1), 10000);
+	assert.equal(search.nextReceptionAccountOffset(10000, 50, 50), null);
+	assert.equal(search.nextReceptionAccountOffset(9951, 50, 50), null);
+	assert.equal(search.nextReceptionAccountOffset(0, 50, 49), null);
+});
+
+test('form action posts keep the framework _action parameter out of search validation and refresh grants', async () => {
+	const request = new Request('https://frontend.invalid/reception-accounts?_action=grantReceptionCareer', {
+		method: 'POST',
+		body: new URLSearchParams({ account_id: accountId, career: 'kinesiology' }),
+	});
+	const result = await evaluatePage('_action=grantReceptionCareer', { request, actionResults: { grantReceptionCareer: { data: { success: true, grant: grant() } } } });
+	assert.equal(result.value.queryError, '');
+	assert.equal(result.value.accountSearchState, 'success');
+	assert.equal(result.value.selectedAccount, accountId);
+	assert.equal(result.value.grantState, 'success');
+	assert.deepEqual(result.requests.map(({ url }) => new URL(url).pathname), [ACCOUNT_PATH, careersPath(accountId)]);
+	assert.equal(new URL(result.requests[0].url).search, '?limit=50&offset=0');
+});
+
+test('account search builds encoded bounded query parameters and validates the minimal response contract', async () => {
+	const rows = [{ id: accountId, username: 'RECEPCION01', email: null, active_careers: ['kinesiology'] }];
+	const fixture = await evaluate({ reply: (method, path) => method === 'GET' && path === ACCOUNT_PATH ? { status: 200, body: { items: rows, limit: 25, offset: 50 } } : undefined });
+	const api = await fixture.load('src/pods/reception-account/api.ts');
+	assert.deepEqual(plain(await api.searchReceptionAccounts({ q: '  ana+@example  ', career: 'odontology', limit: 25, offset: 50 }, fixture.cookies)), { state: 'success', items: rows, limit: 25, offset: 50 });
+	assert.equal(new URL(fixture.requests[0].url).pathname, ACCOUNT_PATH);
+	assert.equal(new URL(fixture.requests[0].url).search, '?q=ana%2B%40example&career=odontology&limit=25&offset=50');
+	assert.equal(fixture.requests[0].method, 'GET');
+	assert.equal(fixture.requests[0].headers.Authorization, `Bearer ${adminToken}`);
+	for (const bad of [
+		{ items: [{ ...rows[0], role: 'reception' }], limit: 25, offset: 50 },
+		{ items: [{ ...rows[0], createdAt: iso }], limit: 25, offset: 50 },
+		{ items: [{ ...rows[0], active_careers: ['dentistry'] }], limit: 25, offset: 50 },
+		{ items: rows, limit: 101, offset: 50 },
+		{ items: rows, limit: 25, offset: 10001 },
+	]) {
+		const invalid = await evaluate({ reply: (method, path) => method === 'GET' && path === ACCOUNT_PATH ? { status: 200, body: bad } : undefined });
+		const invalidApi = await invalid.load('src/pods/reception-account/api.ts');
+		assert.deepEqual(plain(await invalidApi.searchReceptionAccounts({ q: '', career: '', limit: 25, offset: 50 }, invalid.cookies)), { state: 'failed' });
+	}
+});
+
+test('account search distinguishes denied, expired, failed and empty responses without leaking backend details', async () => {
+	for (const [status, expected] of [[403, 'denied'], [500, 'failed']]) {
+		const fixture = await evaluate({ reply: (method, path) => method === 'GET' && path === ACCOUNT_PATH ? { status, body: errorBody } : undefined });
+		const api = await fixture.load('src/pods/reception-account/api.ts');
+		assert.deepEqual(plain(await api.searchReceptionAccounts({ q: '', career: '', limit: 50, offset: 0 }, fixture.cookies)), { state: expected });
+	}
+	const expired = await evaluate({ reply: (method, path) => method === 'GET' && path === ACCOUNT_PATH ? { status: 401, body: errorBody } : undefined });
+	const expiredApi = await expired.load('src/pods/reception-account/api.ts');
+	await assert.rejects(expiredApi.searchReceptionAccounts({ q: '', career: '', limit: 50, offset: 0 }, expired.cookies), { status: 401 });
+	assert.equal(expired.cookieState.token, undefined);
+	const empty = await evaluate();
+	const emptyApi = await empty.load('src/pods/reception-account/api.ts');
+	assert.deepEqual(plain(await emptyApi.searchReceptionAccounts({ q: '', career: '', limit: 50, offset: 0 }, empty.cookies)), { state: 'success', items: [], limit: 50, offset: 0 });
+});
+
+test('admin account page searches by username/email, filters, paginates, and keeps UUID only in internal selection', async () => {
+	const rows = [{ id: accountId, username: 'RECEPCION01', email: null, active_careers: ['kinesiology'] }];
+	const result = await evaluatePage('q=ana%2B%40example&career=kinesiology&limit=25&offset=25', { reply: (method, path) => method === 'GET' && path === ACCOUNT_PATH ? { status: 200, body: { items: rows, limit: 25, offset: 25 } } : undefined });
+	assert.deepEqual(plain(result.value.accounts), rows);
+	assert.equal(result.value.accountSearchState, 'success');
+	assert.equal(new URL(result.requests[0].url).search, '?q=ana%2B%40example&career=kinesiology&limit=25&offset=25');
+	assert.match(result.source, /Buscar cuenta/);
+	assert.match(result.source, /account\.username/);
+	assert.doesNotMatch(result.source, /Todavía no existe un listado de cuentas de recepción/);
+	assert.match(result.source, /name="account_id"/);
 });
 
 test('admin page reads grants only for a valid selected account and treats unknown accounts as an empty state', async () => {
@@ -391,7 +475,7 @@ test('admin page reads grants only for a valid selected account and treats unkno
 	assert.equal(result.value.selectedAccount, accountId);
 	assert.equal(result.value.grantState, 'success');
 	assert.deepEqual(plain(result.value.grants), []);
-	assert.deepEqual(result.requests.map(({ url, method }) => [method, new URL(url).pathname]), [['GET', careersPath(accountId)]]);
+	assert.deepEqual(result.requests.map(({ url, method }) => [method, new URL(url).pathname]), [['GET', ACCOUNT_PATH], ['GET', careersPath(accountId)]]);
 	const invalid = await evaluatePage('account_id=not-a-uuid');
 	assert.notEqual(invalid.value.queryError, '');
 	assert.equal(invalid.value.selectedAccount, '');
@@ -409,7 +493,7 @@ test('a successful creation becomes the selected account even when the URL point
 	const result = await evaluatePage('', { request, actionResults: { createReceptionAccount: { data: { success: true, account: account() } } } });
 	assert.equal(result.value.selectedAccount, accountId);
 	assert.equal(result.value.grantState, 'success');
-	assert.deepEqual(result.requests.map(({ url }) => new URL(url).pathname), [careersPath(accountId)]);
+	assert.deepEqual(result.requests.map(({ url }) => new URL(url).pathname), [ACCOUNT_PATH, careersPath(accountId)]);
 });
 
 test('failed submissions keep the submitted account selected and ignore malformed submitted ids', async () => {
@@ -432,7 +516,7 @@ test('failed submissions keep the submitted account selected and ignore malforme
 	});
 	const malformed = await evaluatePage('', { request: malformedRequest, actionResults: { createReceptionAccount: { data: { success: false, error: GENERIC } } } });
 	assert.equal(malformed.value.selectedAccount, '');
-	assert.deepEqual(malformed.requests, []);
+	assert.deepEqual(malformed.requests.map(({ url }) => new URL(url).pathname), [ACCOUNT_PATH]);
 });
 
 test('page keeps Spanish copy, explicit career labels, confirmation, and only the three documented account endpoints', async () => {
@@ -440,7 +524,7 @@ test('page keeps Spanish copy, explicit career labels, confirmation, and only th
 	const api = await readFile(new URL('../src/pods/reception-account/api.ts', import.meta.url), 'utf8');
 	assert.match(page, /export const prerender = false/);
 	assert.match(page, /payload\.role !== 'admin'/);
-	assert.match(page, /Todavía no existe un listado de cuentas de recepción/);
+	assert.match(page, /Buscar cuenta/);
 	assert.match(page, /method="GET"[^>]*action="\/reception-accounts"|action="\/reception-accounts"[^>]*method="GET"/);
 	assert.match(page, /name="account_id"/);
 	assert.match(page, /name="confirm" value="yes" required/);

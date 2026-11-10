@@ -5,9 +5,11 @@ import { actions } from 'astro:actions';
 import Layout from '../layouts/Layout.astro';
 import '../styles/academic-panels.css';
 import {
-	isAccountId, listReceptionCareerGrants, parseAccountSelection, receptionCareerLabels, receptionCareers,
+	isAccountId, listReceptionCareerGrants, parseAccountSelection, receptionCareerLabels, receptionCareers, searchReceptionAccounts,
 } from '../pods/reception-account/api';
-import type { GrantListResult, ReceptionAccount, ReceptionCareerGrant } from '../pods/reception-account/api';
+import type { GrantListResult, ReceptionAccount, ReceptionAccountSearchItem, ReceptionCareerGrant } from '../pods/reception-account/api';
+import { nextReceptionAccountOffset, parseReceptionAccountSearch } from '../pods/reception-account/search';
+import type { ReceptionAccountSearchQuery } from '../pods/reception-account/search';
 import { decodeJwt } from '../shared/jwt';
 import { getSession } from '../shared/session';
 
@@ -26,8 +28,10 @@ const revokeData = revokeResult?.data as { success?: boolean; error?: string; id
 
 let queryError = '';
 let selectedAccount = '';
+let searchQuery: ReceptionAccountSearchQuery = { q: '', career: '', limit: 50, offset: 0 };
 try {
 	selectedAccount = parseAccountSelection(Astro.url.searchParams);
+	searchQuery = parseReceptionAccountSearch(Astro.url.searchParams);
 } catch (error) {
 	queryError = error instanceof Error ? error.message : 'La cuenta seleccionada no es válida.';
 }
@@ -45,6 +49,32 @@ else if (revokeData?.success && revokeData.grant) selectedAccount = revokeData.g
 
 let grants: ReceptionCareerGrant[] = [];
 let grantState: GrantListResult['state'] | 'idle' = 'idle';
+let accounts: ReceptionAccountSearchItem[] = [];
+let accountSearchState: 'success' | 'denied' | 'failed' | 'invalid' = queryError ? 'invalid' : 'success';
+let accountSearchLimit = searchQuery.limit;
+let accountSearchOffset = searchQuery.offset;
+const accountPageHref = (offset: number) => {
+	const params = new URLSearchParams();
+	if (searchQuery.q) params.set('q', searchQuery.q);
+	if (searchQuery.career) params.set('career', searchQuery.career);
+	params.set('limit', String(accountSearchLimit));
+	params.set('offset', String(offset));
+	return `/reception-accounts?${params.toString()}`;
+};
+if (!queryError) {
+	try {
+		const result = await searchReceptionAccounts(searchQuery, Astro.cookies);
+		accountSearchState = result.state;
+		if (result.state === 'success') {
+			accounts = result.items;
+			accountSearchLimit = result.limit;
+			accountSearchOffset = result.offset;
+		}
+	} catch {
+		return Astro.redirect('/auth/login?returnTo=%2Freception-accounts');
+	}
+}
+const nextAccountOffset = accountSearchState === 'success' ? nextReceptionAccountOffset(accountSearchOffset, accountSearchLimit, accounts.length) : null;
 if (selectedAccount && !queryError) {
 	try {
 		const result = await listReceptionCareerGrants(selectedAccount, Astro.cookies);
@@ -90,15 +120,19 @@ if (selectedAccount && !queryError) {
 
 		<section class="panel account-selection" aria-labelledby="account-title">
 			<h2 id="account-title">Cuenta seleccionada</h2>
-			<p class="notice" role="note">Todavía no existe un listado de cuentas de recepción. Para gestionar una cuenta existente, ingresá su UUID; la cuenta creada en esta página queda seleccionada automáticamente.</p>
+			<p class="hint">Buscá por nombre de usuario o correo. También podés filtrar por carrera con acceso activo.</p>
 			{queryError && <p class="notice error" role="alert">{queryError} <a href="/reception-accounts">Volver a los valores iniciales</a></p>}
 			<form class="account-lookup" method="GET" action="/reception-accounts">
-				<div class="field">
-					<label for="account-id">UUID de la cuenta</label>
-					<input id="account-id" name="account_id" value={selectedAccount} placeholder="00000000-0000-0000-0000-000000000000" />
-				</div>
-				<button type="submit">Seleccionar cuenta</button>
+				<div class="field"><label for="account-query">Usuario o correo electrónico</label><input id="account-query" name="q" value={searchQuery.q} maxlength="100" autocomplete="off" /></div>
+				<div class="field"><label for="account-career">Carrera con acceso activo</label><select id="account-career" name="career"><option value="">Todas las carreras</option>{receptionCareers.map((career) => <option value={career} selected={searchQuery.career === career}>{receptionCareerLabels[career]}</option>)}</select></div>
+				<input type="hidden" name="limit" value={searchQuery.limit} />
+				<button type="submit">Buscar cuenta</button>
 			</form>
+			{accountSearchState === 'denied' && <p class="notice error" role="status">No tenés permiso para buscar cuentas de recepción.</p>}
+			{accountSearchState === 'failed' && <p class="notice error" role="alert">No se pudieron cargar las cuentas. Probá de nuevo más tarde.</p>}
+			{accountSearchState === 'success' && accounts.length === 0 && <p class="notice" role="status">No se encontraron cuentas con esos filtros.</p>}
+			{accountSearchState === 'success' && accounts.length > 0 && <ul class="account-results">{accounts.map((account) => <li><form method="GET" action="/reception-accounts"><input type="hidden" name="account_id" value={account.id} /><button class="account-option" type="submit" aria-label={`Seleccionar ${account.username}`}><strong>{account.username}</strong><span>{account.email ?? 'Sin correo electrónico'}</span><span>{account.active_careers.length ? account.active_careers.map((career) => receptionCareerLabels[career]).join(', ') : 'Sin carreras activas'}</span></button></form></li>)}</ul>}
+			{accountSearchState === 'success' && <nav class="account-pagination" aria-label="Páginas de cuentas">{accountSearchOffset > 0 && <a href={accountPageHref(Math.max(0, accountSearchOffset - accountSearchLimit))}>Anterior</a>}{nextAccountOffset !== null && <a href={accountPageHref(nextAccountOffset)}>Siguiente</a>}</nav>}
 		</section>
 
 		<section class="panel grants" aria-labelledby="grants-title">
@@ -163,6 +197,10 @@ if (selectedAccount && !queryError) {
 	h3 { margin: 0; font: 1.2rem/1.3 var(--serif); }
 	.hint { color: var(--muted); }
 	.account-form, .account-lookup, .grant-form { display: grid; gap: 1rem; max-width: 48rem; margin-top: 1rem; }
+	.account-results { display: grid; gap: 0.75rem; margin: 1rem 0; padding: 0; list-style: none; }
+	.account-option { display: grid; gap: 0.2rem; width: 100%; text-align: left; }
+	.account-option span { font-size: 0.9rem; font-weight: 400; overflow-wrap: anywhere; }
+	.account-pagination { display: flex; gap: 1rem; margin-top: 1rem; }
 	.field { display: grid; gap: 0.4rem; min-width: 0; }
 	label { font-weight: 600; }
 	input:not([type="checkbox"]), select { width: 100%; min-width: 0; min-height: 44px; padding: 0.6rem 0.75rem; border: 1px solid var(--field-line); border-radius: 6px; background: var(--field); color: var(--ink); font: inherit; }
