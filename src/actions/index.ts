@@ -18,7 +18,7 @@ import { activateStudentHabilitation, revokeStudentHabilitation } from '../pods/
 import { handleCreateKinesiologyAmendment, handleCreateKinesiologyEvaluation, handleSubmitKinesiologyEvaluation, handleUpdateKinesiologyEvaluation } from '../pods/kinesiology-evaluation/actions/evaluations';
 
 import { searchAvailablePatient, enablePatientAvailability, withdrawPatientAvailability } from '../pods/patient-availability/actions';
-import { createReceptionAccount, grantReceptionCareer, revokeReceptionCareerGrant } from '../pods/reception-account/actions';
+import { createReceptionAccount, grantReceptionCareer, grantReceptionRole, revokeReceptionCareerGrant, revokeReceptionRole } from '../pods/reception-account/actions';
 import { switchActiveRole } from '../pods/active-role/actions';
 import { searchReceptionAvailabilityPatient, enableReceptionAvailability, withdrawReceptionAvailability } from '../pods/reception-availability/actions';
 import { matchReceptionPatient, reuseReceptionPatient, registerReceptionPatient, updateReceptionPatientContact } from '../pods/reception-patient/actions';
@@ -72,6 +72,8 @@ export const server = {
 	createReceptionAccount,
 	grantReceptionCareer,
 	revokeReceptionCareerGrant,
+	grantReceptionRole,
+	revokeReceptionRole,
 	switchActiveRole,
 	login: defineAction({
 		accept: 'form',

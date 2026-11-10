@@ -42,3 +42,29 @@ export function nextReceptionAccountOffset(offset: number, limit: number, count:
 	const next = offset + limit;
 	return count === limit && next <= MAX_OFFSET ? next : null;
 }
+
+export interface ReceptionRoleSearchQuery {
+	q: string;
+	offset: number;
+}
+
+// Student-role keys live beside the account lookup; the account parser above never receives them.
+export const RECEPTION_ROLE_QUERY_KEYS = ['student_q', 'student_offset', 'student_id'];
+
+export function parseReceptionRoleSearch(params: URLSearchParams): ReceptionRoleSearchQuery {
+	const one = (key: string): string | undefined => {
+		const values = params.getAll(key);
+		if (values.length > 1) throw fail();
+		return values[0];
+	};
+	const q = (one('student_q') ?? '').trim();
+	if (q.length > MAX_QUERY_LENGTH) throw fail();
+	const offsetValue = one('student_offset');
+	let offset = 0;
+	if (offsetValue !== undefined && offsetValue !== '') {
+		if (!/^(0|[1-9]\d*)$/.test(offsetValue)) throw fail();
+		offset = Number(offsetValue);
+		if (!Number.isSafeInteger(offset) || offset > MAX_OFFSET) throw fail();
+	}
+	return { q, offset };
+}
