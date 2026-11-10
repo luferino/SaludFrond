@@ -3,6 +3,8 @@ import { apiFetch, ApiError } from '../../shared/apiClient';
 
 export type ReceptionCareer = 'kinesiology' | 'odontology';
 export interface ReceptionAccount { id: string; username: string; role: 'reception'; email: string; createdAt: string }
+export interface ReceptionAccountSearchItem { id: string; username: string; email: string | null; active_careers: ReceptionCareer[] }
+export type ReceptionAccountSearchResult = { state: 'success'; items: ReceptionAccountSearchItem[]; limit: number; offset: number } | { state: 'denied' } | { state: 'failed' };
 export interface ReceptionCareerGrant {
 	id: string; user_id: string; career: ReceptionCareer; granted_by: string; granted_at: string;
 	revoked_by: string | null; revoked_at: string | null;
@@ -17,6 +19,7 @@ const USERNAME = /^[A-Z0-9]+$/;
 const TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
 const ACCOUNT_KEYS = ['createdAt', 'email', 'id', 'role', 'username'];
 const GRANT_KEYS = ['career', 'granted_at', 'granted_by', 'id', 'revoked_at', 'revoked_by', 'user_id'];
+const SEARCH_ITEM_KEYS = ['active_careers', 'email', 'id', 'username'];
 
 const uuid = (value: unknown): value is string => typeof value === 'string' && UUID.test(value);
 const iso = (value: unknown): value is string => typeof value === 'string' && TIME.test(value) && Number.isFinite(Date.parse(value));
@@ -62,6 +65,34 @@ export async function createReceptionAccount(input: { username: string; password
 	const response = await apiFetch<unknown>('/auth/accounts', { method: 'POST', body: input, cookies });
 	if (!isReceptionAccount(response)) throw new Error('Invalid service response');
 	return response;
+}
+
+function isReceptionAccountSearchItem(value: unknown): value is ReceptionAccountSearchItem {
+	if (!isRecord(value) || !hasExactKeys(value, SEARCH_ITEM_KEYS)) return false;
+	return uuid(value.id) && typeof value.username === 'string' && USERNAME.test(value.username)
+		&& (value.email === null || (typeof value.email === 'string' && value.email.length > 0))
+		&& Array.isArray(value.active_careers) && value.active_careers.every(isReceptionCareer)
+		&& new Set(value.active_careers).size === value.active_careers.length;
+}
+
+export async function searchReceptionAccounts(query: { q: string; career: ReceptionCareer | ''; limit: number; offset: number }, cookies: AstroCookies): Promise<ReceptionAccountSearchResult> {
+	const params = new URLSearchParams();
+	const q = query.q.trim();
+	if (q) params.set('q', q);
+	if (query.career) params.set('career', query.career);
+	params.set('limit', String(query.limit));
+	params.set('offset', String(query.offset));
+	try {
+		const response = await apiFetch<unknown>(`/auth/accounts?${params.toString()}`, { cookies });
+		if (!isRecord(response) || !hasExactKeys(response, ['items', 'limit', 'offset']) || !Array.isArray(response.items)
+			|| response.limit !== query.limit || response.offset !== query.offset
+			|| !response.items.every(isReceptionAccountSearchItem) || response.items.length > query.limit) return { state: 'failed' };
+		return { state: 'success', items: response.items as ReceptionAccountSearchItem[], limit: response.limit, offset: response.offset };
+	} catch (error) {
+		if (error instanceof ApiError && error.status === 403) return { state: 'denied' };
+		if (error instanceof ApiError && error.status === 401) throw error;
+		return { state: 'failed' };
+	}
 }
 
 export async function listReceptionCareerGrants(userId: string, cookies: AstroCookies): Promise<GrantListResult> {
