@@ -1,0 +1,33 @@
+---
+export const prerender = false;
+
+import { actions } from 'astro:actions';
+import Layout from '../layouts/Layout.astro';
+
+const GENERIC = 'No se pudo cambiar el rol. Intentá nuevamente.';
+const result = Astro.getActionResult(actions.switchActiveRole);
+const data = result?.data as { success?: boolean; reason?: string; error?: string } | undefined;
+
+if (!result || data?.success) return Astro.redirect('/');
+if (data?.reason === 'unauthorized') return Astro.redirect('/auth/login');
+
+const message = data?.reason === 'forbidden' && data.error ? data.error : GENERIC;
+Astro.response.status = data?.reason === 'forbidden' ? 403 : 400;
+---
+
+<Layout>
+	<main aria-labelledby="active-role-title">
+		<section class="notice" role="alert">
+			<h1 id="active-role-title">No se pudo cambiar el rol</h1>
+			<p>{message}</p>
+			<a href="/">Volver al inicio</a>
+		</section>
+	</main>
+</Layout>
+
+<style>
+	main { max-width: 720px; margin: 0 auto; }
+	.notice { padding: clamp(1.25rem, 3vw, 2rem); background: var(--paper); border: 1px solid var(--line); border-radius: 12px; border-top: 4px solid var(--rust); }
+	h1 { margin: 0 0 0.75rem; font: 1.5rem/1.2 var(--serif); }
+	a { text-decoration: underline; text-underline-offset: 4px; }
+</style>
