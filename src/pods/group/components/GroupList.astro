@@ -2,19 +2,23 @@
 import type { GroupSummary } from '../api';
 
 interface Props {
-	state: 'success' | 'denied' | 'failed' | 'invalid-pagination';
+	state: 'success' | 'denied' | 'failed' | 'invalid-pagination' | 'invalid-search' | 'invalid-career';
 	items: GroupSummary[];
 	limit: number;
+	q: string;
+	careerId: string;
 	previousOffset: number | null;
 	nextOffset: number | null;
 	invalidMessage: string;
 }
 
-const { state, items, limit, previousOffset, nextOffset, invalidMessage } = Astro.props;
-const pageHref = (next: number) => `/groups?${new URLSearchParams({
-	limit: String(limit),
-	offset: String(next),
-})}`;
+const { state, items, limit, q, careerId, previousOffset, nextOffset, invalidMessage } = Astro.props;
+const pageHref = (next: number) => {
+	const params = new URLSearchParams({ limit: String(limit), offset: String(next) });
+	if (careerId) params.set('career_id', careerId);
+	if (q) params.set('q', q);
+	return `/groups?${params}`;
+};
 ---
 
 {state === 'denied' ? (
@@ -32,6 +36,16 @@ const pageHref = (next: number) => `/groups?${new URLSearchParams({
 		<h2 id="groups-state-title">Paginación no válida</h2>
 		<p>{invalidMessage}</p>
 		<a href="/groups">Volver al inicio del catálogo</a>
+	</section>
+) : state === 'invalid-search' ? (
+	<section class="message error" role="alert" aria-labelledby="groups-state-title">
+		<h2 id="groups-state-title">Búsqueda no válida</h2>
+		<p>{invalidMessage}</p>
+	</section>
+) : state === 'invalid-career' ? (
+	<section class="message error" role="alert" aria-labelledby="groups-state-title">
+		<h2 id="groups-state-title">Carrera no válida</h2>
+		<p>{invalidMessage}</p>
 	</section>
 ) : items.length === 0 ? (
 	<section class="message empty" role="status" aria-labelledby="groups-state-title">
@@ -53,6 +67,14 @@ const pageHref = (next: number) => `/groups?${new URLSearchParams({
 		</ul>
 	</section>
 )}
+
+<form class="listing-search" method="get" action="/groups">
+	<label for="group-search">Buscar por nombre</label>
+	<input id="group-search" type="search" name="q" maxlength="100" value={q} />
+	<input type="hidden" name="limit" value={limit} />
+	{careerId && <input type="hidden" name="career_id" value={careerId} />}
+	<button type="submit">Buscar</button>
+</form>
 
 {state === 'success' && (previousOffset !== null || nextOffset !== null) && (
 	<nav class="pagination" aria-label="Paginación de grupos académicos">
@@ -110,6 +132,10 @@ const pageHref = (next: number) => `/groups?${new URLSearchParams({
 	.message p { margin: 0.65rem 0 0; color: var(--muted); }
 	.message a { display: inline-block; margin-block-start: 0.75rem; text-decoration: underline; text-underline-offset: 4px; }
 	.denied, .error { border-inline-start-color: var(--rust); }
+	.listing-search { display: flex; flex-wrap: wrap; align-items: end; gap: 0.6rem; margin-block-start: 1.5rem; }
+	.listing-search label { flex-basis: 100%; font-weight: 600; }
+	.listing-search input { min-height: 2.5rem; padding: 0.45rem 0.6rem; }
+	.listing-search button { min-height: 2.5rem; padding: 0.45rem 0.9rem; border: 0; border-radius: 6px; background: var(--rust); color: var(--field); cursor: pointer; }
 	.pagination { display: flex; justify-content: space-between; gap: 1rem; margin-block-start: 1.5rem; }
 	.pagination a, .pagination span { padding: 0.6rem 0.9rem; border-radius: 6px; }
 	.pagination a { background: var(--rust); color: var(--field); }

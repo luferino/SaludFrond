@@ -104,6 +104,33 @@ test('missing session redirects and locally invalid or repeated pagination never
 	}
 });
 
+test('invalid career context is explicit and never broadens the subject request', async () => {
+	for (const query of [
+		'?career_id=11111111-1111-4111-8111-111111111111&career_id=22222222-2222-4222-8222-222222222222',
+		'?career_id%5B%5D=11111111-1111-4111-8111-111111111111',
+		'?career_id=not-a-uuid',
+	]) {
+		const rejected = await evaluate(pagePath, { url: `https://frontend.invalid/subjects${query}` });
+		assert.equal(rejected.value.state, 'invalid-career', query);
+		assert.match(rejected.value.invalidMessage, /carrera/i);
+		assert.equal(rejected.requests.length, 0, query);
+	}
+});
+
+test('subject listing trims literal q, retains pagination context, and rejects repeated or overlong q before fetch', async () => {
+	const valid = await evaluate(pagePath, {
+		url: 'https://frontend.invalid/subjects?limit=7&offset=14&career_id=11111111-1111-4111-8111-111111111111&q=%25_%5C%20Anatom%C3%ADa%20',
+		response: { items: [{ id: 's-1', name: 'Anatomía' }], limit: 7, offset: 14 },
+	});
+	assert.equal(valid.value.state, 'success');
+	assert.equal(valid.requests[0].url, 'https://backend.invalid/subjects?limit=7&offset=14&career_id=11111111-1111-4111-8111-111111111111&q=%25_%5C+Anatom%C3%ADa');
+	for (const query of ['?q=a&q=b', `?q=${'x'.repeat(101)}`, '?q.foo=x']) {
+		const rejected = await evaluate(pagePath, { url: `https://frontend.invalid/subjects${query}` });
+		assert.equal(rejected.value.state, 'invalid-search', query);
+		assert.equal(rejected.requests.length, 0, query);
+	}
+});
+
 test('empty first and later pages are independent, with return navigation and no false totals', async () => {
 	for (const [query, expectedPrevious] of [['', null], ['?offset=10000&limit=50', 9950]]) {
 		const { value, requests } = await evaluate(pagePath, {
