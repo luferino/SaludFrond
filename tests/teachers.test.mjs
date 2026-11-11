@@ -62,13 +62,13 @@ async function evaluate(path, names = [], options = {}) {
 		const frontmatter = code.split('---')[1].replace(/^import .*\.astro';\r?$/gm, '')
 			.replace('export const prerender', 'const prerender');
 		const imports = frontmatter.match(/^import .*;\r?$/gm) ?? [];
-		code = `${imports.join('\n')}\nexport function render() {
+		code = `${imports.join('\n')}\nexport async function render() {
 			${frontmatter.replace(/^import .*;\r?$/gm, '')}
 			return { ${names.join(', ')} }; }`;
 	}
 	const module = await compile(code, new URL(path, root).href);
 	await module.evaluate();
-	return { value: path.endsWith('.astro') ? module.namespace.render() : module.namespace, requestedAction, cookies, requests, writes };
+	return { value: path.endsWith('.astro') ? await module.namespace.render() : module.namespace, requestedAction, cookies, requests, writes };
 }
 
 test('teacher form preserves exactly six inputs, original constraints, and account/profile grouping', () => {

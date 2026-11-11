@@ -4,13 +4,36 @@ export const prerender = false;
 import Layout from '../layouts/Layout.astro';
 import StudentForm from '../pods/student/components/StudentForm.astro';
 import { getSession } from '../shared/session';
+import { ApiError } from '../shared/apiClient';
 import { decodeJwt } from '../shared/jwt';
+import { listStudents, parseStudentSearch, studentPageHref, type StudentListingItem } from '../pods/student/listing';
+import { academicPaginationNavigation, parseAcademicPagination } from '../shared/academic-api';
 
 const token = getSession(Astro.cookies);
 const payload = token ? decodeJwt(token) : null;
 
 if (!payload || payload.role !== 'admin') {
 	return Astro.redirect('/auth/login');
+}
+
+let students: StudentListingItem[] = [];
+let q: string | null = null;
+let limit = 50;
+let error = '';
+let previousHref: string | null = null;
+let nextHref: string | null = null;
+try {
+	const pagination = parseAcademicPagination(Astro.url.searchParams);
+	limit = pagination.limit;
+	q = parseStudentSearch(Astro.url.searchParams);
+	const page = await listStudents(pagination, q, Astro.cookies);
+	students = page.items;
+	const navigation = academicPaginationNavigation({ ...pagination, itemsLength: students.length });
+	previousHref = navigation.previousOffset === null ? null : studentPageHref(pagination, q, navigation.previousOffset);
+	nextHref = navigation.nextOffset === null ? null : studentPageHref(pagination, q, navigation.nextOffset);
+} catch (failure) {
+	if (failure instanceof ApiError && failure.status === 401 || failure instanceof Error && failure.name === 'ApiError' && 'status' in failure && failure.status === 401) return Astro.redirect('/auth/login');
+	error = 'No se pudo cargar la lista de estudiantes. Revisá los parámetros o intentá nuevamente; no se muestra una lista vacía porque la consulta falló.';
 }
 ---
 
@@ -22,6 +45,27 @@ if (!payload || payload.role !== 'admin') {
 			<p>Completa los datos de acceso y el perfil para dar de alta al estudiante.</p>
 		</header>
 		<StudentForm />
+		<section class="listing" aria-labelledby="student-list-title">
+			<h2 id="student-list-title">Estudiantes registrados</h2>
+			<form method="get" action="/students" role="search">
+				<input type="hidden" name="limit" value={limit} />
+				<label for="student-search">Buscar por nombre, apellido o código de alumno</label>
+				<div class="search-controls">
+					<input id="student-search" type="search" name="q" maxlength="100" value={q ?? ''} />
+					<button type="submit">Buscar</button>
+				</div>
+			</form>
+			{error ? <p class="list-error" role="alert">{error}</p> : students.length === 0
+				? <p role="status">No se encontraron estudiantes.</p>
+				: <ul class="people-list">{students.map((student) => <li>
+					<strong>{student.apellidos}, {student.nombres}</strong>
+					<span>Código de alumno: {student.codalumno}</span>
+				</li>)}</ul>}
+			{!error && (previousHref || nextHref) && <nav aria-label="Paginación de estudiantes">
+				{previousHref && <a href={previousHref}>Anterior</a>}
+				{nextHref && <a href={nextHref}>Siguiente</a>}
+			</nav>}
+		</section>
 	</main>
 </Layout>
 
