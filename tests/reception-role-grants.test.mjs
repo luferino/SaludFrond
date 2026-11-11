@@ -136,7 +136,7 @@ async function evaluatePage(query = '', options = {}) {
 			return options.actionResults?.[name];
 		},
 	};
-	const output = ts.transpileModule(`${code}\nreturn { queryError, selectedAccount, grantState, grants, accountSearchState, accounts, roleQueryError, roleSearchQuery, selectedStudent, candidateState, candidates, roleState, roleGrants, studentName, roleCopy };`, { compilerOptions: { module: ts.ModuleKind.None, target: ts.ScriptTarget.ES2022 } }).outputText;
+	const output = ts.transpileModule(`${code}\nreturn { queryError, selectedAccount, grantState, grants, accountSearchState, accounts, roleQueryError, roleSearchQuery, selectedStudent, candidateState, candidates, roleState, roleGrants, studentName, selectedStudentLabel, roleCopy };`, { compilerOptions: { module: ts.ModuleKind.None, target: ts.ScriptTarget.ES2022 } }).outputText;
 	const value = await new vm.Script(`(async () => { ${output} })()`).runInContext(fixture.sandbox);
 	return { ...fixture, value, source };
 }
@@ -444,6 +444,19 @@ test('page labels the selected student from the bounded candidate list when it i
 	assert.equal(result.value.studentName, 'estudiante01');
 	const unlabeled = await evaluatePage(`student_id=${studentId}`);
 	assert.equal(unlabeled.value.studentName, 'el estudiante');
+});
+
+test('selected student header shows the username from the candidate list and falls back to the account id', async () => {
+	const result = await evaluatePage(`student_q=estudiante01&student_id=${studentId}`, {
+		reply: (method, path) => (method === 'GET' && path === CANDIDATES_PATH ? { status: 200, body: { items: [candidate()], limit: 20, offset: 0 } } : undefined),
+	});
+	assert.equal(result.value.selectedStudentLabel, 'estudiante01');
+	assert.equal(result.value.studentName, 'estudiante01');
+	const unlabeled = await evaluatePage(`student_id=${studentId}`);
+	assert.equal(unlabeled.value.selectedStudentLabel, undefined);
+	assert.equal(unlabeled.value.studentName, 'el estudiante');
+	assert.match(result.source, /<p class="hint">Estudiante \{selectedStudentLabel \? <strong>\{selectedStudentLabel\}<\/strong> : <code>\{selectedStudent\}<\/code>\}<\/p>/);
+	assert.doesNotMatch(result.source, /<p class="hint">Estudiante <code>\{selectedStudent\}<\/code><\/p>/);
 });
 
 test('a successful role grant selects the granted student and reloads its history', async () => {

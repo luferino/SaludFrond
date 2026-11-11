@@ -145,7 +145,8 @@ if (selectedStudent && !roleQueryError) {
 }
 const activeRoleGrant = roleGrants.find((grant) => grant.revoked_at === null);
 // Writes do not echo the student's identity, so the name comes from the candidate list when it is loaded.
-const studentName = candidates.find((candidate) => candidate.id === selectedStudent)?.username ?? 'el estudiante';
+const selectedStudentLabel = candidates.find((candidate) => candidate.id === selectedStudent)?.username;
+const studentName = selectedStudentLabel ?? 'el estudiante';
 const roleCopy = {
 	revokeConfirm: (name: string) => `Revocar Recepción para ${name}. También se revocan todas sus carreras de recepción. Si se vuelve a habilitar, empezará sin carreras.`,
 	grantSuccess: (name: string) => `Recepción habilitada para ${name}.`,
@@ -273,7 +274,7 @@ const roleCopy = {
 			{candidateState === 'success' && <nav class="account-pagination" aria-label="Páginas de estudiantes">{roleSearchQuery.offset > 0 && <a href={roleSearchHref(Math.max(0, roleSearchQuery.offset - ROLE_CANDIDATE_LIMIT))}>Anterior</a>}{nextCandidateOffset !== null && <a href={roleSearchHref(nextCandidateOffset)}>Siguiente</a>}</nav>}
 			{!selectedStudent && <p class="notice" role="status">Seleccioná un estudiante para ver o cambiar su rol de Recepción.</p>}
 			{selectedStudent && <>
-				<p class="hint">Estudiante <code>{selectedStudent}</code></p>
+				<p class="hint">Estudiante {selectedStudentLabel ? <strong>{selectedStudentLabel}</strong> : <code>{selectedStudent}</code>}</p>
 				{roleState === 'active' && <p class="status active" role="status">Recepción activa</p>}
 				{roleState === 'revoked' && <p class="status revoked" role="status">Recepción revocada</p>}
 				{roleState === 'none' && <p class="status" role="status">Sin rol de Recepción</p>}
