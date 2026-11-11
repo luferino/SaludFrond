@@ -3,13 +3,14 @@ export const prerender = false;
 
 import { actions } from 'astro:actions';
 import Layout from '../layouts/Layout.astro';
+import { receptionActionUrl } from '../pods/reception/action-url';
 import '../styles/academic-panels.css';
 import {
-	isAccountId, listReceptionCareerGrants, parseAccountSelection, receptionCareerLabels, receptionCareers, searchReceptionAccounts,
+	isAccountId, listReceptionCareerGrants, listReceptionRoleGrants, parseAccountSelection, parseRoleStudentSelection, receptionCareerLabels, receptionCareers, ROLE_CANDIDATE_LIMIT, searchReceptionAccounts, searchReceptionRoleCandidates,
 } from '../pods/reception-account/api';
-import type { GrantListResult, ReceptionAccount, ReceptionAccountSearchItem, ReceptionCareerGrant } from '../pods/reception-account/api';
-import { nextReceptionAccountOffset, parseReceptionAccountSearch } from '../pods/reception-account/search';
-import type { ReceptionAccountSearchQuery } from '../pods/reception-account/search';
+import type { GrantListResult, ReceptionAccount, ReceptionAccountSearchItem, ReceptionCareerGrant, ReceptionRoleCandidate, ReceptionRoleCandidateResult, ReceptionRoleGrant } from '../pods/reception-account/api';
+import { nextReceptionAccountOffset, parseReceptionAccountSearch, parseReceptionRoleSearch, RECEPTION_ROLE_QUERY_KEYS } from '../pods/reception-account/search';
+import type { ReceptionAccountSearchQuery, ReceptionRoleSearchQuery } from '../pods/reception-account/search';
 import { decodeJwt } from '../shared/jwt';
 import { getSession } from '../shared/session';
 
@@ -25,27 +26,52 @@ const revokeResult = Astro.getActionResult(actions.revokeReceptionCareerGrant);
 const createData = createResult?.data as { success?: boolean; error?: string; account?: ReceptionAccount } | undefined;
 const grantData = grantResult?.data as { success?: boolean; error?: string; grant?: ReceptionCareerGrant } | undefined;
 const revokeData = revokeResult?.data as { success?: boolean; error?: string; id?: string; grant?: ReceptionCareerGrant } | undefined;
+const grantRoleResult = Astro.getActionResult(actions.grantReceptionRole);
+const revokeRoleResult = Astro.getActionResult(actions.revokeReceptionRole);
+const grantRoleData = grantRoleResult?.data as { success?: boolean; error?: string; grant?: ReceptionRoleGrant } | undefined;
+const revokeRoleData = revokeRoleResult?.data as { success?: boolean; error?: string; id?: string; grant?: ReceptionRoleGrant } | undefined;
 
 let queryError = '';
 let selectedAccount = '';
 let searchQuery: ReceptionAccountSearchQuery = { q: '', career: '', limit: 50, offset: 0 };
+// Student-role keys belong to the role section; the account parser must not see them.
+const accountParams = new URLSearchParams(Astro.url.searchParams);
+for (const key of RECEPTION_ROLE_QUERY_KEYS) accountParams.delete(key);
 try {
-	selectedAccount = parseAccountSelection(Astro.url.searchParams);
-	searchQuery = parseReceptionAccountSearch(Astro.url.searchParams);
+	selectedAccount = parseAccountSelection(accountParams);
+	searchQuery = parseReceptionAccountSearch(accountParams);
 } catch (error) {
 	queryError = error instanceof Error ? error.message : 'La cuenta seleccionada no es válida.';
+}
+let roleQueryError = '';
+let selectedStudent = '';
+let roleSearchQuery: ReceptionRoleSearchQuery = { q: '', offset: 0 };
+try {
+	roleSearchQuery = parseReceptionRoleSearch(Astro.url.searchParams);
+} catch (error) {
+	roleQueryError = error instanceof Error ? error.message : 'Los filtros de búsqueda no son válidos.';
+}
+try {
+	selectedStudent = parseRoleStudentSelection(Astro.url.searchParams);
+} catch (error) {
+	roleQueryError = error instanceof Error ? error.message : 'El estudiante seleccionado no es válido.';
 }
 if (Astro.request.method === 'POST') {
 	try {
 		const submitted = await Astro.request.clone().formData();
 		const submittedAccount = submitted.get('account_id');
 		if (typeof submittedAccount === 'string' && isAccountId(submittedAccount)) selectedAccount = submittedAccount;
+		const submittedStudent = submitted.get('student_id');
+		if (typeof submittedStudent === 'string' && isAccountId(submittedStudent)) selectedStudent = submittedStudent;
 	} catch { /* Keep the URL selection if framework input cannot be recovered. */ }
 }
 // Backend audit rows decide the selection after a successful write.
 if (createData?.success && createData.account) selectedAccount = createData.account.id;
 else if (grantData?.success && grantData.grant) selectedAccount = grantData.grant.user_id;
 else if (revokeData?.success && revokeData.grant) selectedAccount = revokeData.grant.user_id;
+// The student whose role was written stays selected so the history shows the result.
+if (grantRoleData?.success && grantRoleData.grant) selectedStudent = grantRoleData.grant.user_id;
+else if (revokeRoleData?.success && revokeRoleData.grant) selectedStudent = revokeRoleData.grant.user_id;
 
 let grants: ReceptionCareerGrant[] = [];
 let grantState: GrantListResult['state'] | 'idle' = 'idle';
@@ -84,6 +110,47 @@ if (selectedAccount && !queryError) {
 		return Astro.redirect('/auth/login?returnTo=%2Freception-accounts');
 	}
 }
+
+let candidateState: ReceptionRoleCandidateResult['state'] | 'idle' = 'idle';
+let candidates: ReceptionRoleCandidate[] = [];
+if (roleSearchQuery.q && !roleQueryError) {
+	try {
+		const result = await searchReceptionRoleCandidates(roleSearchQuery, Astro.cookies);
+		candidateState = result.state;
+		if (result.state === 'success') candidates = result.items;
+	} catch {
+		return Astro.redirect('/auth/login?returnTo=%2Freception-accounts');
+	}
+}
+const nextCandidateOffset = candidateState === 'success' ? nextReceptionAccountOffset(roleSearchQuery.offset, ROLE_CANDIDATE_LIMIT, candidates.length) : null;
+const roleSearchHref = (offset: number) => {
+	const params = new URLSearchParams();
+	params.set('student_q', roleSearchQuery.q);
+	params.set('student_offset', String(offset));
+	return `/reception-accounts?${params.toString()}`;
+};
+
+let roleGrants: ReceptionRoleGrant[] = [];
+let roleState: 'idle' | 'active' | 'revoked' | 'none' | 'denied' | 'not_found' | 'failed' = 'idle';
+if (selectedStudent && !roleQueryError) {
+	try {
+		const result = await listReceptionRoleGrants(selectedStudent, Astro.cookies);
+		if (result.state === 'success') {
+			roleGrants = result.items;
+			roleState = roleGrants.some((grant) => grant.revoked_at === null) ? 'active' : roleGrants.length > 0 ? 'revoked' : 'none';
+		} else roleState = result.state;
+	} catch {
+		return Astro.redirect('/auth/login?returnTo=%2Freception-accounts');
+	}
+}
+const activeRoleGrant = roleGrants.find((grant) => grant.revoked_at === null);
+// Writes do not echo the student's identity, so the name comes from the candidate list when it is loaded.
+const studentName = candidates.find((candidate) => candidate.id === selectedStudent)?.username ?? 'el estudiante';
+const roleCopy = {
+	revokeConfirm: (name: string) => `Revocar Recepción para ${name}. También se revocan todas sus carreras de recepción. Si se vuelve a habilitar, empezará sin carreras.`,
+	grantSuccess: (name: string) => `Recepción habilitada para ${name}.`,
+	revokeSuccess: (name: string) => `Recepción revocada para ${name}. Sus carreras quedaron revocadas.`,
+};
 ---
 
 <Layout>
@@ -184,6 +251,52 @@ if (selectedAccount && !queryError) {
 				</form>
 			</>}
 		</section>
+		<section class="panel reception-role" aria-labelledby="reception-role-title">
+			<h2 id="reception-role-title">Rol de Recepción adicional</h2>
+			<p class="hint">Un estudiante puede tener el rol de Recepción además de su rol de estudiante. Solo el administrador lo habilita o revoca; sus carreras de recepción se gestionan aparte.</p>
+			{grantRoleData?.success && <p class="notice success" role="status">{roleCopy.grantSuccess(studentName)}</p>}
+			{grantRoleData && !grantRoleData.success && <p class="notice error" role="alert">{grantRoleData.error}</p>}
+			{grantRoleResult?.error && <p class="notice error" role="alert">{grantRoleResult.error.message}</p>}
+			{revokeRoleData?.success && <p class="notice success" role="status">{roleCopy.revokeSuccess(studentName)}</p>}
+			{revokeRoleData && !revokeRoleData.success && <p class="notice error" role="alert">{revokeRoleData.error}</p>}
+			{revokeRoleResult?.error && <p class="notice error" role="alert">{revokeRoleResult.error.message}</p>}
+			{roleQueryError && <p class="notice error" role="alert">{roleQueryError}</p>}
+			<form class="role-lookup" method="GET" action="/reception-accounts">
+				<div class="field"><label for="student-query">Buscar estudiante por usuario o correo</label><input id="student-query" name="student_q" value={roleSearchQuery.q} maxlength="100" autocomplete="off" /></div>
+				<button type="submit">Buscar estudiante</button>
+			</form>
+			{candidateState === 'idle' && !roleQueryError && <p class="hint">Escribí un usuario o correo para buscar estudiantes.</p>}
+			{candidateState === 'denied' && <p class="notice error" role="status">No tenés permiso para buscar estudiantes.</p>}
+			{candidateState === 'failed' && <p class="notice error" role="alert">No se pudieron cargar los estudiantes. Probá de nuevo más tarde.</p>}
+			{candidateState === 'success' && candidates.length === 0 && <p class="notice" role="status">No se encontraron estudiantes con esa búsqueda.</p>}
+			{candidateState === 'success' && candidates.length > 0 && <ul class="account-results">{candidates.map((candidate) => <li><form method="GET" action="/reception-accounts"><input type="hidden" name="student_q" value={roleSearchQuery.q} /><input type="hidden" name="student_offset" value={roleSearchQuery.offset} /><input type="hidden" name="student_id" value={candidate.id} /><button class="account-option" type="submit" aria-label={`Seleccionar estudiante ${candidate.username}`}><strong>{candidate.username}</strong><span>{candidate.email ?? 'Sin correo electrónico'}</span></button></form></li>)}</ul>}
+			{candidateState === 'success' && <nav class="account-pagination" aria-label="Páginas de estudiantes">{roleSearchQuery.offset > 0 && <a href={roleSearchHref(Math.max(0, roleSearchQuery.offset - ROLE_CANDIDATE_LIMIT))}>Anterior</a>}{nextCandidateOffset !== null && <a href={roleSearchHref(nextCandidateOffset)}>Siguiente</a>}</nav>}
+			{!selectedStudent && <p class="notice" role="status">Seleccioná un estudiante para ver o cambiar su rol de Recepción.</p>}
+			{selectedStudent && <>
+				<p class="hint">Estudiante <code>{selectedStudent}</code></p>
+				{roleState === 'active' && <p class="status active" role="status">Recepción activa</p>}
+				{roleState === 'revoked' && <p class="status revoked" role="status">Recepción revocada</p>}
+				{roleState === 'none' && <p class="status" role="status">Sin rol de Recepción</p>}
+				{roleState === 'denied' && <p class="notice error" role="status">No tenés permiso para consultar el rol de Recepción de este estudiante.</p>}
+				{roleState === 'not_found' && <p class="notice error" role="status">No se encontró el estudiante o el rol indicado.</p>}
+				{roleState === 'failed' && <p class="notice error" role="alert">No se pudo cargar el rol de Recepción de este estudiante.</p>}
+				{activeRoleGrant && <p class="hint"><a href={`/reception-accounts?account_id=${selectedStudent}`}>Gestionar carreras de esta cuenta</a></p>}
+				{activeRoleGrant && <details class="revoke">
+					<summary>Revocar Recepción</summary>
+					<p>{roleCopy.revokeConfirm(studentName)}</p>
+					<form method="POST" action={receptionActionUrl(Astro.url, String(actions.revokeReceptionRole))}>
+						<input type="hidden" name="student_id" value={selectedStudent} />
+						<input type="hidden" name="id" value={activeRoleGrant.id} />
+						<label class="confirm"><input type="checkbox" name="confirm" value="yes" required /> Confirmo que quiero revocar esta Recepción.</label>
+						<button type="submit" class="danger">Revocar Recepción</button>
+					</form>
+				</details>}
+				{(roleState === 'none' || roleState === 'revoked') && <form class="role-form" method="POST" action={receptionActionUrl(Astro.url, String(actions.grantReceptionRole))}>
+					<input type="hidden" name="student_id" value={selectedStudent} />
+					<button type="submit">Habilitar Recepción</button>
+				</form>}
+			</>}
+		</section>
 	</main>
 </Layout>
 
@@ -196,7 +309,7 @@ if (selectedAccount && !queryError) {
 	h2 { margin: 0 0 1rem; font: 1.45rem/1.3 var(--serif); }
 	h3 { margin: 0; font: 1.2rem/1.3 var(--serif); }
 	.hint { color: var(--muted); }
-	.account-form, .account-lookup, .grant-form { display: grid; gap: 1rem; max-width: 48rem; margin-top: 1rem; }
+	.account-form, .account-lookup, .grant-form, .role-lookup, .role-form { display: grid; gap: 1rem; max-width: 48rem; margin-top: 1rem; }
 	.account-results { display: grid; gap: 0.75rem; margin: 1rem 0; padding: 0; list-style: none; }
 	.account-option { display: grid; gap: 0.2rem; width: 100%; text-align: left; }
 	.account-option span { font-size: 0.9rem; font-weight: 400; overflow-wrap: anywhere; }

@@ -46,7 +46,7 @@ export async function handleLogin(
 	}
 }
 
-function sessionMaxAge(token: string): number {
+export function sessionMaxAge(token: string): number {
 	const exp = decodeJwt(token)?.exp;
 	if (exp === undefined) {
 		return FALLBACK_MAX_AGE_SEC;

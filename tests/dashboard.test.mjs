@@ -148,6 +148,20 @@ test('teacher clinical navigation requires teacher role and both read grants whi
  }
 });
 
+test('role switch lookup is enabled only for live Student and Reception sessions', async () => {
+	for (const [role, expected] of [
+		['estudiante', true], ['student', true], ['reception', true],
+		['admin', false], ['teacher', false], ['docente', false], ['Reception', false], [undefined, false],
+	]) {
+		const shell = await evaluate('src/layouts/Layout.astro', ['showRoleSwitch'], jwt({ ...valid, role }));
+		assert.equal(shell.showRoleSwitch, expected, String(role));
+	}
+	for (const token of [undefined, 'invalid', jwt({ ...valid, exp: 1 })]) {
+		const anonymous = await evaluate('src/layouts/Layout.astro', ['showRoleSwitch'], token);
+		assert.equal(anonymous.showRoleSwitch, false);
+	}
+});
+
 test('home is a simple welcome without module cards or quick links', async () => {
 	const home = await source('src/pages/index.astro');
 	assert.match(home, /<h1 id="home-title">Bienvenido a Salud<\/h1>/);
