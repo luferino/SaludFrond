@@ -19,12 +19,15 @@ async function evaluate(path, names, token, actionResult, options = {}) {
 	const sandbox = vm.createContext({
 		atob, Date: options.Date ?? Date, Response,
 		document: options.document,
-		fetch: async (url, init) => {
+		fetch: async (url, init = {}) => {
 			requests.push({ url, ...init });
+			if ((init.method ?? 'GET') === 'GET') return Response.json({ items: [], limit: 50, offset: 0 });
 			return Response.json({ id: 'patient-id', ...JSON.parse(init.body) }, { status: 201 });
 		},
 		Astro: {
 			cookies,
+			response: { headers: new Headers() },
+			url: options.url ?? new URL('https://frontend.invalid/patients'),
 			redirect: (location) => ({ redirect: location }),
 			getActionResult: (action) => { requestedAction = action; return actionResult; },
 		},
@@ -57,13 +60,13 @@ async function evaluate(path, names, token, actionResult, options = {}) {
 			.replace(/^import .*\.astro';\r?$/gm, '')
 			.replace('export const prerender', 'const prerender');
 		const imports = frontmatter.match(/^import .*;\r?$/gm) ?? [];
-		code = `${imports.join('\n')}\nexport function render() {
+		code = `${imports.join('\n')}\nexport async function render() {
 			${frontmatter.replace(/^import .*;\r?$/gm, '')}
 			return { ${names.join(', ')} }; }`;
 	}
 	const module = await compile(code, new URL(path, root).href);
 	await module.evaluate();
-	return { value: path.endsWith('.astro') && !options.script ? module.namespace.render() : module.namespace, requestedAction, cookies, requests };
+	return { value: path.endsWith('.astro') && !options.script ? await module.namespace.render() : module.namespace, requestedAction, cookies, requests };
 }
 
 test('patient form retains exactly eight required fields, types, constraints, and radio values', () => {

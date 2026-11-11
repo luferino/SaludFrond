@@ -42,9 +42,19 @@ export function isReceptionPatient(value: unknown): value is ReceptionPatient {
 		&& text(value.email) && text(value.celular) && text(value.sexo) && text(value.direccion);
 }
 
-export async function listReceptionPatients(career: ReceptionCareer, cookies: AstroCookies): Promise<ReceptionPatient[]> {
-	const response = await apiFetch<unknown>(`/reception/patients?career=${encodeURIComponent(career)}`, { cookies });
-	if (!record(response) || !hasExactKeys(response, ['items']) || !Array.isArray(response.items) || !response.items.every(isReceptionPatient)) {
+export async function listReceptionPatients(
+	career: ReceptionCareer,
+	cookies: AstroCookies,
+	filters: { q?: string; limit?: number; offset?: number } = {},
+): Promise<ReceptionPatient[]> {
+	const q = filters.q?.trim() ?? '';
+	if (q.length > 100) throw new Error('La búsqueda debe tener como máximo 100 caracteres.');
+	const query = new URLSearchParams({ career, limit: String(filters.limit ?? 100), offset: String(filters.offset ?? 0) });
+	if (q) query.set('q', q);
+	const response = await apiFetch<unknown>(`/reception/patients?${query.toString()}`, { cookies });
+	if (!record(response) || !hasExactKeys(response, ['items', 'limit', 'offset'])
+		|| !Array.isArray(response.items) || !response.items.every(isReceptionPatient)
+		|| response.limit !== Number(query.get('limit')) || response.offset !== Number(query.get('offset'))) {
 		throw new Error('Respuesta de pacientes inválida.');
 	}
 	return response.items;
