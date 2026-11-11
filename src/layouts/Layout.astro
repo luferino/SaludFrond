@@ -1,12 +1,16 @@
 ---
 import { getSession } from '../shared/session';
 import { decodeJwt, isTokenValid } from '../shared/jwt';
+import { mayHoldAdditionalRole } from '../pods/active-role/api';
+import RoleSwitch from '../pods/active-role/components/RoleSwitch.astro';
 
 const token = getSession(Astro.cookies);
 const isLoggedIn = token !== null && isTokenValid(token);
 const payload = token ? decodeJwt(token) : null;
 const isAdmin = payload?.role === 'admin';
 const isReception = isLoggedIn && payload?.role === 'reception';
+// Only Student and Reception sessions can switch roles; other roles skip the live role lookup.
+const showRoleSwitch = isLoggedIn && mayHoldAdditionalRole(payload?.role);
 // Presentation hint only; the backend checks current permissions on each request.
 const canRegister = isLoggedIn && Array.isArray(payload?.permissions)
 	&& payload.permissions.every((permission) => typeof permission === 'string')
@@ -133,7 +137,10 @@ const academicLinks = isLoggedIn && !isReception ? [
 						<p class="eyebrow">Sistema de salud / {pageTitle}</p>
 						<p class="page-title">{pageTitle}</p>
 					</div>
-					{isLoggedIn && <span class="session-badge">Sesión activa</span>}
+					<div class="session-tools">
+						{showRoleSwitch && <RoleSwitch />}
+						{isLoggedIn && <span class="session-badge">Sesión activa</span>}
+					</div>
 				</header>
 				<div id="page-content" class="page-content" tabindex="-1">
 					<slot />
@@ -242,6 +249,7 @@ const academicLinks = isLoggedIn && !isReception ? [
 	}
 	.eyebrow { margin: 0 0 0.4rem; color: var(--muted); }
 	.page-title { margin: 0; font: 1.9rem/1.2 var(--serif); }
+	.session-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 0.75rem; }
 	.session-badge { padding: 0.35rem 0.7rem; border: 1px solid var(--sage); border-radius: 20px; background: var(--sage-soft); font-size: 0.75rem; }
 	.page-content { padding: clamp(1.25rem, 3vw, 3rem); overflow-wrap: anywhere; }
 	@media (max-width: 760px) {

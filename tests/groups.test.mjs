@@ -112,6 +112,7 @@ async function evaluateRegistry() {
 		'../pods/student-habilitation/actions': ['activateStudentHabilitation', 'revokeStudentHabilitation'],
 		'../pods/patient-availability/actions': ['searchAvailablePatient', 'enablePatientAvailability', 'withdrawPatientAvailability'],
 		'../pods/reception-account/actions': ['createReceptionAccount', 'grantReceptionCareer', 'revokeReceptionCareerGrant'],
+		'../pods/active-role/actions': ['switchActiveRole'],
 		'../pods/reception-patient/actions': ['matchReceptionPatient', 'reuseReceptionPatient', 'registerReceptionPatient', 'updateReceptionPatientContact'],
 		'../pods/reception-availability/actions': ['searchReceptionAvailabilityPatient', 'enableReceptionAvailability', 'withdrawReceptionAvailability'],
 		'../pods/teacher-assignment/actions': ['createTeacherAssignment'],

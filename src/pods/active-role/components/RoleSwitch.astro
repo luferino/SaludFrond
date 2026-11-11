@@ -1,0 +1,29 @@
+---
+import { actions } from 'astro:actions';
+import { getActiveRoles, roleLabel, switchTargets } from '../api';
+
+// Presentation only: the backend re-checks the live role grant on every request and switch.
+const result = await getActiveRoles(Astro.cookies);
+const activeLabel = result.state === 'success' ? roleLabel(result.roles.active_role) : undefined;
+const targets = result.state === 'success' ? switchTargets(result.roles) : [];
+---
+
+{targets.length > 0 && activeLabel && (
+	<div class="role-switch" aria-label="Rol de la sesión">
+		<p class="active-role">Rol activo: <strong>{activeLabel}</strong></p>
+		{targets.map((target) => (
+			<form method="POST" action={`/active-role${actions.switchActiveRole}`}>
+				<input type="hidden" name="role" value={target.role} />
+				<button type="submit">Cambiar a {target.label}</button>
+			</form>
+		))}
+	</div>
+)}
+
+<style>
+	.role-switch { display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem 0.75rem; }
+	.active-role { margin: 0; padding: 0.35rem 0.7rem; border: 1px solid var(--rust); border-radius: 20px; font-size: 0.8rem; }
+	form { margin: 0; }
+	button { padding: 0.4rem 0.8rem; border: 1px solid var(--rust); border-radius: 6px; background: var(--rust); color: var(--paper); font: inherit; font-size: 0.8rem; cursor: pointer; }
+	button:focus-visible { outline: 3px solid var(--rust); outline-offset: 2px; }
+</style>
