@@ -2,6 +2,7 @@ import type { AstroCookies } from 'astro';
 import { apiFetch } from '../../shared/apiClient';
 import { getEvaluation, isEvaluation, listCorrections, listSubmissions, type CorrectionList, type Evaluation, type SubmissionList } from '../kinesiology-evaluation/api';
 import { decodeJwt } from '../../shared/jwt';
+import { clinicalFilterQuery, type ClinicalListFilters } from '../kinesiology-evaluation/list-filters';
 
 export interface ClinicalContext { patient_id: string; subject_id: string; academic_group_id: string }
 export interface TeacherPatient extends ClinicalContext {
@@ -84,9 +85,11 @@ export async function listTeacherPatients(pagination: { limit: number; offset: n
  });
  return { items, ...validated };
 }
-export async function listTeacherEvaluations(context: ClinicalContext, cookies: AstroCookies): Promise<Evaluation[]> {
+export async function listTeacherEvaluations(context: ClinicalContext, cookies: AstroCookies, filters?: ClinicalListFilters): Promise<Evaluation[]> {
  validateContext(context);
- const response = await apiFetch<unknown>(`/kinesiology-evaluations?${new URLSearchParams({ ...context })}`, { cookies });
+ const query = new URLSearchParams({ patient_id: context.patient_id, subject_id: context.subject_id, academic_group_id: context.academic_group_id });
+ if (filters) for (const [key, value] of clinicalFilterQuery(filters)) query.set(key, value);
+ const response = await apiFetch<unknown>(`/kinesiology-evaluations?${query}`, { cookies });
  if (!record(response) || !Array.isArray(response.items)) throw new Error('La respuesta de fichas no es válida.');
  return response.items.map((item) => originEvaluation(item, context));
 }

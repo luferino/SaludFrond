@@ -8,6 +8,8 @@ import { listAssignedPatients } from '../../pods/patient-assignment/api';
 import { assignmentListCarrier, assignmentListQuery, parseAssignmentListCoordinates } from '../../pods/patient-assignment/list-coordinates';
 import { actionHrefWithContext, EVALUATION_STATUS_LABELS, listEvaluations, listSubmittedEvaluations, type Evaluation } from '../../pods/kinesiology-evaluation/api';
 import { listOralSurgeryDrafts, type OralSurgeryDraft } from '../../pods/oral-surgery-draft/api';
+import type { ClinicalListFilters } from '../../pods/kinesiology-evaluation/list-filters';
+import { listKinesiologyEvolutions, parseEvolutionListFilters, type EvolutionFilters, type KinesiologyEvolutionListItem } from '../../pods/kinesiology-evolution/listing';
 import { isOralSurgeryContext, listOralSurgeryContexts } from '../../pods/oral-surgery-draft/discovery';
 
 const assignmentId = Astro.params.assignmentId ?? '';
@@ -24,6 +26,11 @@ let discoveryError = false;
 let discoveryForbidden = false;
 let unavailable = false;
 let loadError = '';
+let filterError = '';
+let clinicalError = false;
+let clinicalFilters: ClinicalListFilters = {};
+let evolutionFilters: EvolutionFilters = {};
+let evolutions: KinesiologyEvolutionListItem[] = [];
 const oralSurgeryPage = { limit: 50, offset: 0 };
 const result = Astro.getActionResult(actions.createKinesiologyEvaluation);
 if (result?.data?.success === false && /sesión venció/i.test(result.data.error)) {
@@ -35,6 +42,9 @@ const actor = token ? decodeJwt(token) : null;
 const permissions = actor?.permissions;
 const mayReadOralSurgery = Array.isArray(permissions) && permissions.includes('oral-surgery-drafts:read');
 try {
+	evolutionFilters = parseEvolutionListFilters(query);
+	clinicalFilters = { status: evolutionFilters.status, date_from: evolutionFilters.date_from, date_to: evolutionFilters.date_to };
+	for (const key of Object.keys(clinicalFilters) as Array<keyof ClinicalListFilters>) if (clinicalFilters[key] === undefined) delete clinicalFilters[key];
 	const coordinates = parseAssignmentListCoordinates(query);
 	pagination = { limit: coordinates.limit, offset: coordinates.offset };
 	listFilters = coordinates.filters;
@@ -59,21 +69,29 @@ try {
 					discoveryError = true;
 				}
 			}
+			if (oralSurgeryEnabled && (query.has('status') || query.has('evaluation_id'))) throw new Error('Los filtros de Cirugía Oral solo admiten fechas.');
 			if (oralSurgeryEnabled) {
-				oralSurgeryDrafts = await listOralSurgeryDrafts(context, Astro.cookies, oralSurgeryPage);
+				oralSurgeryDrafts = await listOralSurgeryDrafts(context, Astro.cookies, oralSurgeryPage, clinicalFilters);
 			} else if (!discoveryError) {
+				const hasFilters = Object.keys(clinicalFilters).length > 0;
 				[drafts, submitted] = await Promise.all([
-					listEvaluations(context, Astro.cookies),
-					listSubmittedEvaluations(context, Astro.cookies),
+					hasFilters ? listEvaluations(context, Astro.cookies, clinicalFilters) : listEvaluations(context, Astro.cookies),
+					hasFilters ? listSubmittedEvaluations(context, Astro.cookies, clinicalFilters) : listSubmittedEvaluations(context, Astro.cookies),
 				]);
+				if (Array.isArray(permissions) && permissions.includes('kinesiology-evolutions:read')) {
+					evolutions = await listKinesiologyEvolutions(context, Astro.cookies, evolutionFilters);
+				}
 			}
 		}
 	}
 } catch (error) {
+	if (query.has('status') || query.has('date_from') || query.has('date_to') || query.has('evaluation_id')) {
+		filterError = error instanceof Error ? error.message : 'Los filtros clínicos no son válidos.';
+		clinicalError = assignment !== null;
+	} else loadError = 'No se pudieron cargar las asignaciones y sus fichas. No se muestra una lista vacía porque el resultado no está disponible.';
 	if (error instanceof ApiError && error.status === 401) {
 		return Astro.redirect(`/auth/login?returnTo=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`);
 	}
-	loadError = 'No se pudieron cargar las asignaciones y sus fichas. No se muestra una lista vacía porque el resultado no está disponible.';
 }
 // Read only after discovery: the action is registered by the Oral Surgery integration, not needed for Kinesiology.
 const oralSurgeryResult = oralSurgeryEnabled ? Astro.getActionResult(actions.createOralSurgeryDraft) : undefined;
@@ -100,6 +118,7 @@ const createOralSurgeryHref = oralSurgeryEnabled ? actionHrefWithContext(actions
 ---
 <Layout>
 	<main class="clinical-page" aria-labelledby="title">
+		{filterError && <p class="notice error" role="alert">{filterError}</p>}
 		<p class="eyebrow"><a href={`/my-patients?${listQuery}`}>Mis pacientes asignados</a> / {oralSurgeryEnabled ? 'Cirugía Oral I' : discoveryError ? 'Ficha clínica' : 'Ficha kinésica inicial'}</p>
 		{unavailable ? <section class="notice" role="status">
 			<h1 id="title">Asignación no disponible</h1>
@@ -140,10 +159,24 @@ const createOralSurgeryHref = oralSurgeryEnabled ? actionHrefWithContext(actions
 					<p class="hint">Cada creación inicia un borrador nuevo y vacío.</p>
 				</form> : null}
 			</header>
+			{!discoveryError && <form method="GET" class="clinical-filters" aria-label="Filtrar listas clínicas">
+				{Object.entries(listCarrier).map(([key, value]) => <input type="hidden" name={key} value={value} />)}
+				{oralSurgeryEnabled ? <>
+					<label for="oral-date-from">Desde</label><input id="oral-date-from" type="date" name="date_from" value={clinicalFilters.date_from ?? ''} />
+					<label for="oral-date-to">Hasta</label><input id="oral-date-to" type="date" name="date_to" value={clinicalFilters.date_to ?? ''} />
+					<button type="submit">Aplicar filtros de fecha</button>
+				</> : <>
+					<label for="clinical-status">Estado</label><select id="clinical-status" name="status" value={clinicalFilters.status ?? ''}><option value="">Todos</option><option value="draft">Borrador</option><option value="submitted">Enviada</option><option value="validated">Validada</option></select>
+					<label for="clinical-date-from">Desde</label><input id="clinical-date-from" type="date" name="date_from" value={clinicalFilters.date_from ?? ''} />
+					<label for="clinical-date-to">Hasta</label><input id="clinical-date-to" type="date" name="date_to" value={clinicalFilters.date_to ?? ''} />
+					<label for="evolution-evaluation">Evaluación</label><input id="evolution-evaluation" name="evaluation_id" inputmode="numeric" value={evolutionFilters.evaluation_id ?? ''} />
+					<button type="submit">Aplicar filtros clínicos</button>
+				</>}
+			</form>}
 			{discoveryForbidden && <p class="notice" role="status">No tenés permiso para consultar si esta asignatura usa Cirugía Oral I. No se muestran acciones de Cirugía Oral.</p>}
 			{discoveryError && <p class="error" role="alert">No se pudo determinar qué ficha clínica corresponde a esta asignatura. No se muestran acciones para evitar crear la ficha equivocada.</p>}
 			{oralSurgeryEnabled && oralSurgeryResult?.data?.success === false && <p class="error" role="alert">{oralSurgeryResult.data.error}</p>}
-			{oralSurgeryEnabled ? <section aria-labelledby="oral-drafts-title">
+			{oralSurgeryEnabled && !clinicalError ? <section aria-labelledby="oral-drafts-title">
 				<h2 id="oral-drafts-title">Borradores de Cirugía Oral I</h2>
 				{oralSurgeryDrafts.length ? <ul class="draft-list">{oralSurgeryDrafts.map((draft) => <li>
 					<a href={`/oral-surgery-drafts/${draft.id}?${new URLSearchParams({ assignment_id: assignment.id, ...assignmentListCarrier(coordinates) })}`}>
@@ -152,7 +185,7 @@ const createOralSurgeryHref = oralSurgeryEnabled ? actionHrefWithContext(actions
 				</li>)}</ul> : <p>Todavía no hay borradores de Cirugía Oral I para esta asignación.</p>}
 				{oralSurgeryDrafts.length === oralSurgeryPage.limit && <p class="hint">Se muestran los {oralSurgeryPage.limit} borradores más recientes.</p>}
 			</section> : null}
-			{!oralSurgeryEnabled && !discoveryError ? <>
+			{!oralSurgeryEnabled && !discoveryError && !clinicalError ? <>
 				{result?.data?.success === false && <p class="error" role="alert">{result.data.error}</p>}
 				<section aria-labelledby="drafts-title">
 					<h2 id="drafts-title">Borradores de ficha inicial</h2>
@@ -170,10 +203,19 @@ const createOralSurgeryHref = oralSurgeryEnabled ? actionHrefWithContext(actions
 						</a>
 					</li>)}</ul> : <p>Todavía no hay fichas enviadas para esta asignación.</p>}
 				</section>
+				{Array.isArray(permissions) && permissions.includes('kinesiology-evolutions:read') && <section aria-labelledby="evolutions-title">
+					<h2 id="evolutions-title">Evoluciones kinésicas</h2>
+					{evolutions.length ? <ul class="draft-list">{evolutions.map((evolution) => <li><span>Evaluación {evolution.evaluation_id} · {evolution.status === 'draft' ? 'Borrador' : evolution.status === 'submitted' ? 'Enviada' : 'Validada'} · {new Date(evolution.created_at).toLocaleDateString('es')}</span></li>)}</ul> : <p>No hay evoluciones visibles para este paciente y contexto.</p>}
+				</section>}
 			</> : null}
 		</> : null}
 	</main>
 	<script>
+		for (const filterForm of document.querySelectorAll<HTMLFormElement>('.clinical-filters')) {
+			filterForm.addEventListener('submit', () => {
+				for (const input of filterForm.querySelectorAll<HTMLInputElement | HTMLSelectElement>('input, select')) if (!input.value) input.disabled = true;
+			});
+		}
 		const form = document.querySelector<HTMLFormElement>('#new-draft');
 		form?.addEventListener('submit', () => {
 			const button = form.querySelector<HTMLButtonElement>('button[type="submit"]');
@@ -225,6 +267,9 @@ const createOralSurgeryHref = oralSurgeryEnabled ? actionHrefWithContext(actions
 	.draft-list a { color: var(--rust-deep); font-weight: 600; text-decoration: underline; text-underline-offset: 0.15em; }
 	.notice, .error { padding: 1rem; border: 1px solid var(--line); border-radius: 0.65rem; background: var(--paper); }
 	.error { border-color: var(--rust-line); background: var(--rust-soft); }
+	.clinical-filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: .5rem; padding: 1rem; border: 1px solid var(--line); background: var(--paper); }
+	.clinical-filters label { align-self: end; }
+	.clinical-filters button { align-self: end; }
 	@media (max-width: 700px) {
 		.intro { align-items: stretch; flex-direction: column; gap: 1rem; }
 	}

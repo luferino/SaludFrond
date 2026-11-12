@@ -1,5 +1,6 @@
 import type { AstroCookies } from 'astro';
 import { apiFetch } from '../../shared/apiClient';
+import { clinicalFilterQuery, type ClinicalListFilters } from './list-filters';
 
 export interface Antecedents {
 	hta?: boolean | null;
@@ -282,15 +283,17 @@ async function fetchEvaluationItems(query: URLSearchParams, cookies: AstroCookie
 	return response.items;
 }
 
-async function listContextEvaluations(context: EvaluationContext, cookies: AstroCookies): Promise<Evaluation[]> {
+async function listContextEvaluations(context: EvaluationContext, cookies: AstroCookies, filters?: ClinicalListFilters): Promise<Evaluation[]> {
 	contextId(context.patient_id, 'paciente');
 	contextId(context.subject_id, 'asignatura');
 	contextId(context.academic_group_id, 'grupo');
-	return (await fetchEvaluationItems(new URLSearchParams(context), cookies)).map((item) => validateResponse(item, context));
+	const query = new URLSearchParams(context);
+	if (filters) for (const [key, value] of clinicalFilterQuery(filters)) query.set(key, value);
+	return (await fetchEvaluationItems(query, cookies)).map((item) => validateResponse(item, context));
 }
 
-export async function listEvaluations(context: EvaluationContext, cookies: AstroCookies): Promise<Evaluation[]> {
-	return (await listContextEvaluations(context, cookies)).filter((item) => item.status === 'draft');
+export async function listEvaluations(context: EvaluationContext, cookies: AstroCookies, filters?: ClinicalListFilters): Promise<Evaluation[]> {
+	return (await listContextEvaluations(context, cookies, filters)).filter((item) => item.status === 'draft');
 }
 
 /**
@@ -299,11 +302,13 @@ export async function listEvaluations(context: EvaluationContext, cookies: Astro
  * the patient-only list can legitimately return the author's own drafts from another assignment. Malformed rows
  * and rows of another patient still throw.
  */
-export async function listSubmittedEvaluations(context: EvaluationContext, cookies: AstroCookies): Promise<Evaluation[]> {
+export async function listSubmittedEvaluations(context: EvaluationContext, cookies: AstroCookies, filters?: ClinicalListFilters): Promise<Evaluation[]> {
 	contextId(context.patient_id, 'paciente');
 	contextId(context.subject_id, 'asignatura');
 	contextId(context.academic_group_id, 'grupo');
-	return (await fetchEvaluationItems(new URLSearchParams({ patient_id: context.patient_id }), cookies))
+	const query = new URLSearchParams({ patient_id: context.patient_id });
+	if (filters) for (const [key, value] of clinicalFilterQuery(filters)) query.set(key, value);
+	return (await fetchEvaluationItems(query, cookies))
 		.map((item) => validateResponse(item, { patient_id: context.patient_id }))
 		.filter((item) => item.status !== 'draft');
 }

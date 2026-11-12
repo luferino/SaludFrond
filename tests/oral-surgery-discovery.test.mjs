@@ -145,6 +145,7 @@ const oralDraft = (overrides = {}) => ({
 async function renderAssignment(options = {}) {
  const requests = [];
  const oralListings = [];
+ const clinicalCalls = [];
  const cookies = { get: (name) => name === 'session' ? { value: 'token' } : undefined };
  const Astro = {
   params: { assignmentId: '17' }, cookies, url: new URL(options.url ?? 'https://fixture.invalid/my-patients/17?limit=50&offset=0'),
@@ -156,12 +157,14 @@ async function renderAssignment(options = {}) {
   actions: { createKinesiologyEvaluation: 'kinesiology', createOralSurgeryDraft: 'oral-surgery' }, isInputError: () => false,
   decodeJwt: () => ({ sub: teacherId, role: 'student', permissions: options.permissions ?? [] }),
   parseAssignmentPagination: () => ({ limit: 50, offset: 0 }),
+  parseEvolutionListFilters: (params) => Object.fromEntries(['status','date_from','date_to','evaluation_id'].filter((key) => params.has(key) && params.get(key)).map((key) => [key, params.get(key)])),
   parseAssignmentListCoordinates: (params) => ({ filters: Object.fromEntries(['patient_id','student_id','subject_id','academic_group_id'].flatMap((key) => { const values = params.getAll(key); if (values.length > 1 || [...params.keys()].some((name) => name.startsWith(`${key}[`) || name.startsWith(`${key}.`))) throw Error('invalid'); return values.length ? [[key,values[0]]] : []; })), limit: Number(params.get('limit') ?? 50), offset: Number(params.get('offset') ?? 0) }),
   assignmentListCarrier: (coordinates) => Object.fromEntries([['list_limit',String(coordinates.limit)],['list_offset',String(coordinates.offset)], ...Object.entries(coordinates.filters).map(([key,value])=>[`list_${key}`,value])]),
   assignmentListQuery: (coordinates) => new URLSearchParams({limit:String(coordinates.limit),offset:String(coordinates.offset),...coordinates.filters}).toString(),
   listAssignedPatients: async () => { requests.push('assignments'); if (options.assignmentsFailure) throw new Error('offline'); return { items: options.items ?? [assignment], limit: 50, offset: 0 }; },
-  listEvaluations: async () => { requests.push('kinesiology-drafts'); return []; },
-  listSubmittedEvaluations: async () => { requests.push('kinesiology-submitted'); return []; },
+  listEvaluations: async (_context, _cookies, filters) => { requests.push('kinesiology-drafts'); clinicalCalls.push({ kind: 'drafts', filters }); return []; },
+  listSubmittedEvaluations: async (_context, _cookies, filters) => { requests.push('kinesiology-submitted'); clinicalCalls.push({ kind: 'submitted', filters }); return []; },
+  listKinesiologyEvolutions: async (_context, _cookies, filters) => { requests.push('evolutions'); clinicalCalls.push({ kind: 'evolutions', filters }); return []; },
   EVALUATION_STATUS_LABELS: {},
   actionHrefWithContext: (href, context) => { const url = new URL(href, 'http://localhost'); for (const [key, value] of Object.entries(context)) url.searchParams.set(key, value); return `${url.pathname}${url.search}`; },
   listOralSurgeryContexts: async () => {
@@ -196,7 +199,7 @@ async function renderAssignment(options = {}) {
  }
  const component = await compile('src/pages/my-patients/[assignmentId].astro');
  const rendered = await html(component({ createAstro: () => Astro }, {}, {}));
- return { html: rendered, requests, oralListings };
+ return { html: rendered, requests, oralListings, clinicalCalls };
 }
 async function html(value) {
  value = await value;
@@ -220,6 +223,21 @@ test('student page with an enabled pair renders only Oral Surgery: create form, 
  assert.match(result.html, /href="\/oral-surgery-drafts\/9007199254741061\?assignment_id=17&amp;list_limit=50&amp;list_offset=0"/);
  assert.match(result.html, /Abrir borrador · versión 3 · actualizado /);
  assert.doesNotMatch(result.html, /Ficha kinésica inicial|Crear nuevo borrador<|Borradores de ficha inicial|Fichas enviadas/);
+});
+
+test('compiled student HTML keeps GET clinical controls in the selected assignment and forwards filter values', async () => {
+ const result = await renderAssignment({ url: `https://fixture.invalid/my-patients/17?limit=7&offset=14&status=submitted&date_from=0001-01-01&date_to=9999-12-31&evaluation_id=9223372036854775807` });
+ assert.match(result.html, /<form method="GET" class="clinical-filters/);
+ for (const name of ['status', 'date_from', 'date_to', 'evaluation_id']) assert.match(result.html, new RegExp(`name="${name}"`));
+ assert.deepEqual(result.clinicalCalls, [
+  { kind: 'drafts', filters: { status: 'submitted', date_from: '0001-01-01', date_to: '9999-12-31' } },
+  { kind: 'submitted', filters: { status: 'submitted', date_from: '0001-01-01', date_to: '9999-12-31' } },
+ ]);
+ const controls = result.html.match(/<form method="GET" class="clinical-filters[^>]*>[\s\S]*?<\/form>/)?.[0];
+ assert.ok(controls);
+ assert.match(controls, /name="list_limit" value="7"/);
+ assert.match(controls, /name="list_offset" value="14"/);
+ assert.doesNotMatch(controls, /method="POST"/);
 });
 
 test('student page shows the 50-row notice only when the Oral Surgery list is full', async () => {
