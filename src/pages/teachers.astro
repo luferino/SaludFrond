@@ -4,13 +4,36 @@ export const prerender = false;
 import Layout from '../layouts/Layout.astro';
 import TeacherForm from '../pods/teacher/components/TeacherForm.astro';
 import { getSession } from '../shared/session';
+import { ApiError } from '../shared/apiClient';
 import { decodeJwt } from '../shared/jwt';
+import { listTeachers, parseTeacherSearch, teacherPageHref, type TeacherListingItem } from '../pods/teacher/listing';
+import { academicPaginationNavigation, parseAcademicPagination } from '../shared/academic-api';
 
 const token = getSession(Astro.cookies);
 const payload = token ? decodeJwt(token) : null;
 
 if (!payload || payload.role !== 'admin') {
 	return Astro.redirect('/auth/login');
+}
+
+let teachers: TeacherListingItem[] = [];
+let q: string | null = null;
+let limit = 50;
+let error = '';
+let previousHref: string | null = null;
+let nextHref: string | null = null;
+try {
+	const pagination = parseAcademicPagination(Astro.url.searchParams);
+	limit = pagination.limit;
+	q = parseTeacherSearch(Astro.url.searchParams);
+	const page = await listTeachers(pagination, q, Astro.cookies);
+	teachers = page.items;
+	const navigation = academicPaginationNavigation({ ...pagination, itemsLength: teachers.length });
+	previousHref = navigation.previousOffset === null ? null : teacherPageHref(pagination, q, navigation.previousOffset);
+	nextHref = navigation.nextOffset === null ? null : teacherPageHref(pagination, q, navigation.nextOffset);
+} catch (failure) {
+	if (failure instanceof ApiError && failure.status === 401 || failure instanceof Error && failure.name === 'ApiError' && 'status' in failure && failure.status === 401) return Astro.redirect('/auth/login');
+	error = 'No se pudo cargar la lista de profesores. Revisá los parámetros o intentá nuevamente; no se muestra una lista vacía porque la consulta falló.';
 }
 ---
 
@@ -22,6 +45,26 @@ if (!payload || payload.role !== 'admin') {
 			<p>Completa los datos de acceso y el perfil para dar de alta al profesor.</p>
 		</header>
 		<TeacherForm />
+		<section class="listing" aria-labelledby="teacher-list-title">
+			<h2 id="teacher-list-title">Profesores registrados</h2>
+			<form method="get" action="/teachers" role="search">
+				<input type="hidden" name="limit" value={limit} />
+				<label for="teacher-search">Buscar por nombre o apellido</label>
+				<div class="search-controls">
+					<input id="teacher-search" type="search" name="q" maxlength="100" value={q ?? ''} />
+					<button type="submit">Buscar</button>
+				</div>
+			</form>
+			{error ? <p class="list-error" role="alert">{error}</p> : teachers.length === 0
+				? <p role="status">No se encontraron profesores.</p>
+				: <ul class="people-list">{teachers.map((teacher) => <li>
+					<strong>{teacher.apellidos}, {teacher.nombres}</strong>
+				</li>)}</ul>}
+			{!error && (previousHref || nextHref) && <nav aria-label="Paginación de profesores">
+				{previousHref && <a href={previousHref}>Anterior</a>}
+				{nextHref && <a href={nextHref}>Siguiente</a>}
+			</nav>}
+		</section>
 	</main>
 </Layout>
 
