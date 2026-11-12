@@ -5,12 +5,46 @@ import Layout from '../layouts/Layout.astro';
 import PatientForm from '../pods/paciente/components/form-paciente.astro';
 import { getSession } from '../shared/session';
 import { decodeJwt } from '../shared/jwt';
+import { listPatients, parsePatientListing } from '../pods/paciente/listing';
+import type { PatientListItem } from '../pods/paciente/listing';
+import { academicPaginationNavigation } from '../shared/academic-api';
+import { ApiError } from '../shared/apiClient';
 
+Astro.response.headers.set('Cache-Control', 'no-store');
 const token = getSession(Astro.cookies);
 const payload = token ? decodeJwt(token) : null;
 
 if (!payload || payload.role !== 'admin') {
 	return Astro.redirect('/auth/login');
+}
+
+let q = '';
+let limit = 50;
+let offset = 0;
+let items: PatientListItem[] = [];
+let previousOffset: number | null = null;
+let nextOffset: number | null = null;
+let errorMessage: string | null = null;
+let empty = false;
+try {
+	const listing = parsePatientListing(Astro.url.searchParams);
+	({ q, limit, offset } = listing);
+	const result = await listPatients(listing, Astro.cookies);
+	items = result.items;
+	({ previousOffset, nextOffset } = academicPaginationNavigation({ ...listing, itemsLength: items.length }));
+	empty = items.length === 0;
+} catch (error) {
+	if (error instanceof ApiError && error.status === 401) return Astro.redirect('/auth/login?returnTo=%2Fpatients');
+	errorMessage = error instanceof Error && error.message.includes('q')
+		? error.message
+		: error instanceof Error && error.message.includes('paginación')
+			? error.message
+			: 'No se pudieron cargar los pacientes. Probá de nuevo más tarde.';
+}
+function pageHref(next: number): string {
+	const query = new URLSearchParams({ limit: String(limit), offset: String(next) });
+	if (q) query.set('q', q);
+	return `?${query.toString()}`;
 }
 ---
 
@@ -22,6 +56,25 @@ if (!payload || payload.role !== 'admin') {
 			<p>Completa los datos personales y de contacto para dar de alta al paciente.</p>
 		</header>
 		<PatientForm />
+		<section class="registry" aria-labelledby="registry-title">
+			<h2 id="registry-title">Registro de pacientes</h2>
+			<form method="GET" action="/patients" class="search-form">
+				<label for="patient-q">Buscar pacientes</label>
+				<input id="patient-q" name="q" type="search" maxlength="100" value={q} />
+				<input type="hidden" name="limit" value={limit} />
+				<button>Buscar</button>
+			</form>
+			{errorMessage && <p class="message error" role="alert">{errorMessage}</p>}
+			{!errorMessage && empty && <p role="status">No se encontraron pacientes.</p>}
+			{!errorMessage && items.length > 0 && <ul class="patient-list">
+				{items.map((patient) => <li><span><strong>{patient.apellidos}, {patient.nombres}</strong> · Doc. {patient.documento}</span></li>)}
+			</ul>}
+			{!errorMessage && <nav class="pager" aria-label="Paginación de pacientes">
+				{previousOffset !== null && <a href={pageHref(previousOffset)}>Anterior</a>}
+				<span>Página {Math.floor(offset / limit) + 1}</span>
+				{nextOffset !== null && <a href={pageHref(nextOffset)}>Siguiente</a>}
+			</nav>}
+		</section>
 	</main>
 </Layout>
 
@@ -30,8 +83,11 @@ if (!payload || payload.role !== 'admin') {
 	.intro { margin-bottom: 2rem; }
 	.intro p { margin: 0.75rem 0; color: var(--muted); }
 	.eyebrow { font: 0.65rem/1.6 Consolas, monospace; letter-spacing: 0.1em; text-transform: uppercase; }
-	h1 {
-		margin: 0.5rem 0;
-		font: 400 clamp(2rem, 3vw, 2.75rem)/1.15 var(--serif);
-	}
+	h1 { margin: 0.5rem 0; font: 400 clamp(2rem, 3vw, 2.75rem)/1.15 var(--serif); }
+	.registry { margin-top: 2rem; }
+	.search-form, .patient-list li, .pager { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; }
+	.patient-list { list-style: none; padding: 0; }
+	.patient-list li { justify-content: space-between; padding: 0.6rem 0; border-bottom: 1px solid var(--line); }
+	.pager { justify-content: space-between; margin-top: 1rem; }
+	.message.error { color: var(--rust-deep); }
 </style>

@@ -21,7 +21,7 @@ if (access === 'home') return Astro.redirect('/');
 const state = await loadReceptionPatientsState(Astro.url.searchParams, Astro.cookies);
 if (state.kind === 'session-expired') return Astro.redirect(returnTo);
 const careers = state.careers;
-const career: ReceptionCareer | null = state.kind === 'list' ? state.career : null;
+const career: ReceptionCareer | null = state.kind === 'list' || state.kind === 'invalid-search' ? state.career : null;
 
 const matchResult = Astro.getActionResult(actions.matchReceptionPatient);
 const reuseResult = Astro.getActionResult(actions.reuseReceptionPatient);
@@ -73,6 +73,18 @@ const formatBirthDate = (value: string | null) => (value ? value.split('-').reve
 		{state.kind === 'select' && state.requested !== null && (
 			<p class="message" role="alert">La carrera indicada no está habilitada para tu cuenta. Seleccioná una de tus carreras.</p>
 		)}
+		{state.kind === 'invalid-search' && career && (
+			<section class="panel" aria-labelledby="invalid-search-title">
+				<h2 id="invalid-search-title">Pacientes de {RECEPTION_CAREER_LABELS[career]}</h2>
+				<p class="message error" role="alert">{state.message}</p>
+				<form method="GET" action="/reception/patients" class="inline-form">
+					<input type="hidden" name="career" value={career} />
+					<label for="patient-q">Buscar pacientes</label>
+					<input id="patient-q" name="q" type="search" maxlength="100" value="" />
+					<button>Buscar</button>
+				</form>
+			</section>
+		)}
 
 		{careers.length > 0 && (
 			<section class="panel" aria-labelledby="career-title">
@@ -98,18 +110,30 @@ const formatBirthDate = (value: string | null) => (value ? value.split('-').reve
 
 				<section class="panel" aria-labelledby="patients-title">
 					<h2 id="patients-title">Pacientes de {RECEPTION_CAREER_LABELS[career]}</h2>
+					<form method="GET" action="/reception/patients" class="inline-form">
+						<input type="hidden" name="career" value={career} />
+						<input type="hidden" name="limit" value={state.page.limit} />
+						<label for="patient-q">Buscar pacientes</label>
+						<input id="patient-q" name="q" type="search" maxlength="100" value={state.q} />
+						<button>Buscar</button>
+					</form>
 					{state.patients.length === 0 ? (
-						<p>Todavía no hay pacientes vinculados a esta carrera.</p>
+						<p>{state.q || state.page.offset > 0 ? 'No se encontraron pacientes con estos filtros.' : 'Todavía no hay pacientes vinculados a esta carrera.'}</p>
 					) : (
 						<ul class="patient-list">
 							{state.patients.map((patient) => (
 								<li>
 									<span><strong>{patient.apellidos}, {patient.nombres}</strong> · Doc. {patient.documento}</span>
-									<a href={`?${new URLSearchParams({ career, patient_id: patient.id })}`}>Editar contacto</a>
+									<a href={`?${new URLSearchParams({ career, patient_id: patient.id, limit: String(state.page.limit), offset: String(state.page.offset), ...(state.q ? { q: state.q } : {}) })}`}>Editar contacto</a>
 								</li>
 							))}
 						</ul>
 					)}
+					<nav class="pager" aria-label="Paginación de pacientes">
+						{state.navigation.previousOffset !== null && <a href={`?${new URLSearchParams({ career, limit: String(state.page.limit), offset: String(state.navigation.previousOffset), ...(state.q ? { q: state.q } : {}) })}`}>Anterior</a>}
+						<span>Página {Math.floor(state.page.offset / state.page.limit) + 1}</span>
+						{state.navigation.nextOffset !== null && <a href={`?${new URLSearchParams({ career, limit: String(state.page.limit), offset: String(state.navigation.nextOffset), ...(state.q ? { q: state.q } : {}) })}`}>Siguiente</a>}
+					</nav>
 				</section>
 
 				<section class="panel" aria-labelledby="search-title">
