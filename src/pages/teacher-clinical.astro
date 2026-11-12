@@ -16,6 +16,7 @@ let patients: TeacherPatient[] = [];
 let selected: TeacherPatient | undefined;
 let evaluations: Evaluation[] = [];
 let evolutions: KinesiologyEvolutionListItem[] = [];
+let evolutionError = false;
 let clinicalFilters: ClinicalListFilters = {};
 let evolutionFilters: EvolutionFilters = {};
 let filterError = '';
@@ -49,26 +50,42 @@ try {
     }
     if (discoveryFailed) error = 'No se pudo determinar qué ficha clínica corresponde a este contexto.';
     else {
-     evolutionFilters = parseEvolutionListFilters(searchParams);
-     clinicalFilters = { status: evolutionFilters.status, date_from: evolutionFilters.date_from, date_to: evolutionFilters.date_to };
-     for (const key of Object.keys(clinicalFilters) as Array<keyof ClinicalListFilters>) if (clinicalFilters[key] === undefined) delete clinicalFilters[key];
-     if (oralSurgeryEnabled && (searchParams.has('status') || searchParams.has('evaluation_id'))) throw new Error('Cirugía Oral solo admite filtros de fecha.');
-     const context = { patient_id: selected.patient_id, subject_id: selected.subject_id, academic_group_id: selected.academic_group_id };
-     if (oralSurgeryEnabled) oralSurgeryDrafts = await listOralSurgeryDrafts(context, Astro.cookies, { limit: 50, offset: 0 }, clinicalFilters);
-     else {
-      const hasFilters = Object.keys(clinicalFilters).length > 0;
-      evaluations = hasFilters ? await listTeacherEvaluations(context, Astro.cookies, clinicalFilters) : await listTeacherEvaluations(context, Astro.cookies);
-      if (teacherGrant(Astro.cookies, 'kinesiology-evolutions:read')) evolutions = await listKinesiologyEvolutions(context, Astro.cookies, evolutionFilters);
+     try {
+      evolutionFilters = parseEvolutionListFilters(searchParams);
+      clinicalFilters = { status: evolutionFilters.status, date_from: evolutionFilters.date_from, date_to: evolutionFilters.date_to };
+      for (const key of Object.keys(clinicalFilters) as Array<keyof ClinicalListFilters>) if (clinicalFilters[key] === undefined) delete clinicalFilters[key];
+     } catch (failure) {
+      // Filter validation runs before any clinical read: its message is the only alert and the filter form stays editable.
+      filterError = failure instanceof Error ? failure.message : 'Los filtros clínicos no son válidos.';
+     }
+     if (oralSurgeryEnabled && !filterError && (searchParams.has('status') || searchParams.has('evaluation_id'))) filterError = 'Cirugía Oral solo admite filtros de fecha.';
+     if (!filterError) {
+      const context = { patient_id: selected.patient_id, subject_id: selected.subject_id, academic_group_id: selected.academic_group_id };
+      if (oralSurgeryEnabled) oralSurgeryDrafts = await listOralSurgeryDrafts(context, Astro.cookies, { limit: 50, offset: 0 }, clinicalFilters);
+      else {
+       const hasFilters = Object.keys(clinicalFilters).length > 0;
+       evaluations = hasFilters ? await listTeacherEvaluations(context, Astro.cookies, clinicalFilters) : await listTeacherEvaluations(context, Astro.cookies);
+       if (teacherGrant(Astro.cookies, 'kinesiology-evolutions:read')) {
+        // Isolated: an evolution failure must not hide the evaluation lists already loaded above.
+        try {
+         evolutions = await listKinesiologyEvolutions(context, Astro.cookies, evolutionFilters);
+        } catch (failure) {
+         if (failure instanceof ApiError && failure.status === 401) throw failure;
+         evolutionError = true;
+        }
+       }
+      }
      }
     }
    }
   }
  }
 } catch (failure) {
- if (searchParams.has('status') || searchParams.has('date_from') || searchParams.has('date_to') || searchParams.has('evaluation_id')) filterError = failure instanceof Error ? failure.message : 'Los filtros clínicos no son válidos.';
  if (failure instanceof ApiError && failure.status === 401) return Astro.redirect('/auth/login?returnTo=%2Fteacher-clinical');
  error = failure instanceof ApiError && failure.status === 403 ? 'No tenés permiso vigente para consultar este contexto.' : 'No se pudo cargar el acceso clínico. No se muestra una lista vacía porque la consulta falló.';
 }
+// Submitted values are shown as typed, so an invalid filter stays editable in the form.
+const shownFilters = { status: searchParams.get('status') ?? '', date_from: searchParams.get('date_from') ?? '', date_to: searchParams.get('date_to') ?? '', evaluation_id: searchParams.get('evaluation_id') ?? '' };
 const link = (offset: number) => { const params = new URLSearchParams({limit:String(pagination.limit),offset:String(offset)}); for (const [key,value] of Object.entries(filters)) if (value) params.set(key,value); return `/teacher-clinical?${params}`; };
 const previous = pagination.offset > 0 ? Math.max(0, pagination.offset - pagination.limit) : null;
 const next = patients.length === pagination.limit && pagination.offset + pagination.limit <= 10000 ? pagination.offset + pagination.limit : null;
@@ -107,14 +124,14 @@ const listCarrier = assignmentListCarrier({ ...pagination, filters });
    </nav>}
    {selected && !error && !oralSurgeryEnabled && <form method="GET" class="clinical-filters" aria-label="Filtrar listas clínicas">
     <input type="hidden" name="assignment_id" value={selected.id} /><input type="hidden" name="limit" value={pagination.limit} /><input type="hidden" name="offset" value={pagination.offset} />{Object.entries(filters).map(([key,value]) => <input type="hidden" name={key} value={value} />)}
-    <label for="clinical-status">Estado</label><select id="clinical-status" name="status"><option value="">Todos</option><option value="draft" selected={clinicalFilters.status === 'draft'}>Borrador</option><option value="submitted" selected={clinicalFilters.status === 'submitted'}>Enviada</option><option value="validated" selected={clinicalFilters.status === 'validated'}>Validada</option></select>
-    <label for="clinical-date-from">Desde</label><input id="clinical-date-from" type="date" name="date_from" value={clinicalFilters.date_from ?? ''} /><label for="clinical-date-to">Hasta</label><input id="clinical-date-to" type="date" name="date_to" value={clinicalFilters.date_to ?? ''} /><label for="evolution-evaluation">Evaluación</label><input id="evolution-evaluation" name="evaluation_id" inputmode="numeric" value={evolutionFilters.evaluation_id ?? ''} /><button type="submit">Aplicar filtros clínicos</button>
+    <label for="clinical-status">Estado</label><select id="clinical-status" name="status"><option value="">Todos</option><option value="draft" selected={shownFilters.status === 'draft'}>Borrador</option><option value="submitted" selected={shownFilters.status === 'submitted'}>Enviada</option><option value="validated" selected={shownFilters.status === 'validated'}>Validada</option></select>
+    <label for="clinical-date-from">Desde</label><input id="clinical-date-from" type="date" name="date_from" value={shownFilters.date_from} /><label for="clinical-date-to">Hasta</label><input id="clinical-date-to" type="date" name="date_to" value={shownFilters.date_to} /><label for="evolution-evaluation">Evaluación</label><input id="evolution-evaluation" name="evaluation_id" inputmode="numeric" value={shownFilters.evaluation_id} /><button type="submit">Aplicar filtros clínicos</button>
    </form>}
    {selected && !error && oralSurgeryEnabled && <form method="GET" class="clinical-filters" aria-label="Filtrar borradores de Cirugía Oral">
     <input type="hidden" name="assignment_id" value={selected.id} /><input type="hidden" name="limit" value={pagination.limit} /><input type="hidden" name="offset" value={pagination.offset} />{Object.entries(filters).map(([key,value]) => <input type="hidden" name={key} value={value} />)}
-    <label for="clinical-date-from">Desde</label><input id="clinical-date-from" type="date" name="date_from" value={clinicalFilters.date_from ?? ''} /><label for="clinical-date-to">Hasta</label><input id="clinical-date-to" type="date" name="date_to" value={clinicalFilters.date_to ?? ''} /><button type="submit">Aplicar filtros de fecha</button>
+    <label for="clinical-date-from">Desde</label><input id="clinical-date-from" type="date" name="date_from" value={shownFilters.date_from} /><label for="clinical-date-to">Hasta</label><input id="clinical-date-to" type="date" name="date_to" value={shownFilters.date_to} /><button type="submit">Aplicar filtros de fecha</button>
    </form>}
-   {selected && !error && oralSurgeryEnabled && <section aria-labelledby="oral-records-title">
+   {selected && !error && !filterError && oralSurgeryEnabled && <section aria-labelledby="oral-records-title">
     <h2 id="oral-records-title">Borradores de Cirugía Oral I de {selected.apellidos}, {selected.nombres}</h2>
     <p>Asignatura: {selected.subject_id}<br />Grupo: {selected.academic_group_id}</p>
     {oralSurgeryDrafts.length ? <ul>{oralSurgeryDrafts.map((draft) => <li>
@@ -122,14 +139,14 @@ const listCarrier = assignmentListCarrier({ ...pagination, filters });
     </li>)}</ul> : <p>No hay borradores de Cirugía Oral I para este paciente y contexto de origen.</p>}
     {oralSurgeryDrafts.length === 50 && <p>Se muestran los 50 borradores más recientes.</p>}
    </section>}
-   {selected && !error && !oralSurgeryEnabled && <section aria-labelledby="records-title">
+   {selected && !error && !filterError && !oralSurgeryEnabled && <section aria-labelledby="records-title">
     <h2 id="records-title">Fichas de {selected.apellidos}, {selected.nombres}</h2>
     <p>Asignatura: {selected.subject_id}<br />Grupo: {selected.academic_group_id}</p>
     {oralSurgeryForbidden && <p role="status">No tenés permiso para consultar si este contexto usa Cirugía Oral I. No se muestran acciones de Cirugía Oral.</p>}
     {evaluations.length ? <ul>{evaluations.map((evaluation) => <li>
      <a href={`/teacher-clinical/${evaluation.id}?${new URLSearchParams({ patient_id: selected!.patient_id, subject_id: selected!.subject_id, academic_group_id: selected!.academic_group_id, assignment_id: selected!.id, ...listCarrier })}`}>Abrir ficha · {evaluation.status === 'draft' ? 'Borrador' : evaluation.status === 'submitted' ? 'Enviada' : 'Validada'}</a>
     </li>)}</ul> : <p>No hay fichas para este paciente y contexto de origen.</p>}
-    {teacherGrant(Astro.cookies, 'kinesiology-evolutions:read') && <section aria-labelledby="teacher-evolutions-title"><h3 id="teacher-evolutions-title">Evoluciones kinésicas</h3>{evolutions.length ? <ul>{evolutions.map((item) => <li><span>Evaluación {item.evaluation_id} · {item.status === 'draft' ? 'Borrador' : item.status === 'submitted' ? 'Enviada' : 'Validada'} · {new Date(item.created_at).toLocaleDateString('es')}</span></li>)}</ul> : <p>No hay evoluciones visibles para este paciente y contexto de origen.</p>}</section>}
+    {teacherGrant(Astro.cookies, 'kinesiology-evolutions:read') && <section aria-labelledby="teacher-evolutions-title"><h3 id="teacher-evolutions-title">Evoluciones kinésicas</h3>{evolutionError ? <p role="alert">No se pudieron cargar las evoluciones kinésicas. Las fichas de este contexto siguen disponibles.</p> : evolutions.length ? <ul>{evolutions.map((item) => <li><span>Evaluación {item.evaluation_id} · {item.status === 'draft' ? 'Borrador' : item.status === 'submitted' ? 'Enviada' : 'Validada'} · {new Date(item.created_at).toLocaleDateString('es')}</span></li>)}</ul> : <p>No hay evoluciones visibles para este paciente y contexto de origen.</p>}</section>}
    </section>}
   </>}
  </main>
