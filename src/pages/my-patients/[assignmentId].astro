@@ -4,7 +4,8 @@ import { actions } from 'astro:actions';
 import Layout from '../../layouts/Layout.astro';
 import { ApiError } from '../../shared/apiClient';
 import { decodeJwt } from '../../shared/jwt';
-import { listAssignedPatients, parseAssignmentPagination } from '../../pods/patient-assignment/api';
+import { listAssignedPatients } from '../../pods/patient-assignment/api';
+import { assignmentListCarrier, assignmentListQuery, parseAssignmentListCoordinates } from '../../pods/patient-assignment/list-coordinates';
 import { actionHrefWithContext, EVALUATION_STATUS_LABELS, listEvaluations, listSubmittedEvaluations, type Evaluation } from '../../pods/kinesiology-evaluation/api';
 import { listOralSurgeryDrafts, type OralSurgeryDraft } from '../../pods/oral-surgery-draft/api';
 import { isOralSurgeryContext, listOralSurgeryContexts } from '../../pods/oral-surgery-draft/discovery';
@@ -13,6 +14,7 @@ const assignmentId = Astro.params.assignmentId ?? '';
 const decimalId = /^[1-9]\d{0,18}$/.test(assignmentId) && BigInt(assignmentId) <= 9223372036854775807n;
 const query = Astro.url.searchParams;
 let pagination = { limit: 50, offset: 0 };
+let listFilters: ReturnType<typeof parseAssignmentListCoordinates>['filters'] = {};
 let assignment: Awaited<ReturnType<typeof listAssignedPatients>>['items'][number] | null = null;
 let drafts: Evaluation[] = [];
 let submitted: Evaluation[] = [];
@@ -33,10 +35,12 @@ const actor = token ? decodeJwt(token) : null;
 const permissions = actor?.permissions;
 const mayReadOralSurgery = Array.isArray(permissions) && permissions.includes('oral-surgery-drafts:read');
 try {
-	pagination = parseAssignmentPagination(query);
+	const coordinates = parseAssignmentListCoordinates(query);
+	pagination = { limit: coordinates.limit, offset: coordinates.offset };
+	listFilters = coordinates.filters;
 	if (!decimalId) unavailable = true;
 	else {
-		const page = await listAssignedPatients(pagination, Astro.cookies);
+		const page = await listAssignedPatients(pagination, Astro.cookies, listFilters);
 		assignment = page.items.find((item) => item.id === assignmentId && item.ended_at === null) ?? null;
 		if (!assignment) unavailable = true;
 		else {
@@ -77,33 +81,34 @@ if (oralSurgeryResult?.data?.success === false && /sesión venció/i.test(oralSu
 	return Astro.redirect(`/auth/login?returnTo=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`);
 }
 if (result?.data?.success && assignment && decimalId) {
-	return Astro.redirect(`/kinesiology-evaluations/${result.data.evaluation.id}?assignment_id=${encodeURIComponent(assignment.id)}&limit=${pagination.limit}&offset=${pagination.offset}`);
+	return Astro.redirect(`/kinesiology-evaluations/${result.data.evaluation.id}?${new URLSearchParams({ assignment_id: assignment.id, ...assignmentListCarrier({ ...pagination, filters: listFilters }) })}`);
 }
 if (oralSurgeryResult?.data?.success && oralSurgeryEnabled && assignment && decimalId) {
-	return Astro.redirect(`/oral-surgery-drafts/${oralSurgeryResult.data.draft.id}?assignment_id=${encodeURIComponent(assignment.id)}&limit=${pagination.limit}&offset=${pagination.offset}`);
+	return Astro.redirect(`/oral-surgery-drafts/${oralSurgeryResult.data.draft.id}?${new URLSearchParams({ assignment_id: assignment.id, ...assignmentListCarrier({ ...pagination, filters: listFilters }) })}`);
 }
+const coordinates = { ...pagination, filters: listFilters };
+const listCarrier = assignmentListCarrier(coordinates);
+const listQuery = assignmentListQuery(coordinates);
 const createHref = actionHrefWithContext(actions.createKinesiologyEvaluation.toString(), {
 	assignment_id: assignmentId,
-	limit: String(pagination.limit),
-	offset: String(pagination.offset),
-}, Astro.url.href);
+	...listCarrier,
+});
 const createOralSurgeryHref = oralSurgeryEnabled ? actionHrefWithContext(actions.createOralSurgeryDraft.toString(), {
 	assignment_id: assignmentId,
-	limit: String(pagination.limit),
-	offset: String(pagination.offset),
-}, Astro.url.href) : '';
+	...listCarrier,
+}) : '';
 ---
 <Layout>
 	<main class="clinical-page" aria-labelledby="title">
-		<p class="eyebrow"><a href="/my-patients">Mis pacientes asignados</a> / {oralSurgeryEnabled ? 'Cirugía Oral I' : discoveryError ? 'Ficha clínica' : 'Ficha kinésica inicial'}</p>
+		<p class="eyebrow"><a href={`/my-patients?${listQuery}`}>Mis pacientes asignados</a> / {oralSurgeryEnabled ? 'Cirugía Oral I' : discoveryError ? 'Ficha clínica' : 'Ficha kinésica inicial'}</p>
 		{unavailable ? <section class="notice" role="status">
 			<h1 id="title">Asignación no disponible</h1>
 			<p>No se encontró esa asignación en esta página. Volvé a la lista para elegir el contexto vigente.</p>
-			<a class="button secondary" href="/my-patients">Volver a mis pacientes</a>
+			<a class="button secondary" href={`/my-patients?${listQuery}`}>Volver a mis pacientes</a>
 		</section> : loadError ? <section class="notice error" role="alert">
 			<h1 id="title">No se pudo cargar la ficha</h1>
 			<p>{loadError}</p>
-			<a href="/my-patients">Volver a mis pacientes</a>
+			<a href={`/my-patients?${listQuery}`}>Volver a mis pacientes</a>
 		</section> : assignment ? <>
 			<header class="intro">
 				<div>
@@ -118,6 +123,7 @@ const createOralSurgeryHref = oralSurgeryEnabled ? actionHrefWithContext(actions
 					<input type="hidden" name="assignment_id" value={assignment.id} />
 					<input type="hidden" name="limit" value={pagination.limit} />
 					<input type="hidden" name="offset" value={pagination.offset} />
+					{Object.entries(listCarrier).map(([key, value]) => <input type="hidden" name={key} value={value} />)}
 					<button class="button" type="submit">Crear nuevo borrador de Cirugía Oral I</button>
 					<p class="hint">Cada creación inicia un encuentro clínico nuevo. Para continuar uno existente, abrilo desde la lista.</p>
 				</form> : null}
@@ -128,6 +134,7 @@ const createOralSurgeryHref = oralSurgeryEnabled ? actionHrefWithContext(actions
 					<input type="hidden" name="assignment_id" value={assignment.id} />
 					<input type="hidden" name="limit" value={pagination.limit} />
 					<input type="hidden" name="offset" value={pagination.offset} />
+					{Object.entries(listCarrier).map(([key, value]) => <input type="hidden" name={key} value={value} />)}
 					<input type="hidden" name="content" value="{}" />
 					<button class="button" type="submit">Crear nuevo borrador</button>
 					<p class="hint">Cada creación inicia un borrador nuevo y vacío.</p>
@@ -139,7 +146,7 @@ const createOralSurgeryHref = oralSurgeryEnabled ? actionHrefWithContext(actions
 			{oralSurgeryEnabled ? <section aria-labelledby="oral-drafts-title">
 				<h2 id="oral-drafts-title">Borradores de Cirugía Oral I</h2>
 				{oralSurgeryDrafts.length ? <ul class="draft-list">{oralSurgeryDrafts.map((draft) => <li>
-					<a href={`/oral-surgery-drafts/${draft.id}?assignment_id=${assignment.id}&limit=${pagination.limit}&offset=${pagination.offset}`}>
+					<a href={`/oral-surgery-drafts/${draft.id}?${new URLSearchParams({ assignment_id: assignment.id, ...assignmentListCarrier(coordinates) })}`}>
 						Abrir borrador · versión {draft.version} · actualizado {new Date(draft.updated_at).toLocaleDateString('es')}
 					</a>
 				</li>)}</ul> : <p>Todavía no hay borradores de Cirugía Oral I para esta asignación.</p>}
@@ -150,7 +157,7 @@ const createOralSurgeryHref = oralSurgeryEnabled ? actionHrefWithContext(actions
 				<section aria-labelledby="drafts-title">
 					<h2 id="drafts-title">Borradores de ficha inicial</h2>
 					{drafts.length ? <ul class="draft-list">{drafts.map((draft) => <li>
-						<a href={`/kinesiology-evaluations/${draft.id}?assignment_id=${assignment.id}&limit=${pagination.limit}&offset=${pagination.offset}`}>
+						<a href={`/kinesiology-evaluations/${draft.id}?${new URLSearchParams({ assignment_id: assignment.id, ...assignmentListCarrier(coordinates) })}`}>
 							Abrir borrador de ficha · actualizado {new Date(draft.updated_at).toLocaleDateString('es')}
 						</a>
 					</li>)}</ul> : <p>Todavía no hay borradores para esta asignación.</p>}
@@ -158,7 +165,7 @@ const createOralSurgeryHref = oralSurgeryEnabled ? actionHrefWithContext(actions
 				<section aria-labelledby="submitted-title">
 					<h2 id="submitted-title">Fichas enviadas</h2>
 					{submitted.length ? <ul class="draft-list">{submitted.map((record) => <li>
-						<a href={`/kinesiology-evaluations/${record.id}?assignment_id=${assignment.id}&limit=${pagination.limit}&offset=${pagination.offset}`}>
+						<a href={`/kinesiology-evaluations/${record.id}?${new URLSearchParams({ assignment_id: assignment.id, ...assignmentListCarrier(coordinates) })}`}>
 							Ver ficha enviada · {EVALUATION_STATUS_LABELS[record.status]} · actualizada {new Date(record.updated_at).toLocaleDateString('es')}
 						</a>
 					</li>)}</ul> : <p>Todavía no hay fichas enviadas para esta asignación.</p>}

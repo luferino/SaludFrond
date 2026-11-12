@@ -1,15 +1,18 @@
 import type { AstroCookies } from 'astro';
 import { ApiError } from '../../../shared/apiClient';
 import { appendConsent, getConsent, getTeacherEvaluation, parseClinicalContext, teacherGrant, validId, validPaperDate } from '../api';
+import { assignmentListCarrier, parseAssignmentActionCoordinates } from '../../patient-assignment/list-coordinates';
 
 export async function handleRecordTeacherConsent(input: Record<string, unknown>, context: { cookies: AstroCookies }) {
  const date = typeof input.paper_signature_date === 'string' ? input.paper_signature_date : '';
  const failed = (error: string, uncertain = false) => ({ success: false as const, error, paper_signature_date: date, uncertain });
+ let listCoordinates;
+ try { listCoordinates = parseAssignmentActionCoordinates(input); } catch { return failed('La coordenada de lista no es válida.'); }
  if (!teacherGrant(context.cookies, 'kinesiology-evaluations:read') || !teacherGrant(context.cookies, 'kinesiology-evaluations:verify-consent')) {
   return failed('No tenés permiso para registrar el consentimiento como docente.');
  }
  if (!validId(input.id) || !validPaperDate(date)) return failed('Revisá la ficha y la fecha de firma en papel (AAAA-MM-DD).');
- if (Object.keys(input).some((key) => !['id', 'patient_id', 'subject_id', 'academic_group_id', 'paper_signature_date'].includes(key))) {
+ if (Object.keys(input).some((key) => !['id', 'patient_id', 'subject_id', 'academic_group_id', 'paper_signature_date', 'list_limit', 'list_offset', 'list_patient_id', 'list_student_id', 'list_subject_id', 'list_academic_group_id'].includes(key))) {
   return failed('El formulario contiene campos no permitidos.');
  }
  let writing = false;
@@ -22,7 +25,7 @@ export async function handleRecordTeacherConsent(input: Record<string, unknown>,
   await getConsent(input.id, context.cookies);
   writing = true;
   await appendConsent(input.id, date, context.cookies);
-  return { success: true as const, id: String(input.id), ...selected };
+  return { success: true as const, id: String(input.id), ...selected, ...(Object.keys(input).some((key) => key.startsWith('list_')) ? assignmentListCarrier(listCoordinates) : {}) };
  } catch (error) {
   if (error instanceof ApiError) {
    if (error.status === 401) return failed('Tu sesión venció. Iniciá sesión nuevamente.');

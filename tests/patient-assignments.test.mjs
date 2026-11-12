@@ -74,7 +74,8 @@ test('mine adapter rejects malformed envelopes, invalid ids and ended assignment
 test('pagination keeps previous navigation on an empty later page and bounds next offsets', async () => {
   const page = await source('src/pages/my-patients.astro');
   const paginationCode = page.slice(page.indexOf('const previousOffset ='), page.indexOf('const pageLink ='));
-  const getNavigation = (offset, limit, items, state) => Function('offset', 'limit', 'items', 'state', `${paginationCode}; return { previousOffset, nextOffset };`)(offset, limit, items, state);
+  const javascript = ts.transpileModule(paginationCode, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  const getNavigation = (offset, limit, items, state) => Function('offset', 'limit', 'items', 'state', `${javascript}; return { previousOffset, nextOffset };`)(offset, limit, items, state);
   assert.deepEqual(getNavigation(50, 50, [], 'empty'), { previousOffset: 0, nextOffset: null });
   assert.deepEqual(getNavigation(Number.MAX_SAFE_INTEGER, 100, Array(100), 'ok'), { previousOffset: Number.MAX_SAFE_INTEGER - 100, nextOffset: null });
   assert.match(page, /state !== 'denied' && state !== 'error' && \(previousOffset !== null \|\| nextOffset !== null\)/);
@@ -109,7 +110,7 @@ test('assigned patient page is read-only, contextual, and distinguishes empty an
   const page = await source('src/pages/my-patients.astro');
   assert.match(page, /listAssignedPatients/);
   assert.match(page, /parseAssignmentPagination/);
-  assert.match(page, /\/my-patients\/\$\{row\.id\}\?limit=\$\{limit\}&offset=\$\{offset\}/);
+  assert.match(page, /detailHref\(row\.id\)/, 'compiled listing behavior and exact filters are asserted in assignment-listing-search.test.mjs');
   assert.match(page, /items\.length/);
   assert.match(page, /subject_id/);
   assert.match(page, /academic_group_id/);

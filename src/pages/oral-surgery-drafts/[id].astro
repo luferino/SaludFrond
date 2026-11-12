@@ -4,7 +4,8 @@ import { actions, isInputError } from 'astro:actions';
 import Layout from '../../layouts/Layout.astro';
 import OralSurgeryReadOnly from '../../components/clinical/OralSurgeryReadOnly.astro';
 import { ApiError } from '../../shared/apiClient';
-import { listAssignedPatients, parseAssignmentPagination } from '../../pods/patient-assignment/api';
+import { listAssignedPatients } from '../../pods/patient-assignment/api';
+import { assignmentListCarrier, assignmentListQuery, parseAssignmentListCoordinates } from '../../pods/patient-assignment/list-coordinates';
 import type { AuthorizationHistory, ConsentHistory, OralSurgeryDraft } from '../../pods/oral-surgery-draft/api';
 import { getAuthorizationHistory, getConsentHistory, getOralSurgeryDraft, validId } from '../../pods/oral-surgery-draft/api';
 import type { FormValues } from '../../pods/oral-surgery-draft/actions/drafts';
@@ -19,6 +20,7 @@ const id = Astro.params.id ?? '';
 const search = Astro.url.searchParams;
 const assignmentParams = search.getAll('assignment_id');
 const assignmentId = assignmentParams.length === 1 ? assignmentParams[0] : '';
+let listFilters: ReturnType<typeof parseAssignmentListCoordinates>['filters'] = {};
 const loginRedirect = `/auth/login?returnTo=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`;
 
 /** Labels and shown values of the controls that carry an answer; empty controls are not listed. */
@@ -32,17 +34,29 @@ function unsavedAnswers(values: FormValues | undefined): Unsaved[] {
 	});
 }
 
+function actionReturnParams(data: { assignment_id: string; limit: string; offset: string; list_filters?: ReturnType<typeof parseAssignmentListCoordinates>['filters'] }, notice: 'saved' | 'declared') {
+	const params = new URLSearchParams({ assignment_id: data.assignment_id });
+	if (data.list_filters !== undefined) {
+		for (const [key, value] of Object.entries(assignmentListCarrier({ limit: Number(data.limit), offset: Number(data.offset), filters: data.list_filters }))) params.set(key, value);
+	} else {
+		params.set('limit', data.limit);
+		params.set('offset', data.offset);
+	}
+	params.set(notice, '1');
+	return params;
+}
+
 const saveResult = Astro.getActionResult(actions.updateOralSurgeryDraft);
 const saveData = saveResult?.data;
 if (saveData?.success) {
 	// Redirect from the context the action validated, before any fallible read.
-	const returnParams = new URLSearchParams({ assignment_id: saveData.assignment_id, limit: saveData.limit, offset: saveData.offset, saved: '1' });
+	const returnParams = actionReturnParams(saveData, 'saved');
 	return Astro.redirect(`/oral-surgery-drafts/${encodeURIComponent(saveData.id)}?${returnParams}`);
 }
 const declareResult = Astro.getActionResult(actions.declareOralSurgeryConsent);
 const declareData = declareResult?.data;
 if (declareData?.success) {
-	const returnParams = new URLSearchParams({ assignment_id: declareData.assignment_id, limit: declareData.limit, offset: declareData.offset, declared: '1' });
+	const returnParams = actionReturnParams(declareData, 'declared');
 	return Astro.redirect(`/oral-surgery-drafts/${encodeURIComponent(declareData.id)}?${returnParams}`);
 }
 const saveFailure = saveData?.success === false ? saveData : undefined;
@@ -72,13 +86,15 @@ let consentError = '';
 let authorization: AuthorizationHistory | null = null;
 let authorizationError = '';
 try {
-	const pagination = parseAssignmentPagination(search);
+	const coordinates = parseAssignmentListCoordinates(search, true);
+	const pagination = { limit: coordinates.limit, offset: coordinates.offset };
+	listFilters = coordinates.filters;
 	limit = pagination.limit;
 	offset = pagination.offset;
 	if (!validId(assignmentId) || !validId(id)) {
 		unavailable = true;
 	} else {
-		const page = await listAssignedPatients(pagination, Astro.cookies);
+		const page = await listAssignedPatients(pagination, Astro.cookies, listFilters);
 		const assignment = page.items.find((item) => item.id === assignmentId && item.ended_at === null);
 		if (!assignment) {
 			unavailable = true;
@@ -132,11 +148,13 @@ const canDeclare = !!draft && eligible && !!consent && !consentError && consent.
 	&& consent.draft_version === draft.version && !retainedValues && !declareUncertain;
 const saved = search.get('saved') === '1';
 const declared = search.get('declared') === '1';
-const contextHref = `/my-patients/${encodeURIComponent(assignmentId)}?limit=${limit}&offset=${offset}`;
-// Keep the assignment context on the form posts: a failed result re-renders this page, which needs it.
-const actionContext = { assignment_id: assignmentId, limit: String(limit), offset: String(offset) };
-const saveHref = actionHrefWithContext(actions.updateOralSurgeryDraft.toString(), actionContext, Astro.url.href);
-const declareHref = actionHrefWithContext(actions.declareOralSurgeryConsent.toString(), actionContext, Astro.url.href);
+const coordinates = { limit, offset, filters: listFilters };
+const listCarrier = assignmentListCarrier(coordinates);
+const contextHref = `/my-patients/${encodeURIComponent(assignmentId)}?${assignmentListQuery(coordinates)}`;
+// Keep the validated assignment-list coordinates on the form post, separate from clinical context.
+const actionContext = { assignment_id: assignmentId, ...listCarrier };
+const saveHref = actionHrefWithContext(actions.updateOralSurgeryDraft.toString(), actionContext);
+const declareHref = actionHrefWithContext(actions.declareOralSurgeryConsent.toString(), actionContext);
 ---
 <Layout>
 	<main class="clinical-page" aria-labelledby="title">
@@ -169,6 +187,9 @@ const declareHref = actionHrefWithContext(actions.declareOralSurgeryConsent.toSt
 				<input type="hidden" name="assignment_id" value={assignmentId} />
 				<input type="hidden" name="limit" value={limit} />
 				<input type="hidden" name="offset" value={offset} />
+				<input type="hidden" name="list_limit" value={limit} />
+				<input type="hidden" name="list_offset" value={offset} />
+				{Object.entries(listFilters).map(([key, value]) => <input type="hidden" name={`list_${key}`} value={value} />)}
 				<fieldset disabled={!eligible}>
 					<legend>Datos de admisión</legend>
 					<label>Fecha de ingreso <input name="admission_date" type="date" value={fields.admission_date} /></label>
@@ -205,6 +226,9 @@ const declareHref = actionHrefWithContext(actions.declareOralSurgeryConsent.toSt
 						<input type="hidden" name="assignment_id" value={assignmentId} />
 						<input type="hidden" name="limit" value={limit} />
 						<input type="hidden" name="offset" value={offset} />
+						<input type="hidden" name="list_limit" value={limit} />
+						<input type="hidden" name="list_offset" value={offset} />
+						{Object.entries(listFilters).map(([key, value]) => <input type="hidden" name={`list_${key}`} value={value} />)}
 						<label class="confirm"><input type="checkbox" name="paper_signed" value="on" required /> Confirmo que el paciente firmó el consentimiento en papel para el plan de tratamiento guardado. No es una firma electrónica y no se adjunta el documento.</label>
 						<p id="dirty-notice" class="notice error" role="status" hidden>Hay cambios sin guardar. Guardá el borrador antes de declarar el consentimiento.</p>
 						<button id="declare-button" class="button" type="submit">Declarar consentimiento en papel</button>

@@ -22,6 +22,18 @@ async function compile(path, fetch) {
 const cookies = { get: () => ({ value: 'session-token' }) };
 const ids = { patient_id: '11111111-1111-4111-8111-111111111111', student_id: '22222222-2222-4222-8222-222222222222', subject_id: '33333333-3333-4333-8333-333333333333', academic_group_id: '44444444-4444-4444-8444-444444444444' };
 
+test('assignment filters are sent as UUID query constraints and malformed input causes no request', async () => {
+  const requests = [];
+  const api = await compile('src/pods/patient-assignment/api.ts', async (url) => { requests.push(url); return Response.json({ items: [], limit: 50, offset: 0 }); });
+  await api.listAssignedPatients({ limit: 50, offset: 0 }, cookies, ids);
+  assert.equal(requests[0], `https://api.invalid/patient-assignments/mine?limit=50&offset=0&patient_id=${ids.patient_id}&student_id=${ids.student_id}&subject_id=${ids.subject_id}&academic_group_id=${ids.academic_group_id}`);
+  for (const invalid of ['bad', '[11111111-1111-4111-8111-111111111111]', '11111111-1111-4111-8111-111111111111&patient_id=11111111-1111-4111-8111-111111111111']) {
+    const params = new URLSearchParams(`patient_id=${encodeURIComponent(invalid)}`);
+    assert.throws(() => api.parseAssignmentListingFilters(params));
+  }
+  assert.equal(requests.length, 1);
+});
+
 test('teacher eligible student selector encodes literal trimmed q and keeps habilitation selection identity', async () => {
   const requests = [];
   const api = await compile('src/pods/teacher-assignment/api.ts', async (url, init) => { requests.push([url, init]); return Response.json({ items: [], limit: 50, offset: 0 }); });
@@ -60,6 +72,15 @@ async function renderPage(path, query, options = {}) {
   return { html: await html(exports.default({ createAstro: () => Astro }, {}, {})), requests };
 }
 async function html(value) { value = await value; if (value == null || value === false) return ''; if (Array.isArray(value)) return (await Promise.all(value.map(html))).join(''); return String(value); }
+
+test('compiled own assignment listing renders detail path and retains filters and pagination', async () => {
+  const result = await renderPage('src/pages/my-patients.astro', `limit=7&offset=14&patient_id=${ids.patient_id}&subject_id=${ids.subject_id}`);
+  const href = result.html.match(/<a class="record-link[^>]* href="([^"]+)"/)?.[1];
+  assert.ok(href);
+  const link = new URL(href, 'https://fixture.invalid');
+  assert.equal(link.pathname, '/my-patients/91');
+  assert.deepEqual([...link.searchParams], [['limit','7'],['offset','14'],['patient_id',ids.patient_id],['subject_id',ids.subject_id]]);
+});
 
 test('compiled teacher listing renders editable search and retained selector coordinates; failed POST restores search and selection only when still eligible', async () => {
   const query = `context=${ids.subject_id}:${ids.academic_group_id}&current_context=${ids.subject_id}:${ids.academic_group_id}&q=Ana&limit=5&offset=10&student_limit=6&student_offset=12&patient_limit=8&patient_offset=16`;

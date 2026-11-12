@@ -100,6 +100,22 @@ test('review actions perform one confirmed targeted validation or reasoned corre
  }
 });
 
+test('review coordinate carriers are validated separately and never enter the review mutation payload', async () => {
+ const apiState = fakeApi();
+ const api = await compile(apiState.fetcher);
+ const carrier = { list_limit: '7', list_offset: '14', list_patient_id: patient, list_subject_id: subject };
+ const result = await api.handleValidateTeacherSubmission(input(latest, carrier), { cookies: teacherCookies(grants) });
+ assert.equal(result.success, true);
+ assert.equal(result.list_offset, '14');
+ const post = apiState.requests.find(([, init]) => init.method === 'POST');
+ assert.ok(post);
+ assert.deepEqual(JSON.parse(post[1].body), { submission_id: latest });
+ const invalidState = fakeApi();
+ const invalidApi = await compile(invalidState.fetcher);
+ assert.equal((await invalidApi.handleValidateTeacherSubmission(input(latest, { 'list_patient_id[x]': patient }), { cookies: teacherCookies(grants) })).success, false);
+ assert.deepEqual(invalidState.requests, []);
+});
+
 test('review actions enforce exact grant, teacher profile, origin, current status and latest BigInt target before writes', async () => {
  const attempts = [
   [input(), teacherCookies(['kinesiology-evaluations:read'])],

@@ -172,6 +172,25 @@ test('consent action checks separate teacher verify grant, exact origin and orig
  assert.equal(requests.filter(([, init]) => init.method === 'POST').length, before);
 });
 
+test('teacher consent carries validated list coordinates without conflating origin or changing its mutation body', async () => {
+ const requests = [];
+ const evidence = { id, paper_signature_date: '2099-12-31', verified_by: patient, verified_at: '2026-01-01T00:00:00Z' };
+ const api = await compile(async (url, init) => { requests.push([url, init]); return Response.json(init.method === 'POST' ? { evaluation_id: id, status: 'verified', evidence } : url.endsWith('/consent') ? { evaluation_id: id, status: 'pending', evidence: null } : evaluation); }, 'src/pods/teacher-clinical/actions/consent.ts');
+ const grants = ['kinesiology-evaluations:read', 'kinesiology-evaluations:verify-consent'];
+ const carrier = { list_limit: '7', list_offset: '14', list_patient_id: patient, list_subject_id: subject };
+ const result = await api.handleRecordTeacherConsent({ id, ...context, paper_signature_date: '2099-12-31', ...carrier }, { cookies: teacherCookies(grants) });
+ assert.equal(result.success, true);
+ assert.equal(result.list_limit, '7');
+ assert.equal(result.list_offset, '14');
+ assert.equal(requests.length, 3);
+ assert.deepEqual(JSON.parse(requests[2][1].body), { paper_signature_date: '2099-12-31' });
+ assert.equal(new URL(requests[0][0]).searchParams.get('list_patient_id'), null);
+ const invalid = await compile(async (url) => { requests.push([url]); return Response.json(evaluation); }, 'src/pods/teacher-clinical/actions/consent.ts');
+ requests.length = 0;
+ assert.equal((await invalid.handleRecordTeacherConsent({ id, ...context, paper_signature_date: '2099-12-31', 'list_patient_id[x]': patient }, { cookies: teacherCookies(grants) })).success, false);
+ assert.deepEqual(requests, []);
+});
+
 test('denied consent action leaves append count and stored rows unchanged', async () => {
  const rows = [{ id: 'existing', paper_signature_date: '2024-01-01' }];
  let appends = 0;
