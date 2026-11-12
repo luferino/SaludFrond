@@ -61,10 +61,12 @@ export function parseAssignmentActionCoordinates(input: Record<string, unknown>,
  const params = new URLSearchParams();
  for (const [key, value] of Object.entries(input)) {
   if (!key.startsWith('list_')) continue;
-  if (!LIST_KEYS.has(key) || typeof value !== 'string') throw new Error('El contexto de la lista no es válido.');
+  if (!LIST_KEYS.has(key)) throw new Error('El contexto de la lista no es válido.');
+  if (value === undefined) continue;
+  if (typeof value !== 'string') throw new Error('El contexto de la lista no es válido.');
   params.append(key, value);
  }
- const hasNamespaced = Object.keys(input).some((key) => key.startsWith('list_'));
+ const hasNamespaced = Object.entries(input).some(([key, value]) => key.startsWith('list_') && value !== undefined);
  if (hasNamespaced) return parseAssignmentListCoordinates(params, true);
  return { filters: {}, ...(legacyPage ?? parsePage(legacy, '')) };
 }
