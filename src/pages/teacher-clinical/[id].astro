@@ -7,6 +7,7 @@ import SubmissionSnapshot from '../../components/clinical/SubmissionSnapshot.ast
 import { ApiError } from '../../shared/apiClient';
 import { getConsent, getTeacherEvaluation, listTeacherCorrections, listTeacherSubmissions, parseClinicalContext, teacherGrant, type ConsentState } from '../../pods/teacher-clinical/api';
 import { type CorrectionEvent, type Evaluation, type Submission, actionHrefWithContext } from '../../pods/kinesiology-evaluation/api';
+import { assignmentListCarrier, assignmentListQuery, parseAssignmentListCoordinates } from '../../pods/patient-assignment/list-coordinates';
 Astro.response.headers.set('Cache-Control', 'no-store');
 let evaluation: Evaluation | null = null;
 let error = '';
@@ -27,17 +28,21 @@ const reviewError = reviewResult?.error ? (isInputError(reviewResult.error) ? 'R
 const correctionError = correctionResult?.error ? (isInputError(correctionResult.error) ? 'Revisá los campos de la corrección.' : 'No se pudo confirmar la solicitud. Actualizá el estado antes de volver a decidir.') : correctionData?.success === false ? correctionData.error : '';
 if (resultData?.success === false && /sesión venció/i.test(resultData.error) || reviewData?.success === false && /sesión venció/i.test(reviewData.error) || correctionData?.success === false && /sesión venció/i.test(correctionData.error)) return Astro.redirect('/auth/login?returnTo=%2Fteacher-clinical');
 if (resultData?.success) {
- const returnParams = new URLSearchParams({ patient_id: resultData.patient_id, subject_id: resultData.subject_id, academic_group_id: resultData.academic_group_id });
+ const returnParams = new URLSearchParams({ patient_id: resultData.patient_id, subject_id: resultData.subject_id, academic_group_id: resultData.academic_group_id, ...Object.fromEntries(Object.entries(resultData).filter(([key]) => key.startsWith('list_')).map(([key,value]) => [key,String(value)])) });
  return Astro.redirect(`/teacher-clinical/${resultData.id}?${returnParams}&recorded=1`);
 }
 const confirmedReview = reviewData?.success ? reviewData : correctionData?.success ? correctionData : null;
 if (confirmedReview) {
- const returnParams = new URLSearchParams({ patient_id: confirmedReview.context.patient_id, subject_id: confirmedReview.context.subject_id, academic_group_id: confirmedReview.context.academic_group_id });
+ const returnParams = new URLSearchParams({ patient_id: confirmedReview.context.patient_id, subject_id: confirmedReview.context.subject_id, academic_group_id: confirmedReview.context.academic_group_id, ...Object.fromEntries(Object.entries(confirmedReview).filter(([key]) => key.startsWith('list_')).map(([key,value]) => [key,String(value)])) });
  return Astro.redirect(`/teacher-clinical/${confirmedReview.id}?${returnParams}&reviewed=${confirmedReview.outcome}`);
 }
 const allowed = teacherGrant(Astro.cookies, 'kinesiology-evaluations:read');
+let listCoordinates: ReturnType<typeof parseAssignmentListCoordinates> = { filters: {}, limit: 50, offset: 0 };
+let listCoordinatesValid = true;
+try { listCoordinates = parseAssignmentListCoordinates(Astro.url.searchParams, true); }
+catch { listCoordinatesValid = false; error = 'La coordenada de lista no es válida.'; }
 try {
- if (allowed) {
+ if (allowed && listCoordinatesValid) {
   evaluation = await getTeacherEvaluation(Astro.params.id ?? '', parseClinicalContext(Astro.url.searchParams), Astro.cookies);
   try { consent = await getConsent(evaluation.id, Astro.cookies); }
   catch (failure) {
@@ -60,11 +65,16 @@ try {
  if (failure instanceof ApiError && failure.status === 401) return Astro.redirect('/auth/login?returnTo=%2Fteacher-clinical');
  error = failure instanceof ApiError && failure.status === 403 ? 'No tenés permiso vigente para consultar esta ficha.' : 'No se pudo cargar la ficha en este contexto de origen.';
 }
-const cleanParams = evaluation ? new URLSearchParams({ patient_id: evaluation.patient_id, subject_id: evaluation.origin_subject_id, academic_group_id: evaluation.origin_group_id }) : new URLSearchParams();
+const listCarrier = assignmentListCarrier(listCoordinates);
+const cleanParams = evaluation ? new URLSearchParams({ patient_id: evaluation.patient_id, subject_id: evaluation.origin_subject_id, academic_group_id: evaluation.origin_group_id, ...listCarrier }) : new URLSearchParams(listCarrier);
 const stateHref = `/teacher-clinical/${Astro.params.id}?${cleanParams}`;
-const actionHref = actionHrefWithContext(actions.recordTeacherConsent.toString(), Object.fromEntries(cleanParams), Astro.url.href);
-const validateHref = actionHrefWithContext(actions.validateTeacherSubmission.toString(), Object.fromEntries(cleanParams), Astro.url.href);
-const correctionHref = actionHrefWithContext(actions.requestTeacherCorrection.toString(), Object.fromEntries(cleanParams), Astro.url.href);
+const returnParams = new URLSearchParams(assignmentListQuery(listCoordinates));
+const assignmentChoice = Astro.url.searchParams.getAll('assignment_id');
+if (assignmentChoice.length === 1 && /^[1-9]\d{0,18}$/.test(assignmentChoice[0])) returnParams.set('assignment_id', assignmentChoice[0]);
+const listReturnHref = `/teacher-clinical?${returnParams}`;
+const actionHref = actionHrefWithContext(actions.recordTeacherConsent.toString(), Object.fromEntries(cleanParams));
+const validateHref = actionHrefWithContext(actions.validateTeacherSubmission.toString(), Object.fromEntries(cleanParams));
+const correctionHref = actionHrefWithContext(actions.requestTeacherCorrection.toString(), Object.fromEntries(cleanParams));
 const canRecord = !!evaluation && !!consent && teacherGrant(Astro.cookies, 'kinesiology-evaluations:verify-consent');
 const uncertain = resultData?.success === false && resultData.uncertain || !!result?.error && !isInputError(result.error);
 const reviewUncertain = reviewData?.success === false && reviewData.uncertain
@@ -78,7 +88,7 @@ const reviewReason = correctionData?.success === false ? correctionData.reason :
 ---
 <Layout>
  <main>
-  <a href="/teacher-clinical">Volver al acceso clínico docente</a>
+  <a href={listReturnHref}>Volver al acceso clínico docente</a>
   <h1>Ficha kinésica inicial · consulta docente</h1>
   {!allowed ? <p role="alert">No tenés permiso para consultar esta ficha como docente.</p> : error ? <p role="alert">{error}</p> : evaluation && <>
    <p>Asignatura de origen: {evaluation.origin_subject_id}<br />Grupo de origen: {evaluation.origin_group_id}</p>
@@ -101,6 +111,7 @@ const reviewReason = correctionData?.success === false ? correctionData.reason :
       <input type="hidden" name="patient_id" value={evaluation.patient_id} />
       <input type="hidden" name="subject_id" value={evaluation.origin_subject_id} />
       <input type="hidden" name="academic_group_id" value={evaluation.origin_group_id} />
+      {Object.entries(listCarrier).map(([key,value]) => <input type="hidden" name={key} value={value} />)}
       <label>Fecha de firma del consentimiento en papel <input type="date" name="paper_signature_date" required value={resultData?.success === false ? resultData.paper_signature_date : ''} /></label>
       <p>Cada envío agrega una constancia nueva, aunque la fecha sea igual. Confirmá que tenés el consentimiento firmado antes de registrarlo.</p>
       <button type="submit">Registrar constancia de consentimiento</button>
@@ -123,6 +134,7 @@ const reviewReason = correctionData?.success === false ? correctionData.reason :
        <input type="hidden" name="subject_id" value={evaluation!.origin_subject_id} />
        <input type="hidden" name="academic_group_id" value={evaluation!.origin_group_id} />
        <input type="hidden" name="submission_id" value={submission.id} />
+       {Object.entries(listCarrier).map(([key,value]) => <input type="hidden" name={key} value={value} />)}
        <button type="submit">Validar esta versión</button>
       </form>
       <form method="POST" action={correctionHref} class="teacher-review-form">
@@ -131,6 +143,7 @@ const reviewReason = correctionData?.success === false ? correctionData.reason :
        <input type="hidden" name="subject_id" value={evaluation!.origin_subject_id} />
        <input type="hidden" name="academic_group_id" value={evaluation!.origin_group_id} />
        <input type="hidden" name="submission_id" value={submission.id} />
+       {Object.entries(listCarrier).map(([key,value]) => <input type="hidden" name={key} value={value} />)}
        <label>Motivo de la corrección <textarea name="reason" required>{reviewReason}</textarea></label>
        <button type="submit">Solicitar correcciones</button>
       </form>

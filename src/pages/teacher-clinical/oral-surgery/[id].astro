@@ -8,6 +8,7 @@ import { actionHrefWithContext } from '../../../pods/kinesiology-evaluation/api'
 import { parseClinicalContext, teacherGrant, type ClinicalContext } from '../../../pods/teacher-clinical/api';
 import { getAuthorizationHistory, getConsentHistory, getOralSurgeryDraft, type AuthorizationHistory, type ConsentHistory, type OralSurgeryDraft } from '../../../pods/oral-surgery-draft/api';
 import { oralSurgeryTimestampLabel } from '../../../pods/oral-surgery-draft/labels';
+import { assignmentListCarrier, assignmentListQuery, parseAssignmentListCoordinates } from '../../../pods/patient-assignment/list-coordinates';
 
 Astro.response.headers.set('Cache-Control', 'no-store');
 const UNAVAILABLE = 'El borrador no está disponible en este contexto de origen.';
@@ -24,12 +25,18 @@ const actionError = result?.error ? (isInputError(result.error) ? 'Revisá los c
 const uncertain = resultData?.success === false && resultData.uncertain || !!result?.error && !isInputError(result.error);
 if (resultData?.success === false && /sesión venció/i.test(resultData.error)) return loginRedirect();
 if (resultData?.success) {
- const returnParams = new URLSearchParams({ patient_id: resultData.patient_id, subject_id: resultData.subject_id, academic_group_id: resultData.academic_group_id, authorized: '1' });
+ const coordinates = parseAssignmentListCoordinates(Astro.url.searchParams, true);
+ const carriesListState = [...Astro.url.searchParams.keys()].some((key) => key.startsWith('list_'));
+ const returnParams = new URLSearchParams({ patient_id: resultData.patient_id, subject_id: resultData.subject_id, academic_group_id: resultData.academic_group_id, ...(carriesListState ? assignmentListCarrier(coordinates) : {}), authorized: '1' });
  return Astro.redirect(`/teacher-clinical/oral-surgery/${resultData.id}?${returnParams}`);
 }
 const allowed = teacherGrant(Astro.cookies, 'oral-surgery-drafts:read');
 const canAuthorize = teacherGrant(Astro.cookies, 'oral-surgery-drafts:authorize');
-if (allowed) {
+let listCoordinates: ReturnType<typeof parseAssignmentListCoordinates> = { filters: {}, limit: 50, offset: 0 };
+let listCoordinatesValid = true;
+try { listCoordinates = parseAssignmentListCoordinates(Astro.url.searchParams, true); }
+catch { listCoordinatesValid = false; error = 'La coordenada de lista no es válida.'; }
+if (allowed && listCoordinatesValid) {
  // Origin guard first: an invalid or foreign context never reaches the history reads.
  let selected: ClinicalContext | null = null;
  try { selected = parseClinicalContext(Astro.url.searchParams); } catch { selected = null; }
@@ -67,12 +74,17 @@ const currentAuthorizationId = authorizations?.current_authorization_id ?? null;
 const authorizedForVersion = !!draft && authorizations?.authorizations.find((item) => item.id === currentAuthorizationId)?.draft_version === draft.version;
 const declarationId = consent?.current_declaration_id ?? null;
 const canShowForm = canAuthorize && !!draft && versionsMatch && declarationId !== null && !authorizedForVersion && !uncertain;
-const cleanParams = draft ? new URLSearchParams({ patient_id: draft.patient_id, subject_id: draft.origin_subject_id, academic_group_id: draft.origin_group_id }) : new URLSearchParams();
-const actionHref = actionHrefWithContext(actions.authorizeOralSurgeryDraft.toString(), Object.fromEntries(cleanParams), Astro.url.href);
+const listCarrier = assignmentListCarrier(listCoordinates);
+const cleanParams = draft ? new URLSearchParams({ patient_id: draft.patient_id, subject_id: draft.origin_subject_id, academic_group_id: draft.origin_group_id, ...listCarrier }) : new URLSearchParams(listCarrier);
+const returnParams = new URLSearchParams(assignmentListQuery(listCoordinates));
+const assignmentChoices = Astro.url.searchParams.getAll('assignment_id');
+if (assignmentChoices.length === 1 && /^[1-9]\d{0,18}$/.test(assignmentChoices[0])) returnParams.set('assignment_id', assignmentChoices[0]);
+const returnToList = `/teacher-clinical?${returnParams}`;
+const actionHref = actionHrefWithContext(actions.authorizeOralSurgeryDraft.toString(), Object.fromEntries(cleanParams));
 ---
 <Layout>
  <main>
-  <a href="/teacher-clinical">Volver al acceso clínico docente</a>
+  <a href={returnToList}>Volver al acceso clínico docente</a>
   <h1>Cirugía Oral I · consulta docente</h1>
   {!allowed ? <p role="alert">No tenés permiso para consultar este borrador como docente.</p> : error ? <p role="alert">{error}</p> : draft && <>
    {Astro.url.searchParams.get('authorized') === '1' && <p role="status">Autorización registrada para la versión actual.</p>}

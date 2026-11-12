@@ -118,6 +118,7 @@ async function loadCjs(path) {
  return exports;
 }
 const labels = await loadCjs('src/pods/oral-surgery-draft/labels.ts');
+const listCoordinates = await loadCjs('src/pods/patient-assignment/list-coordinates.ts');
 
 async function html(value) {
  value = await value;
@@ -167,6 +168,7 @@ async function renderPage(options = {}) {
  };
  const mocks = {
   ...helpers,
+  ...listCoordinates,
   oralSurgeryTimestampLabel: labels.oralSurgeryTimestampLabel,
   Layout: null, Fragment: null, OralSurgeryReadOnly: readOnlyComponent, ApiError: FixtureApiError,
   actions: { authorizeOralSurgeryDraft: 'authorize' },
@@ -416,6 +418,17 @@ test('D9 hides the authorize form without the grant, without a current declarati
 test('D9 confirmed authorization redirects to the detail with its origin context and reads nothing before the redirect', async () => {
  const result = await renderPage({ results: { authorize: { data: { success: true, id: draftId, ...context } } } });
  assert.equal(result.html, `REDIRECT:/teacher-clinical/oral-surgery/${draftId}?${query}&authorized=1`);
+ assert.deepEqual(result.requests, []);
+});
+
+test('D9 confirmed authorization retains explicit list filters without replacing clinical origin', async () => {
+ const listState = new URLSearchParams({ list_student_id: authorId, list_limit: '7', list_offset: '14' });
+ const result = await renderPage({ query: `${query}&${listState}`, results: { authorize: { data: { success: true, id: draftId, ...context } } } });
+ const redirect = new URL(result.html.replace('REDIRECT:', ''), 'https://fixture.invalid');
+ assert.equal(redirect.pathname, `/teacher-clinical/oral-surgery/${draftId}`);
+ for (const [key, value] of Object.entries(context)) assert.equal(redirect.searchParams.get(key), value);
+ for (const [key, value] of listState) assert.equal(redirect.searchParams.get(key), value);
+ assert.equal(redirect.searchParams.get('authorized'), '1');
  assert.deepEqual(result.requests, []);
 });
 
