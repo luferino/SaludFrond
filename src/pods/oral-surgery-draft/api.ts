@@ -1,5 +1,6 @@
 import type { AstroCookies } from 'astro';
 import { apiFetch } from '../../shared/apiClient';
+import { realClinicalDate } from '../kinesiology-evaluation/list-filters';
 
 /** Yes/No and free-text fields of each Oral Surgery I section, in form order (backend contract). */
 export const ORAL_SURGERY_SECTIONS = {
@@ -203,6 +204,7 @@ export async function listOralSurgeryDrafts(
 	context: OralSurgeryContext,
 	cookies: AstroCookies,
 	page: { limit: number; offset: number },
+	filters?: { date_from?: string; date_to?: string },
 ): Promise<OralSurgeryDraft[]> {
 	validateContext(context);
 	if (!Number.isSafeInteger(page.limit) || page.limit < 1 || page.limit > 100
@@ -210,6 +212,15 @@ export async function listOralSurgeryDrafts(
 		throw new Error('La paginación no es válida.');
 	}
 	const query = new URLSearchParams({ ...context, limit: String(page.limit), offset: String(page.offset) });
+	if (filters?.date_from !== undefined) {
+		if (!realClinicalDate(filters.date_from)) throw new Error('El rango de fechas no es válido.');
+		query.set('date_from', filters.date_from);
+	}
+	if (filters?.date_to !== undefined) {
+		if (!realClinicalDate(filters.date_to)) throw new Error('El rango de fechas no es válido.');
+		query.set('date_to', filters.date_to);
+	}
+	if (filters?.date_from && filters.date_to && filters.date_from > filters.date_to) throw new Error('El rango de fechas no es válido.');
 	const response = await apiFetch<unknown>(`/oral-surgery-drafts?${query}`, { cookies });
 	if (!record(response) || !exactKeys(response, ['items']) || !Array.isArray(response.items)) {
 		throw new Error('La respuesta de borradores no es válida.');

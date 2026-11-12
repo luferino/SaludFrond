@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
+import { loadRegisteredActions } from './helpers/clinical-form-submit.mjs';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.resolve('astro/package.json'));
 const { transform } = require('@astrojs/compiler');
@@ -22,7 +23,10 @@ async function renderAssignmentDetail(query, rows, records = []) {
   const row = { id: '91', patient_id: patient, student_habilitation_id: patient, subject_id: subject, academic_group_id: group, assigned_by: patient, nombres: 'Ana', apellidos: 'Pérez', documento: '123', assigned_at: '2026-01-01T00:00:00Z', ended_by: null, ended_at: null, end_reason: null };
   const Astro = { params: { assignmentId: '91' }, cookies: { get: () => undefined }, url: new URL(`https://fixture.invalid/my-patients/91?${query}`), response: { headers: new Headers() }, getActionResult: () => undefined, redirect: (url) => `REDIRECT:${url}` };
   const actions = { createKinesiologyEvaluation: 'create', createOralSurgeryDraft: 'oral-create' };
+  const evolution = await (await loadRegisteredActions(async () => Response.json({}))).importModule('src/pods/kinesiology-evolution/listing.ts');
   const mocks = {
+    parseEvolutionListFilters: evolution.parseEvolutionListFilters,
+    listKinesiologyEvolutions: async () => [],
     Layout: {}, Fragment: (props) => props.children, actions, ApiError: class extends Error {}, decodeJwt: () => null,
     listAssignedPatients: async (pagination, _cookies, filters) => { requests.push({ pagination, filters }); return { items: rows ?? [row], ...pagination }; },
     parseAssignmentListCoordinates: (params) => {

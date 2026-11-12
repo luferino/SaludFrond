@@ -156,7 +156,10 @@ export async function renderCompiledPage(path, { url, oralEnabled = false, statu
   ]);
   const actionHref = (href, params) => `${href}${href.includes('?') ? '&' : '?'}${new URLSearchParams(params)}`;
   const oral = await (await loadRegisteredActions(async () => Response.json({}))).importModule('src/pods/oral-surgery-draft/actions/drafts.ts');
+  const evolution = await (await loadRegisteredActions(async () => Response.json({}))).importModule('src/pods/kinesiology-evolution/listing.ts');
   const mocks = {
+    parseEvolutionListFilters: evolution.parseEvolutionListFilters,
+    listKinesiologyEvolutions: async () => [],
     actions, Fragment: null, Layout: null, SubmissionSnapshot: null, OralSurgeryReadOnly: null,
     ApiError: class ApiError extends Error { constructor(status) { super(`API ${status}`); this.status = status; } },
     isInputError: () => false,

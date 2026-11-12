@@ -28,22 +28,25 @@ async function html(value) {
 async function render(path, options = {}) {
  const requests = [];
  const oralListings = [];
+ const clinicalCalls = [];
  const Astro = { props: options.props ?? {}, params: { id }, cookies: {}, url: new URL(`https://fixture.invalid/${path.includes('[id]') ? `teacher-clinical/${id}` : 'teacher-clinical'}?${options.query ?? query}`), request: new Request('https://fixture.invalid'), getActionResult: (action) => options.results?.[action] ?? (action === 'record' ? options.result : undefined), response: { headers: new Headers() }, redirect: (url) => `REDIRECT:${url}` };
  const mocks = {
   Layout: null, Fragment: null, EvaluationReadOnly: null, ApiError: class ApiError extends Error { constructor(status) { super('api'); this.status = status; } },
   actions: { recordTeacherConsent: 'record', validateTeacherSubmission: 'validate', requestTeacherCorrection: 'correct' }, isInputError: () => false,
-  teacherGrant: (_cookies, grant) => options.denied ? false : grant === 'kinesiology-evaluations:verify-consent' ? !!options.verify : grant === 'kinesiology-evaluations:review' ? options.review !== false : grant === 'oral-surgery-drafts:read' ? !!options.oralSurgeryRead : true,
+  teacherGrant: (_cookies, grant) => options.denied ? false : grant === 'kinesiology-evaluations:verify-consent' ? !!options.verify : grant === 'kinesiology-evaluations:review' ? options.review !== false : grant === 'oral-surgery-drafts:read' ? !!options.oralSurgeryRead : grant === 'kinesiology-evolutions:read' ? !!options.evolutions : true,
   parseTeacherPagination: (params) => ({ limit: Number(params.get('limit') ?? 50), offset: Number(params.get('offset') ?? options.offset ?? 0) }),
    parseTeacherAssignmentFilters: (params) => Object.fromEntries(['patient_id','student_id','subject_id','academic_group_id'].filter((key) => params.has(key)).map((key) => [key,params.get(key)])),
   parseAssignmentListCoordinates: (params, namespaced = false) => { const prefix = namespaced ? 'list_' : ''; const filters = Object.fromEntries(['patient_id','student_id','subject_id','academic_group_id'].filter((key) => params.has(`${prefix}${key}`)).map((key) => [key,params.get(`${prefix}${key}`)])); return { filters, limit: Number(params.get(namespaced && params.has('list_limit') ? 'list_limit' : 'limit') ?? 50), offset: Number(params.get(namespaced && params.has('list_offset') ? 'list_offset' : 'offset') ?? 0) }; },
   assignmentListCarrier: (coordinates) => Object.fromEntries([['list_limit',String(coordinates.limit)],['list_offset',String(coordinates.offset)], ...Object.entries(coordinates.filters).map(([key,value])=>[`list_${key}`,value])]),
   assignmentListQuery: (coordinates) => new URLSearchParams({limit:String(coordinates.limit),offset:String(coordinates.offset),...coordinates.filters}).toString(),
+  parseEvolutionListFilters: (params) => Object.fromEntries(['status','date_from','date_to','evaluation_id'].filter((key) => params.has(key) && params.get(key)).map((key) => [key,params.get(key)])),
   parseClinicalContext: (params) => {
    if (options.rejectQuery || !params?.has('patient_id') || !params?.has('subject_id') || !params?.has('academic_group_id')) throw new Error('invalid query context');
    return Object.fromEntries(['patient_id', 'subject_id', 'academic_group_id'].map((key) => [key, params.get(key)]));
   },
   listTeacherPatients: async () => { requests.push('assignments'); if (options.failure) throw new Error('failed'); return { items: options.empty ? [] : [row], limit: 50, offset: options.offset ?? 0 }; },
-  listTeacherEvaluations: async () => { requests.push('list'); return options.emptyEvaluations ? [] : [evaluation]; },
+  listTeacherEvaluations: async (context, _cookies, filters) => { requests.push('list'); clinicalCalls.push({ context, filters }); return options.emptyEvaluations ? [] : [evaluation]; },
+  listKinesiologyEvolutions: async (context, _cookies, filters) => { requests.push('evolutions'); clinicalCalls.push({ context, filters, evolution: true }); return []; },
   listOralSurgeryContexts: async () => { requests.push('discovery'); if (options.discoveryStatus) throw new mocks.ApiError(options.discoveryStatus); if (options.discoveryFailure) throw new Error('offline'); if (options.forbidden) return { status: 'forbidden' }; return { status: 'ok', items: options.contexts ?? [] }; },
   isOralSurgeryContext: (contexts, subjectId, groupId) => contexts.some((item) => item.subject_id === subjectId && item.academic_group_id === groupId),
   listOralSurgeryDrafts: async (context, _cookies, page) => { requests.push('oral-list'); oralListings.push({ context, page }); return options.oralDrafts ?? []; },
@@ -73,7 +76,7 @@ async function render(path, options = {}) {
   mocks.SubmissionSnapshot = await compile('src/components/clinical/SubmissionSnapshot.astro');
  }
  const component = await compile(path);
- return { html: await html(component({ createAstro: () => Astro }, {}, {})), requests, oralListings };
+ return { html: await html(component({ createAstro: () => Astro }, {}, {})), requests, oralListings, clinicalCalls };
 }
 
 test('teacher discovery renders selected contextual patient and all-status list without mutation controls', async () => {
@@ -90,6 +93,20 @@ test('teacher discovery renders selected contextual patient and all-status list 
  assert.equal(editor.searchParams.get('list_limit'), '7');
  assert.equal(editor.searchParams.get('list_offset'), '14');
  assert.doesNotMatch(result.html, /method="POST"|Crear.*borrador|Guardar borrador/);
+});
+
+test('compiled teacher HTML renders selected-context GET filters and forwards only that context and filters', async () => {
+ const result = await render('src/pages/teacher-clinical.astro', { evolutions: true, query: `assignment_id=${id}&patient_id=${patient}&subject_id=${subject}&academic_group_id=${group}&limit=7&offset=14&status=validated&date_from=0001-01-01&date_to=9999-12-31&evaluation_id=9223372036854775807` });
+ assert.match(result.html, /<form method="GET" class="clinical-filters[^\"]*" aria-label="Filtrar listas clínicas"/);
+ for (const control of ['name="status"', 'name="date_from"', 'name="date_to"', 'name="evaluation_id"']) assert.match(result.html, new RegExp(control));
+ assert.deepEqual(result.clinicalCalls[0], { context: clinicalContext, filters: { status: 'validated', date_from: '0001-01-01', date_to: '9999-12-31' } });
+ assert.deepEqual(result.clinicalCalls[1], { context: clinicalContext, filters: { status: 'validated', date_from: '0001-01-01', date_to: '9999-12-31', evaluation_id: '9223372036854775807' }, evolution: true });
+ const form = result.html.match(/<form method="GET" class="clinical-filters[^\"]*" aria-label="Filtrar listas clínicas"[\s\S]*?<\/form>/)?.[0];
+ assert.ok(form);
+ assert.match(form, new RegExp(`name="assignment_id" value="${id}"`));
+ assert.match(form, /name="limit" value="7"/);
+ assert.match(form, /name="offset" value="14"/);
+ assert.doesNotMatch(form, /method="POST"/);
 });
 
 test('teacher discovery distinguishes denied/error/empty and preserves Previous on empty later page', async () => {
