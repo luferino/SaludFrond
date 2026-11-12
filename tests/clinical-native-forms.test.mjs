@@ -116,6 +116,37 @@ test('compiled page components render all seven native forms and real registered
   }
 });
 
+test('Kinesiology editor action URLs resolve against the rendered editor URL and retain list context', async () => {
+  const filters = `list_patient_id=${ids.patient}&list_student_id=${ids.actor}&list_subject_id=${ids.subject}&list_academic_group_id=${ids.group}`;
+  const editorUrl = `/kinesiology-evaluations/${recordId}?assignment_id=${assignmentId}&list_limit=7&list_offset=14&${filters}`;
+  const expectedActions = [
+    ['evaluation-form', 'updateKinesiologyEvaluation', 'draft'],
+    ['submit-form', 'submitKinesiologyEvaluation', 'draft'],
+    ['amend-form', 'createKinesiologyAmendment', 'validated'],
+  ];
+  async function assertActions(url, expectedLimit, expectedOffset, expectedFilters) {
+    const pages = new Map();
+    for (const status of ['draft', 'validated']) pages.set(status, await renderCompiledPage('src/pages/kinesiology-evaluations/[id].astro', { url, status }));
+    for (const [formId, actionName, status] of expectedActions) {
+      const page = pages.get(status);
+      const { action } = formDataFromHtml(page.html, formId);
+      const resolved = new URL(action, page.url);
+      assert.equal(resolved.pathname, page.url.pathname, `${actionName} stays on the editor route`);
+      assert.equal(resolved.searchParams.get('_action'), actionName);
+      assert.equal(resolved.searchParams.get('assignment_id'), assignmentId);
+      assert.equal(resolved.searchParams.get('list_limit'), expectedLimit);
+      assert.equal(resolved.searchParams.get('list_offset'), expectedOffset);
+      for (const [key, value] of Object.entries(expectedFilters)) {
+        assert.equal(resolved.searchParams.get(`list_${key}`), value, `${actionName} retains list_${key}`);
+      }
+    }
+  }
+
+  await assertActions(editorUrl, '7', '14', { patient_id: ids.patient, student_id: ids.actor, subject_id: ids.subject, academic_group_id: ids.group });
+  const legacyUrl = `/kinesiology-evaluations/${recordId}?assignment_id=${assignmentId}&limit=50&offset=0`;
+  await assertActions(legacyUrl, '50', '0', {});
+});
+
 test('legacy no-filter HTML forms remain schema-valid and removing the required pair from rendered FormData rejects before handler calls', async () => {
   const legacyRows = [
     ['createKinesiologyEvaluation', 'src/pages/my-patients/[assignmentId].astro', `/my-patients/${assignmentId}?limit=50&offset=0`, false, 'new-draft', []],

@@ -134,7 +134,7 @@ export async function renderCompiledPage(path, { url, oralEnabled = false, statu
   };
   const actor = { sub: ids.actor, role: 'student', permissions: ['kinesiology-evaluations:write', 'kinesiology-evaluations:submit', 'oral-surgery-drafts:read', 'oral-surgery-drafts:write'] };
   const actionNames = ['createKinesiologyEvaluation','updateKinesiologyEvaluation','submitKinesiologyEvaluation','createKinesiologyAmendment','createOralSurgeryDraft','updateOralSurgeryDraft','declareOralSurgeryConsent'];
-  const actions = Object.fromEntries(actionNames.map((name) => [name, Object.assign(() => undefined, { toString: () => `/_actions/${name}?_action=${name}` })]));
+  const actions = Object.fromEntries(actionNames.map((name) => [name, Object.assign(() => undefined, { toString: () => `?_action=${name}` })]));
   const Astro = {
     params: { assignmentId, id: recordId }, url: pageUrl,
     cookies: { get: (name) => name === 'session' ? { value: 'synthetic-session' } : undefined, set() {}, delete() {} },
@@ -154,9 +154,10 @@ export async function renderCompiledPage(path, { url, oralEnabled = false, statu
     ['list_limit', String(limit)], ['list_offset', String(offset)],
     ...Object.entries(filters).map(([key, value]) => [`list_${key}`, value]),
   ]);
-  const actionHref = (href, params) => `${href}${href.includes('?') ? '&' : '?'}${new URLSearchParams(params)}`;
-  const oral = await (await loadRegisteredActions(async () => Response.json({}))).importModule('src/pods/oral-surgery-draft/actions/drafts.ts');
-  const evolution = await (await loadRegisteredActions(async () => Response.json({}))).importModule('src/pods/kinesiology-evolution/listing.ts');
+  const actionModules = await loadRegisteredActions(async () => Response.json({}));
+  const oral = await actionModules.importModule('src/pods/oral-surgery-draft/actions/drafts.ts');
+  const evolution = await actionModules.importModule('src/pods/kinesiology-evolution/listing.ts');
+  const kinesiology = await actionModules.importModule('src/pods/kinesiology-evaluation/api.ts');
   const mocks = {
     parseEvolutionListFilters: evolution.parseEvolutionListFilters,
     listKinesiologyEvolutions: async () => [],
@@ -168,7 +169,7 @@ export async function renderCompiledPage(path, { url, oralEnabled = false, statu
     parseAssignmentListCoordinates: parseCoordinates,
     assignmentListCarrier: carrier,
     assignmentListQuery: (coordinates) => new URLSearchParams({ limit: String(coordinates.limit), offset: String(coordinates.offset), ...coordinates.filters }).toString(),
-    actionHrefWithContext: actionHref,
+    actionHrefWithContext: kinesiology.actionHrefWithContext,
     EVALUATION_STATUS_LABELS: { draft: 'Borrador', submitted: 'Enviada', validated: 'Validada' },
     antecedentOptionState: (value, present) => ({ unrecorded: !present, unknown: present && value === null, yes: value === true, no: value === false }),
     listEvaluations: async () => [clinicalRecord], listSubmittedEvaluations: async () => [],
