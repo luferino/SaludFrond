@@ -165,7 +165,7 @@ async function renderAssignment(options = {}) {
   assignmentListCarrier: (coordinates) => Object.fromEntries([['list_limit',String(coordinates.limit)],['list_offset',String(coordinates.offset)], ...Object.entries(coordinates.filters).map(([key,value])=>[`list_${key}`,value])]),
   assignmentListQuery: (coordinates) => new URLSearchParams({limit:String(coordinates.limit),offset:String(coordinates.offset),...coordinates.filters}).toString(),
   listAssignedPatients: async () => { requests.push('assignments'); if (options.assignmentsFailure) throw new Error('offline'); return { items: options.items ?? [assignment], limit: 50, offset: 0 }; },
-  listEvaluations: async (_context, _cookies, filters) => { requests.push('kinesiology-drafts'); clinicalCalls.push({ kind: 'drafts', filters }); return options.kinesiologyDrafts ?? []; },
+  listEvaluations: async (_context, _cookies, filters) => { requests.push('kinesiology-drafts'); clinicalCalls.push({ kind: 'drafts', filters }); if (options.draftsFailure) throw new Error('raw 500: relation "kinesiology_evaluations" is missing'); return options.kinesiologyDrafts ?? []; },
   listSubmittedEvaluations: async (_context, _cookies, filters) => { requests.push('kinesiology-submitted'); clinicalCalls.push({ kind: 'submitted', filters }); return []; },
   listKinesiologyEvolutions: async (_context, _cookies, filters) => { requests.push('evolutions'); clinicalCalls.push({ kind: 'evolutions', filters }); if (options.evolutionsStatus) throw new mocks.ApiError(options.evolutionsStatus); if (options.evolutionsFailure) throw new Error('offline'); return []; },
   EVALUATION_STATUS_LABELS: {},
@@ -200,6 +200,7 @@ async function renderAssignment(options = {}) {
   new Function('exports', ...Object.keys(mocks), output)(exports, ...Object.values(mocks));
   return exports.default;
  }
+ if (options.parseEvolutionListFilters) mocks.parseEvolutionListFilters = options.parseEvolutionListFilters;
  const component = await compile('src/pages/my-patients/[assignmentId].astro');
  const rendered = await html(component({ createAstro: () => Astro }, {}, {}));
  return { html: rendered, requests, oralListings, clinicalCalls };
@@ -370,4 +371,40 @@ test('student no-filter page keeps the default lists, default status option and 
  const select = result.html.match(/<select id="clinical-status"[\s\S]*?<\/select>/)?.[0];
  assert.ok(select);
  assert.doesNotMatch(select, / selected/);
+});
+
+/** Load the real evolution and clinical filter parsers so invalid-filter cases run the actual validation rules. */
+async function realEvolutionListFilterParser() {
+ const load = async (file, modules = {}) => {
+  const output = ts.transpileModule(await readFile(new URL(file, root), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+  const exports = {};
+  new Function('exports', 'require', output)(exports, (name) => modules[name] ?? {});
+  return exports;
+ };
+ const clinical = await load('src/pods/kinesiology-evaluation/list-filters.ts');
+ return (await load('src/pods/kinesiology-evolution/listing.ts', { '../kinesiology-evaluation/list-filters': clinical })).parseEvolutionListFilters;
+}
+
+test('RED (a) student: a filter-bearing URL whose assignment or evaluation read fails shows only the safe generic message', async () => {
+ const assignments = await renderAssignment({ url: 'https://fixture.invalid/my-patients/17?limit=50&offset=0&status=submitted', assignmentsFailure: true });
+ assert.doesNotMatch(assignments.html, /offline/);
+ assert.match(assignments.html, /No se pudieron cargar las asignaciones y sus fichas\. No se muestra una lista vacía/);
+ const drafts = await renderAssignment({ url: 'https://fixture.invalid/my-patients/17?limit=50&offset=0&date_from=2026-01-01', draftsFailure: true });
+ assert.doesNotMatch(drafts.html, /raw 500|kinesiology_evaluations/);
+ assert.match(drafts.html, /No se pudieron cargar las asignaciones y sus fichas\. No se muestra una lista vacía/);
+ assert.equal((drafts.html.match(/role="alert"/g) ?? []).length, 1);
+});
+
+test('RED (d) student: an invalid clinical filter shows one filter alert, keeps the filter form with submitted values and makes zero reads', async () => {
+ const result = await renderAssignment({ permissions: ['kinesiology-evolutions:read'], parseEvolutionListFilters: await realEvolutionListFilterParser(), url: 'https://fixture.invalid/my-patients/17?limit=7&offset=14&date_from=2026-02-01&date_to=2026-01-01' });
+ assert.deepEqual(result.requests, []);
+ assert.deepEqual(result.clinicalCalls, []);
+ assert.equal((result.html.match(/role="alert"/g) ?? []).length, 1);
+ assert.match(result.html, /role="alert"[^>]*>El rango de fechas no es válido\./);
+ assert.match(result.html, /<form method="GET" class="clinical-filters/);
+ assert.match(result.html, /name="date_from" value="2026-02-01"/);
+ assert.match(result.html, /name="date_to" value="2026-01-01"/);
+ assert.match(result.html, /name="limit" value="7"/);
+ assert.match(result.html, /name="offset" value="14"/);
+ assert.doesNotMatch(result.html, /No se pudieron cargar las asignaciones/);
 });

@@ -48,7 +48,7 @@ async function render(path, options = {}) {
    return Object.fromEntries(['patient_id', 'subject_id', 'academic_group_id'].map((key) => [key, params.get(key)]));
   },
   listTeacherPatients: async () => { requests.push('assignments'); if (options.failure) throw new Error('failed'); return { items: options.empty ? [] : [row], limit: 50, offset: options.offset ?? 0 }; },
-  listTeacherEvaluations: async (context, _cookies, filters) => { requests.push('list'); clinicalCalls.push({ context, filters }); return options.emptyEvaluations ? [] : [evaluation]; },
+  listTeacherEvaluations: async (context, _cookies, filters) => { requests.push('list'); clinicalCalls.push({ context, filters }); if (options.evaluationsFailure) throw new Error('raw 500: relation "kinesiology_evaluations" is missing'); return options.emptyEvaluations ? [] : [evaluation]; },
   listKinesiologyEvolutions: async (context, _cookies, filters) => { requests.push('evolutions'); clinicalCalls.push({ context, filters, evolution: true }); if (options.evolutionsStatus) throw new mocks.ApiError(options.evolutionsStatus); if (options.evolutionsFailure) throw new Error('offline'); return []; },
   listOralSurgeryContexts: async () => { requests.push('discovery'); if (options.discoveryStatus) throw new mocks.ApiError(options.discoveryStatus); if (options.discoveryFailure) throw new Error('offline'); if (options.forbidden) return { status: 'forbidden' }; return { status: 'ok', items: options.contexts ?? [] }; },
   isOralSurgeryContext: (contexts, subjectId, groupId) => contexts.some((item) => item.subject_id === subjectId && item.academic_group_id === groupId),
@@ -74,6 +74,7 @@ async function render(path, options = {}) {
   new Function('exports', ...Object.keys(mocks), output)(exports, ...Object.values(mocks));
   return exports.default;
  }
+ if (options.parseEvolutionListFilters) mocks.parseEvolutionListFilters = options.parseEvolutionListFilters;
  if (!path.includes('components/')) {
   mocks.EvaluationReadOnly = await compile('src/components/clinical/EvaluationReadOnly.astro');
   mocks.SubmissionSnapshot = await compile('src/components/clinical/SubmissionSnapshot.astro');
@@ -401,4 +402,38 @@ test('teacher status select already renders the applied clinical status as the s
  assert.ok(select);
  assert.doesNotMatch(select, /<select[^>]* value=/);
  assert.deepEqual([...select.matchAll(/<option value="([^"]*)"[^>]* selected[ >]/g)].map((match) => match[1]), ['validated']);
+});
+
+/** Load the real evolution and clinical filter parsers so invalid-filter cases run the actual validation rules. */
+async function realEvolutionListFilterParser() {
+ const load = async (file, modules = {}) => {
+  const output = ts.transpileModule(await readFile(new URL(file, root), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+  const exports = {};
+  new Function('exports', 'require', output)(exports, (name) => modules[name] ?? {});
+  return exports;
+ };
+ const clinical = await load('src/pods/kinesiology-evaluation/list-filters.ts');
+ return (await load('src/pods/kinesiology-evolution/listing.ts', { '../kinesiology-evaluation/list-filters': clinical })).parseEvolutionListFilters;
+}
+
+test('RED (b) teacher: a filter-bearing URL whose assignment or evaluation read fails shows only the safe generic message', async () => {
+ const assignments = await render('src/pages/teacher-clinical.astro', { failure: true, query: `${selectedContext}&status=validated` });
+ assert.doesNotMatch(assignments.html, />failed</);
+ assert.match(assignments.html, /No se pudo cargar el acceso clínico/);
+ const evaluations = await render('src/pages/teacher-clinical.astro', { evaluationsFailure: true, query: `${selectedContext}&date_from=2026-01-01` });
+ assert.doesNotMatch(evaluations.html, /raw 500|kinesiology_evaluations/);
+ assert.match(evaluations.html, /No se pudo cargar el acceso clínico/);
+ assert.equal((evaluations.html.match(/role="alert"/g) ?? []).length, 1);
+});
+
+test('RED (c) teacher: an invalid clinical filter shows one filter alert, keeps the filter form with submitted values and makes zero clinical reads', async () => {
+ const result = await render('src/pages/teacher-clinical.astro', { evolutions: true, parseEvolutionListFilters: await realEvolutionListFilterParser(), query: `${selectedContext}&date_from=2026-02-01&date_to=2026-01-01` });
+ assert.deepEqual(result.requests, ['assignments']);
+ assert.deepEqual(result.clinicalCalls, []);
+ assert.equal((result.html.match(/role="alert"/g) ?? []).length, 1);
+ assert.match(result.html, /role="alert"[^>]*>El rango de fechas no es válido\./);
+ assert.match(result.html, /<form method="GET" class="clinical-filters/);
+ assert.match(result.html, /name="date_from" value="2026-02-01"/);
+ assert.match(result.html, /name="date_to" value="2026-01-01"/);
+ assert.doesNotMatch(result.html, /No se pudo cargar el acceso clínico/);
 });
