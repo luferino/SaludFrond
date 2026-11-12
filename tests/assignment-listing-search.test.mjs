@@ -100,3 +100,12 @@ test('compiled teacher listing renders editable search and retained selector coo
   assert.doesNotMatch(failed.html, new RegExp(`name="student_habilitation_id" value="${ids.student_id}"`));
   assert.deepEqual(failed.requests[0][1], { subject_id: ids.subject_id, academic_group_id: ids.academic_group_id, limit: 6, offset: 12, q: 'Ana' });
 });
+
+test('teacher clinical assignment filters retain selected assignment context in its downstream link', async () => {
+  const page = await read('src/pages/teacher-clinical.astro');
+  assert.match(page, /name="patient_id"/);
+  assert.match(page, /name="student_id"/);
+  assert.match(page, /name="subject_id"/);
+  assert.match(page, /name="academic_group_id"/);
+  assert.match(page, /assignment_id: selected!\.id/);
+});

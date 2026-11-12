@@ -22,6 +22,20 @@ export function teacherGrant(cookies: AstroCookies, permission: string): boolean
  return !!actor && ['teacher', 'docente'].includes(String(actor.role).toLowerCase())
   && Array.isArray(actor.permissions) && actor.permissions.every((grant) => typeof grant === 'string') && actor.permissions.includes(permission);
 }
+const ASSIGNMENT_FILTERS = ['patient_id','student_id','subject_id','academic_group_id'] as const;
+export type TeacherAssignmentFilters = Partial<Record<typeof ASSIGNMENT_FILTERS[number],string>>;
+export function parseTeacherAssignmentFilters(params: URLSearchParams): TeacherAssignmentFilters {
+ const result: TeacherAssignmentFilters = {};
+ for (const key of ASSIGNMENT_FILTERS) {
+  const names = [...params.keys()].filter((name) => name === key || name.startsWith(`${key}[`) || name.startsWith(`${key}.`));
+  const values = params.getAll(key);
+  if (names.length > 1 || (names.length === 1 && names[0] !== key) || values.length > 1) throw new Error('Los filtros de asignación no son válidos.');
+  const value = values[0]?.trim(); if (!value) continue;
+  if (!UUID.test(value)) throw new Error('Los filtros de asignación no son válidos.');
+  result[key] = value;
+ }
+ return result;
+}
 export function parseTeacherPagination(params: URLSearchParams) {
  const parse = (key: string, fallback: number, min: number, max: number) => {
   const values = params.getAll(key);
@@ -52,9 +66,11 @@ export function originEvaluation(value: unknown, context: ClinicalContext): Eval
  }
  return value;
 }
-export async function listTeacherPatients(pagination: { limit: number; offset: number }, cookies: AstroCookies) {
+export async function listTeacherPatients(pagination: { limit: number; offset: number }, cookies: AstroCookies, filters: TeacherAssignmentFilters = {}) {
  const validated = parseTeacherPagination(new URLSearchParams({ limit: String(pagination.limit), offset: String(pagination.offset) }));
- const response = await apiFetch<unknown>(`/patient-assignments?${new URLSearchParams({ limit: String(validated.limit), offset: String(validated.offset) })}`, { cookies });
+ const query = new URLSearchParams({ limit: String(validated.limit), offset: String(validated.offset) });
+ for (const key of ASSIGNMENT_FILTERS) if (filters[key]) query.set(key, filters[key]!);
+ const response = await apiFetch<unknown>(`/patient-assignments?${query}`, { cookies });
  if (!record(response) || !Array.isArray(response.items) || response.limit !== validated.limit || response.offset !== validated.offset) {
   throw new Error('La respuesta de asignaciones no es válida.');
  }

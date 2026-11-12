@@ -4,7 +4,7 @@ Assignment lists keep their current authorization and active-assignment scope. F
 
 ## Listing and selection
 
-- `/my-patients` accepts optional UUID filters `patient_id`, `student_id`, `subject_id`, and `academic_group_id`. Supplied filters combine with AND before backend pagination. Blank optional fields are omitted; malformed, repeated, or structured values are rejected.
+- `/my-patients` and `/teacher-clinical` accept optional UUID filters `patient_id`, `student_id`, `subject_id`, and `academic_group_id`. Supplied filters combine with AND before backend pagination. Blank optional fields are omitted; malformed, repeated, or structured values are rejected.
 - The eligible-student selector on `/teacher-assignments` supports `q` for names and surnames within the selected subject/group. Search trims surrounding whitespace and accepts at most 100 characters. `%`, `_`, and backslash are literal text. Empty search omits the filter; duplicate or structured search parameters are invalid.
 - A new student search resets the student offset, while retaining the independent context and patient pagination coordinates. Pagination retains the active search.
 - `student_id` identifies a student profile. The creation form still submits `student_habilitation_id`, and the backend mutation body retains its existing four fields. Search state is not a mutation field.

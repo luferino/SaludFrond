@@ -33,7 +33,11 @@ async function render(path, options = {}) {
   Layout: null, Fragment: null, EvaluationReadOnly: null, ApiError: class ApiError extends Error { constructor(status) { super('api'); this.status = status; } },
   actions: { recordTeacherConsent: 'record', validateTeacherSubmission: 'validate', requestTeacherCorrection: 'correct' }, isInputError: () => false,
   teacherGrant: (_cookies, grant) => options.denied ? false : grant === 'kinesiology-evaluations:verify-consent' ? !!options.verify : grant === 'kinesiology-evaluations:review' ? options.review !== false : grant === 'oral-surgery-drafts:read' ? !!options.oralSurgeryRead : true,
-  parseTeacherPagination: () => ({ limit: 50, offset: options.offset ?? 0 }),
+  parseTeacherPagination: (params) => ({ limit: Number(params.get('limit') ?? 50), offset: Number(params.get('offset') ?? options.offset ?? 0) }),
+   parseTeacherAssignmentFilters: (params) => Object.fromEntries(['patient_id','student_id','subject_id','academic_group_id'].filter((key) => params.has(key)).map((key) => [key,params.get(key)])),
+  parseAssignmentListCoordinates: (params, namespaced = false) => { const prefix = namespaced ? 'list_' : ''; const filters = Object.fromEntries(['patient_id','student_id','subject_id','academic_group_id'].filter((key) => params.has(`${prefix}${key}`)).map((key) => [key,params.get(`${prefix}${key}`)])); return { filters, limit: Number(params.get(namespaced && params.has('list_limit') ? 'list_limit' : 'limit') ?? 50), offset: Number(params.get(namespaced && params.has('list_offset') ? 'list_offset' : 'offset') ?? 0) }; },
+  assignmentListCarrier: (coordinates) => Object.fromEntries([['list_limit',String(coordinates.limit)],['list_offset',String(coordinates.offset)], ...Object.entries(coordinates.filters).map(([key,value])=>[`list_${key}`,value])]),
+  assignmentListQuery: (coordinates) => new URLSearchParams({limit:String(coordinates.limit),offset:String(coordinates.offset),...coordinates.filters}).toString(),
   parseClinicalContext: (params) => {
    if (options.rejectQuery || !params?.has('patient_id') || !params?.has('subject_id') || !params?.has('academic_group_id')) throw new Error('invalid query context');
    return Object.fromEntries(['patient_id', 'subject_id', 'academic_group_id'].map((key) => [key, params.get(key)]));
@@ -73,11 +77,18 @@ async function render(path, options = {}) {
 }
 
 test('teacher discovery renders selected contextual patient and all-status list without mutation controls', async () => {
- const result = await render('src/pages/teacher-clinical.astro', { query: `assignment_id=${id}` });
+ const result = await render('src/pages/teacher-clinical.astro', { query: `assignment_id=${id}&patient_id=${patient}&student_id=${group}&subject_id=${subject}&academic_group_id=${group}&limit=7&offset=14` });
  assert.deepEqual(result.requests, ['assignments', 'list']);
  assert.match(result.html, /Ana|Prueba/);
- assert.match(result.html, new RegExp(`/teacher-clinical/${id}`));
- assert.match(result.html, /subject_id=/);
+ const href = result.html.match(new RegExp(`href="([^"]*teacher-clinical/${id}[^\"]*)"[^>]*>`))?.[1];
+ assert.ok(href);
+ const editor = new URL(href, 'https://fixture.invalid');
+ assert.equal(editor.pathname, `/teacher-clinical/${id}`);
+ assert.equal(editor.searchParams.get('patient_id'), patient);
+ assert.equal(editor.searchParams.get('list_patient_id'), patient);
+ assert.equal(editor.searchParams.get('list_student_id'), group);
+ assert.equal(editor.searchParams.get('list_limit'), '7');
+ assert.equal(editor.searchParams.get('list_offset'), '14');
  assert.doesNotMatch(result.html, /method="POST"|Crear.*borrador|Guardar borrador/);
 });
 
@@ -92,6 +103,20 @@ test('teacher discovery distinguishes denied/error/empty and preserves Previous 
  assert.match(empty.html, /No hay pacientes/);
  assert.match(empty.html, />Anterior</);
  assert.doesNotMatch(empty.html, />Siguiente</);
+});
+
+test('teacher clinical return link restores validated list filters and page while keeping origin context separate', async () => {
+ const listState = `patient_id=${patient}&subject_id=${subject}&academic_group_id=${group}&assignment_id=${id}&list_limit=7&list_offset=14&list_patient_id=${patient}&list_student_id=${group}`;
+ const detail = await render('src/pages/teacher-clinical/[id].astro', { query: listState });
+ const href = detail.html.match(/<a href="([^"]*teacher-clinical\?[^\"]*)"[^>]*>Volver al acceso clínico docente<\/a>/)?.[1];
+ assert.ok(href);
+ const back = new URL(href, 'https://fixture.invalid');
+ assert.equal(back.pathname, '/teacher-clinical');
+ assert.equal(back.searchParams.get('patient_id'), patient);
+ assert.equal(back.searchParams.get('student_id'), group);
+ assert.equal(back.searchParams.get('limit'), '7');
+ assert.equal(back.searchParams.get('offset'), '14');
+ assert.equal(back.searchParams.get('assignment_id'), id);
 });
 
 test('teacher consent renders state on GET, requires separate verify grant and hides form on uncertain/read failure', async () => {
