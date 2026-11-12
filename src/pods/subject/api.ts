@@ -1,6 +1,7 @@
 import type { AstroCookies } from 'astro';
 import { apiFetch, ApiError } from '../../shared/apiClient';
 import type { AcademicPage, AcademicPagination } from '../../shared/academic-api';
+import { listingSearchQuery, parseListSearch } from './list-search';
 
 export interface SubjectSummary {
 	id: string;
@@ -31,11 +32,16 @@ export type SubjectListResult =
 export async function listSubjects(
 	pagination: AcademicPagination,
 	cookies: AstroCookies,
+	q?: string,
+	careerId?: string,
 ): Promise<SubjectListResult> {
+	const search = parseListSearch(new URLSearchParams(q === undefined ? '' : `q=${encodeURIComponent(q)}`));
+	if (!search.valid) return { state: 'failed' };
 	const query = new URLSearchParams({
 		limit: String(pagination.limit),
 		offset: String(pagination.offset),
 	});
+	for (const [key, value] of listingSearchQuery(search.term, careerId ?? null)) query.set(key, value);
 
 	try {
 		const page = await apiFetch<AcademicPage<SubjectSummary>>(`/subjects?${query}`, { cookies });

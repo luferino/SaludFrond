@@ -7,6 +7,7 @@ import '../styles/academic-panels.css';
 import GroupForm from '../pods/group/components/GroupForm.astro';
 import GroupList from '../pods/group/components/GroupList.astro';
 import { listGroups } from '../pods/group/api';
+import { INVALID_CAREER_CONTEXT, INVALID_LIST_SEARCH, parseCareerContext, parseListSearch } from '../pods/subject/list-search';
 import type { GroupSummary } from '../pods/group/api';
 import { academicPaginationNavigation, parseAcademicPagination } from '../shared/academic-api';
 import { getSession } from '../shared/session';
@@ -16,17 +17,26 @@ if (!getSession(Astro.cookies)) {
 }
 
 const actionResult = Astro.getActionResult(actions.createGroup);
-let state: 'success' | 'denied' | 'failed' | 'invalid-pagination' = 'failed';
+let state: 'success' | 'denied' | 'failed' | 'invalid-pagination' | 'invalid-search' | 'invalid-career' = 'failed';
 let items: GroupSummary[] = [];
 let limit = 50;
 let previousOffset: number | null = null;
 let nextOffset: number | null = null;
 let invalidMessage = 'Revisá los parámetros de paginación.';
+let q = '';
+const searchParams = Astro.url.searchParams;
+let careerId = '';
 
 try {
-	const pagination = parseAcademicPagination(Astro.url.searchParams);
+	const career = parseCareerContext(searchParams);
+	if (!career.valid) throw new Error(INVALID_CAREER_CONTEXT);
+	careerId = career.careerId ?? '';
+	const search = parseListSearch(searchParams);
+	if (!search.valid) throw new Error(INVALID_LIST_SEARCH);
+	q = search.term;
+	const pagination = parseAcademicPagination(searchParams);
 	limit = pagination.limit;
-	const result = await listGroups(pagination, Astro.cookies);
+	const result = await listGroups(pagination, Astro.cookies, q, careerId);
 	state = result.state;
 	if (result.state === 'success') {
 		items = result.page.items;
@@ -36,7 +46,13 @@ try {
 		}));
 	}
 } catch (error) {
-	if (error instanceof Error && error.message.includes('paginación')) {
+	if (error instanceof Error && error.message === INVALID_CAREER_CONTEXT) {
+		state = 'invalid-career';
+		invalidMessage = error.message;
+	} else if (error instanceof Error && error.message === INVALID_LIST_SEARCH) {
+		state = 'invalid-search';
+		invalidMessage = error.message;
+	} else if (error instanceof Error && error.message.includes('paginación')) {
 		state = 'invalid-pagination';
 		invalidMessage = error.message;
 	} else {
@@ -57,6 +73,8 @@ try {
 			state={state}
 			items={items}
 			limit={limit}
+			q={q}
+			careerId={careerId}
 			previousOffset={previousOffset}
 			nextOffset={nextOffset}
 			invalidMessage={invalidMessage}

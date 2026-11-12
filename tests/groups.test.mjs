@@ -297,6 +297,33 @@ test('groups listing applies default and custom pagination to authenticated requ
 	assert.deepEqual(custom.writes, []);
 });
 
+test('invalid career context is explicit and never broadens the group request', async () => {
+	for (const query of [
+		'?career_id=11111111-1111-4111-8111-111111111111&career_id=22222222-2222-4222-8222-222222222222',
+		'?career_id%5B%5D=11111111-1111-4111-8111-111111111111',
+		'?career_id=not-a-uuid',
+	]) {
+		const rejected = await evaluate(pagePath, { url: `https://frontend.invalid/groups${query}` });
+		assert.equal(rejected.value.state, 'invalid-career', query);
+		assert.match(rejected.value.invalidMessage, /carrera/i);
+		assert.equal(rejected.requests.length, 0, query);
+	}
+});
+
+test('group listing searches literal names with career context and rejects invalid q before fetch', async () => {
+	const valid = await evaluate(pagePath, {
+		url: 'https://frontend.invalid/groups?limit=7&offset=14&career_id=11111111-1111-4111-8111-111111111111&q=%25_%5C%20Cohorte%20',
+		response: { items: [sample()], limit: 7, offset: 14 },
+	});
+	assert.equal(valid.value.state, 'success');
+	assert.equal(valid.requests[0].url, 'https://backend.invalid/groups?limit=7&offset=14&career_id=11111111-1111-4111-8111-111111111111&q=%25_%5C+Cohorte');
+	for (const query of ['?q=a&q=b', `?q=${'x'.repeat(101)}`, '?q%5B%5D=grupo', '?q.foo=x']) {
+		const rejected = await evaluate(pagePath, { url: `https://frontend.invalid/groups${query}` });
+		assert.equal(rejected.value.state, 'invalid-search', query);
+		assert.equal(rejected.requests.length, 0, query);
+	}
+});
+
 test('missing session redirects and invalid or repeated pagination never fetches', async () => {
 	const missing = await evaluate(pagePath, { token: undefined });
 	assert.deepEqual(missing.value, { redirect: '/auth/login?returnTo=%2Fgroups' });
