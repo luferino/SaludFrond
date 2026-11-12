@@ -30,27 +30,32 @@ import { handleAuthorizeOralSurgeryDraft } from '../pods/oral-surgery-draft/acti
 
 const UUID_INPUT = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
 const ID_INPUT = z.string().regex(/^[1-9]\d{0,18}$/);
+const LIST_COORDINATE_INPUTS = {
+ list_limit: z.string().regex(/^\d+$/).optional(), list_offset: z.string().regex(/^\d+$/).optional(),
+ list_patient_id: UUID_INPUT.optional(), list_student_id: UUID_INPUT.optional(),
+ list_subject_id: UUID_INPUT.optional(), list_academic_group_id: UUID_INPUT.optional(),
+};
 
 export const server = {
 	recordTeacherConsent: defineAction({
 		accept: 'form',
 		input: z.object({
 			id: z.string(), patient_id: z.string(), subject_id: z.string(), academic_group_id: z.string(),
-			paper_signature_date: z.string(),
+			paper_signature_date: z.string(), ...LIST_COORDINATE_INPUTS,
 		}).strict(),
 		handler: handleRecordTeacherConsent,
 	}),
 	validateTeacherSubmission: defineAction({
 		accept: 'form',
 		input: z.object({
-			id: z.string(), patient_id: z.string(), subject_id: z.string(), academic_group_id: z.string(), submission_id: z.string(),
+			id: z.string(), patient_id: z.string(), subject_id: z.string(), academic_group_id: z.string(), submission_id: z.string(), ...LIST_COORDINATE_INPUTS,
 		}).strict(),
 		handler: handleValidateTeacherSubmission,
 	}),
 	requestTeacherCorrection: defineAction({
 		accept: 'form',
 		input: z.object({
-			id: z.string(), patient_id: z.string(), subject_id: z.string(), academic_group_id: z.string(), submission_id: z.string(), reason: z.string(),
+			id: z.string(), patient_id: z.string(), subject_id: z.string(), academic_group_id: z.string(), submission_id: z.string(), reason: z.string(), ...LIST_COORDINATE_INPUTS,
 		}).strict(),
 		handler: handleRequestTeacherCorrection,
 	}),
@@ -171,14 +176,14 @@ export const server = {
 			patient_id: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i),
 			subject_id: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i),
 			academic_group_id: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i),
-			assignment_id: z.string(), limit: z.string(), offset: z.string(), content: z.any(),
+			assignment_id: z.string(), limit: z.string(), offset: z.string(), content: z.any(), ...LIST_COORDINATE_INPUTS,
 		}).strict(),
 		handler: handleCreateKinesiologyEvaluation,
 	}),
 	updateKinesiologyEvaluation: defineAction({
 		accept: 'form',
 		input: z.object({
-			id: z.string().regex(/^[1-9]\d{0,18}$/), assignment_id: z.string(), limit: z.string(), offset: z.string(),
+			id: z.string().regex(/^[1-9]\d{0,18}$/), assignment_id: z.string(), limit: z.string(), offset: z.string(), ...LIST_COORDINATE_INPUTS,
 			admission_date: z.string().optional(), admission_status: z.string().optional(), occupation: z.string().optional(),
 			referring_physician: z.string().optional(), 'antecedent-hta': z.string().optional(),
 			'antecedent-dbt': z.string().optional(), 'antecedent-diu': z.string().optional(),
@@ -186,21 +191,23 @@ export const server = {
 			'antecedent-other': z.string().optional(), antecedents_keys: z.string().optional(), illness_history: z.string().optional(),
 			medical_diagnosis: z.string().optional(), kinesiology_diagnosis: z.string().optional(),
 			objectives: z.string().optional(), proposed_treatment: z.string().optional(),
-		}).catchall(z.string()),
+		}).catchall(z.string()).refine((input) => Object.keys(input).every((key) => Object.hasOwn(LIST_COORDINATE_INPUTS, key)
+			|| ['id', 'assignment_id', 'limit', 'offset', 'admission_date', 'admission_status', 'occupation', 'referring_physician', 'antecedent-hta', 'antecedent-dbt', 'antecedent-diu', 'antecedent-sedentary_lifestyle', 'antecedent-pacemaker', 'antecedent-other', 'antecedents_keys', 'illness_history', 'medical_diagnosis', 'kinesiology_diagnosis', 'objectives', 'proposed_treatment'].includes(key)
+			|| /^study-(?:type|description|date)-\d+$/.test(key)), 'El formulario contiene campos no permitidos.'),
 
 		handler: handleUpdateKinesiologyEvaluation,
 	}),
 	submitKinesiologyEvaluation: defineAction({
 		accept: 'form',
 		input: z.object({
-			id: z.string().regex(/^[1-9]\d{0,18}$/), assignment_id: z.string(), limit: z.string(), offset: z.string(),
+			id: z.string().regex(/^[1-9]\d{0,18}$/), assignment_id: z.string(), limit: z.string(), offset: z.string(), ...LIST_COORDINATE_INPUTS,
 		}).strict(),
 		handler: handleSubmitKinesiologyEvaluation,
 	}),
 	createKinesiologyAmendment: defineAction({
 		accept: 'form',
 		input: z.object({
-			id: z.string().regex(/^[1-9]\d{0,18}$/), assignment_id: z.string(), limit: z.string(), offset: z.string(),
+			id: z.string().regex(/^[1-9]\d{0,18}$/), assignment_id: z.string(), limit: z.string(), offset: z.string(), ...LIST_COORDINATE_INPUTS,
 			confirm: z.literal('on'),
 		}).strict(),
 		handler: handleCreateKinesiologyAmendment,
@@ -209,14 +216,14 @@ export const server = {
 		accept: 'form',
 		input: z.object({
 			patient_id: UUID_INPUT, subject_id: UUID_INPUT, academic_group_id: UUID_INPUT,
-			assignment_id: z.string(), limit: z.string(), offset: z.string(),
+			assignment_id: z.string(), limit: z.string(), offset: z.string(), ...LIST_COORDINATE_INPUTS,
 		}).strict(),
 		handler: handleCreateOralSurgeryDraft,
 	}),
 	updateOralSurgeryDraft: defineAction({
 		accept: 'form',
 		input: z.object({
-			id: z.string(), expected_version: z.string(), assignment_id: z.string(), limit: z.string(), offset: z.string(),
+			id: z.string(), expected_version: z.string(), assignment_id: z.string(), limit: z.string(), offset: z.string(), ...LIST_COORDINATE_INPUTS,
 			...Object.fromEntries(ORAL_SURGERY_FORM_FIELDS.map((name) => [name, z.string().optional()])),
 		}).strict(),
 		handler: handleUpdateOralSurgeryDraft,
@@ -224,7 +231,7 @@ export const server = {
 	declareOralSurgeryConsent: defineAction({
 		accept: 'form',
 		input: z.object({
-			id: z.string(), expected_version: z.string(), assignment_id: z.string(), limit: z.string(), offset: z.string(),
+			id: z.string(), expected_version: z.string(), assignment_id: z.string(), limit: z.string(), offset: z.string(), ...LIST_COORDINATE_INPUTS,
 			paper_signed: z.literal('on'),
 		}).strict(),
 		handler: handleDeclareOralSurgeryConsent,

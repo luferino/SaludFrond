@@ -125,6 +125,14 @@ class FakeApiError extends Error { constructor(status) { super(); this.status = 
 // Use real apiClient/session behavior around isolated fetch and cookies.
 const apiHarness = (options) => evaluate(apiPath, options);
 
+async function actualListCoordinatesParser() {
+ const code = await source('src/pods/patient-assignment/list-coordinates.ts');
+ const output = ts.transpileModule(code, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+ const exports = {};
+ new Function('exports', output)(exports);
+ return exports.parseAssignmentListCoordinates;
+}
+
 async function evaluatePageFrontmatter(path, options = {}) {
  const page = await source(path);
  const frontmatter = page.match(/^---\r?\n([\s\S]*?)\r?\n---/);
@@ -151,12 +159,17 @@ async function evaluatePageFrontmatter(path, options = {}) {
   ApiError: FakeApiError,
   listAssignedPatients: options.listAssignedPatients ?? (async () => ({ items: [assignment()], limit: 50, offset: 0 })),
   parseAssignmentPagination: (params) => ({ limit: Number(params.get('limit') ?? 50), offset: Number(params.get('offset') ?? 0) }),
+  parseEvolutionListFilters: (params) => Object.fromEntries(['status','date_from','date_to','evaluation_id'].filter((key) => params.has(key) && params.get(key)).map((key) => [key, params.get(key)])),
+  parseAssignmentListCoordinates: options.actualParser ? await actualListCoordinatesParser() : (params, namespaced = false) => ({ filters: Object.fromEntries(['patient_id','student_id','subject_id','academic_group_id'].flatMap((key) => { const k = `${namespaced ? 'list_' : ''}${key}`; const values = params.getAll(k); if (values.length > 1 || [...params.keys()].some((name) => name.startsWith(`${k}[`) || name.startsWith(`${k}.`))) throw Error('invalid'); return values.length && values[0] ? [[key, values[0]]] : []; })), limit: Number(params.get(namespaced ? 'list_limit' : 'limit') ?? 50), offset: Number(params.get(namespaced ? 'list_offset' : 'offset') ?? 0) }),
+  assignmentListCarrier: (coordinates) => Object.fromEntries([['list_limit',String(coordinates.limit)],['list_offset',String(coordinates.offset)], ...Object.entries(coordinates.filters).map(([key,value]) => [`list_${key}`,value])]),
+  assignmentListQuery: (coordinates) => new URLSearchParams({ limit:String(coordinates.limit), offset:String(coordinates.offset), ...coordinates.filters }).toString(),
   listEvaluations: options.listEvaluations ?? (async () => [evaluation()]),
   getEvaluation: options.getEvaluation ?? (async () => evaluation()),
   actionHrefWithContext: (await apiHarness()).mod.namespace.actionHrefWithContext,
   decodeJwt: () => options.actor ?? ({ sub: authorId, role: 'student', permissions: options.permissions ?? ['kinesiology-evaluations:write', 'kinesiology-evaluations:submit'] }),
   rawEvaluationContentFromForm: () => content,
   listSubmittedEvaluations: options.listSubmittedEvaluations ?? (async () => []),
+  listKinesiologyEvolutions: options.listKinesiologyEvolutions ?? (async () => []),
   listSubmissions: options.listSubmissions ?? (async () => ({ evaluation_id: largeId, items: [] })),
   listCorrections: options.listCorrections ?? (async () => ({ evaluation_id: largeId, items: [] })),
   listOralSurgeryContexts: options.listOralSurgeryContexts ?? (async () => ({ status: 'ok', items: [] })),
@@ -242,9 +255,49 @@ test('partial antecedents stay partial and optional blank study rows are discard
  assert.equal(actionHrefWithContext('/_actions/save?_action=save', { assignment_id: '7', limit: '50', offset: '0' }), '/_actions/save?_action=save&assignment_id=7&limit=50&offset=0');
 });
 
+test('registered list-coordinate schemas preserve legacy inputs and reject malformed or unknown carriers', async () => {
+ const { mod } = await evaluate(registryPath);
+ const { server } = mod.namespace;
+ const base = { id: largeId, assignment_id: '17', limit: '50', offset: '0' };
+ const carrier = { list_limit: '50', list_offset: '14', list_patient_id: patientId, list_subject_id: subjectId };
+ const schemas = [
+  [server.submitKinesiologyEvaluation.input, base],
+  [server.createKinesiologyAmendment.input, { ...base, confirm: 'on' }],
+  [server.createKinesiologyEvaluation.input, { patient_id: patientId, subject_id: subjectId, academic_group_id: groupId, assignment_id: '17', limit: '50', offset: '0', content: '{}' }],
+  [server.createOralSurgeryDraft.input, { patient_id: patientId, subject_id: subjectId, academic_group_id: groupId, assignment_id: '17', limit: '50', offset: '0' }],
+  [server.updateOralSurgeryDraft.input, { id: '17', expected_version: '1', assignment_id: '17', limit: '50', offset: '0' }],
+  [server.declareOralSurgeryConsent.input, { id: '17', expected_version: '1', assignment_id: '17', limit: '50', offset: '0', paper_signed: 'on' }],
+  [server.recordTeacherConsent.input, { id: '17', patient_id: patientId, subject_id: subjectId, academic_group_id: groupId, paper_signature_date: '2026-01-01' }],
+  [server.validateTeacherSubmission.input, { id: '17', patient_id: patientId, subject_id: subjectId, academic_group_id: groupId, submission_id: '18' }],
+ ];
+ for (const [schema, input] of schemas) {
+  assert.equal(schema.safeParse(input).success, true);
+  assert.equal(schema.safeParse({ ...input, ...carrier }).success, true);
+  assert.equal(schema.safeParse({ ...input, list_patient_id: 'invalid' }).success, false);
+  assert.equal(schema.safeParse({ ...input, 'list_patient_id[x]': patientId }).success, false);
+  assert.equal(schema.safeParse({ ...input, list_unapproved: 'x' }).success, false);
+ }
+ for (const [schema, input] of schemas.slice(0, 6)) {
+  const { limit: _limit, offset: _offset, ...withoutLegacyPage } = input;
+  assert.equal(schema.safeParse(withoutLegacyPage).success, false, 'legacy pagination remains required');
+  assert.equal(schema.safeParse({ ...withoutLegacyPage, ...carrier }).success, false, 'list carriers do not replace legacy pagination');
+ }
+});
+
+test('direct kinesiology handlers reject missing legacy pagination before listing or mutation', async () => {
+ const result = await evaluate(actionPath);
+ const rejected = await result.mod.namespace.handleSubmitKinesiologyEvaluation({ id: largeId, assignment_id: '17', list_limit: '7', list_offset: '14' }, { cookies: result.cookies });
+ assert.equal(rejected.success, false);
+ assert.equal(result.requests.length, 0);
+ assert.equal(result.writes.length, 0);
+});
+
 test('public update action accepts the rendered native form fields and only forwards content', async () => {
  const result = await evaluate(registryPath);
  const schema = result.mod.namespace.server.updateKinesiologyEvaluation.input;
+ const { limit: _limit, offset: _offset, ...withoutPage } = nativeFormInput();
+ assert.equal(schema.safeParse(withoutPage).success, false);
+ assert.equal(schema.safeParse({ ...withoutPage, list_limit: '7', list_offset: '14' }).success, false);
  const form = new FormData();
  for (const [name, value] of Object.entries(nativeFormInput())) form.set(name, value);
  assert.equal(schema.safeParse(Object.fromEntries(form)).success, true);
@@ -373,19 +426,21 @@ test('typed backend errors distinguish 401, 403, concealed 404 and non-draft 409
 
 test('evaluated SSR frontmatter preserves Astro action query and revalidates list/detail state', async () => {
  const listPage = await evaluatePageFrontmatter('src/pages/my-patients/[assignmentId].astro');
- assert.equal(listPage.createHref, '/_actions/createKinesiologyEvaluation?_action=createKinesiologyEvaluation&assignment_id=17&limit=50&offset=0');
+ assert.equal(listPage.createHref, '/_actions/createKinesiologyEvaluation?_action=createKinesiologyEvaluation&assignment_id=17&list_limit=50&list_offset=0');
  assert.equal(listPage.assignment.id, '17');
  assert.equal(listPage.drafts.length, 1);
  const detailPage = await evaluatePageFrontmatter('src/pages/kinesiology-evaluations/[id].astro', { url: '/kinesiology-evaluations/9223372036854775807?assignment_id=17&limit=50&offset=0' });
- assert.equal(detailPage.actionHref, '/_actions/updateKinesiologyEvaluation?_action=updateKinesiologyEvaluation&assignment_id=17&limit=50&offset=0');
+ assert.equal(detailPage.actionHref, '/_actions/updateKinesiologyEvaluation?_action=updateKinesiologyEvaluation&assignment_id=17&list_limit=50&list_offset=0');
  assert.equal(detailPage.eligible, true);
  assert.equal(detailPage.evaluation.id, largeId);
  const failedList = await evaluatePageFrontmatter('src/pages/my-patients/[assignmentId].astro', { listEvaluations: async () => { throw new Error('offline'); } });
  assert.match(failedList.loadError, /No se muestra una lista vacía/);
  const createdRedirect = await evaluatePageFrontmatter('src/pages/my-patients/[assignmentId].astro', { actionResult: { data: { success: true, evaluation: { id: '28' } } } });
- assert.equal(createdRedirect.redirect, '/kinesiology-evaluations/28?assignment_id=17&limit=50&offset=0');
- const savedRedirect = await evaluatePageFrontmatter('src/pages/kinesiology-evaluations/[id].astro', { url: '/kinesiology-evaluations/9223372036854775807?assignment_id=17&limit=50&offset=0', actionResult: { data: { success: true } } });
+ assert.equal(createdRedirect.redirect, '/kinesiology-evaluations/28?assignment_id=17&list_limit=50&list_offset=0');
+ const savedRedirect = await evaluatePageFrontmatter('src/pages/kinesiology-evaluations/[id].astro', { url: `/kinesiology-evaluations/${largeId}?assignment_id=17&limit=50&offset=0`, actionResult: { data: { success: true, evaluation: { id: largeId }, assignment_id: '17', limit: '50', offset: '0' } } });
  assert.equal(savedRedirect.redirect, `/kinesiology-evaluations/${largeId}?assignment_id=17&limit=50&offset=0&saved=1`);
+ const filteredSaveRedirect = await evaluatePageFrontmatter('src/pages/kinesiology-evaluations/[id].astro', { url: `/kinesiology-evaluations/${largeId}?assignment_id=17&limit=50&offset=0&patient_id=${otherSubjectId}`, actionResult: { data: { success: true, evaluation: { id: largeId }, assignment_id: '17', limit: '7', offset: '14', list_limit: '7', list_offset: '14', list_filters: { patient_id: patientId } } } });
+ assert.equal(filteredSaveRedirect.redirect, `/kinesiology-evaluations/${largeId}?assignment_id=17&list_limit=7&list_offset=14&list_patient_id=${patientId}&saved=1`);
  const unauthorized = await evaluatePageFrontmatter('src/pages/my-patients/[assignmentId].astro', { listAssignedPatients: async () => { throw new FakeApiError(401); } });
  assert.match(unauthorized.redirect, /^\/auth\/login\?returnTo=/);
  const options = (await apiHarness()).mod.namespace.antecedentOptionState;
@@ -493,6 +548,29 @@ test('submit action reports network failure or malformed 201 after the POST as u
  }
 });
 
+test('filtered submit keeps lookup scope while leaving the backend mutation body unchanged; invalid carriers cause no requests', async () => {
+ const filters = { list_limit: '50', list_offset: '20', list_patient_id: patientId, list_subject_id: subjectId };
+ const filteredPage = { status: 200, body: { items: [assignment()], limit: 50, offset: 20 } };
+ const filtered = await evaluate(actionPath, { responses: [filteredPage, { status: 200, body: evaluation() }, { status: 201, body: submission() }] });
+ const outcome = await filtered.mod.namespace.handleSubmitKinesiologyEvaluation({ ...submitInput(), ...filters }, { cookies: filtered.cookies });
+ assert.equal(outcome.success, true);
+ const assignmentRequest = filtered.requests.find((request) => new URL(request.url).pathname === '/patient-assignments/mine');
+ assert.equal(new URL(assignmentRequest.url).searchParams.get('patient_id'), patientId);
+ assert.equal(new URL(assignmentRequest.url).searchParams.get('subject_id'), subjectId);
+ const post = filtered.requests.find((request) => request.method === 'POST');
+ assert.ok(post);
+ assert.equal(post.body, '{}');
+ const legacy = await evaluate(actionPath, { responses: [assignmentPage, { status: 200, body: evaluation() }, { status: 201, body: submission() }] });
+ const legacyOutcome = await legacy.mod.namespace.handleSubmitKinesiologyEvaluation(submitInput(), { cookies: legacy.cookies });
+ assert.equal(legacyOutcome.success, true);
+ assert.equal(legacy.requests.find((request) => request.method === 'POST').body, post.body);
+ const invalid = await evaluate(actionPath);
+ const rejected = await invalid.mod.namespace.handleSubmitKinesiologyEvaluation({ ...submitInput(), 'list_patient_id[x]': patientId }, { cookies: invalid.cookies });
+ assert.equal(rejected.success, false);
+ assert.equal(invalid.requests.length, 0);
+ assert.equal(invalid.writes.length, 0);
+});
+
 test('submit action success returns the validated submission with confirmed assignment context', async () => {
  const result = await evaluate(actionPath, { responses: [assignmentPage, { status: 200, body: evaluation() }, { status: 201, body: submission() }] });
  const outcome = await result.mod.namespace.handleSubmitKinesiologyEvaluation(submitInput(), { cookies: result.cookies });
@@ -504,12 +582,27 @@ test('submit action success returns the validated submission with confirmed assi
  assert.equal(outcome.submission.status, 'pending_validation');
 });
 
+test('compiled kinesiology detail uses the actual list parser and makes no request for malformed carriers', async () => {
+ const page = 'src/pages/kinesiology-evaluations/[id].astro';
+ let calls = 0;
+ for (const query of [
+  `assignment_id=17&list_limit=7&list_offset=14&list_patient_id=${patientId}&list_patient_id=${patientId}`,
+  `assignment_id=17&list_limit=7&list_offset=14&list_patient_id%5Bx%5D=${patientId}`,
+  `assignment_id=17&list_limit=7&list_offset=14&list_patient_id.foo=${patientId}`,
+  'assignment_id=17&list_limit=7&list_offset=14&list_patient_id=malformed',
+ ]) {
+  const result = await evaluatePageFrontmatter(page, { actualParser: true, url: `/kinesiology-evaluations/${largeId}?${query}`, listAssignedPatients: async () => { calls++; return { items: [assignment()] }; } });
+  assert.ok(result.loadError);
+ }
+ assert.equal(calls, 0);
+});
+
 test('editor submit form is gated by draft, author, submit grant and action result; uncertain hides it', async () => {
  const page = 'src/pages/kinesiology-evaluations/[id].astro';
  const url = '/kinesiology-evaluations/9223372036854775807?assignment_id=17&limit=50&offset=0';
  const draft = await evaluatePageFrontmatter(page, { url });
  assert.equal(draft.canSubmit, true);
- assert.equal(draft.submitHref, '/_actions/submitKinesiologyEvaluation?_action=submitKinesiologyEvaluation&assignment_id=17&limit=50&offset=0');
+ assert.equal(draft.submitHref, '/_actions/submitKinesiologyEvaluation?_action=submitKinesiologyEvaluation&assignment_id=17&list_limit=50&list_offset=0');
  assert.equal((await evaluatePageFrontmatter(page, { url, permissions: ['kinesiology-evaluations:write'] })).canSubmit, false);
  const submitted = await evaluatePageFrontmatter(page, { url, getEvaluation: async () => evaluation({ status: 'submitted' }) });
  assert.equal(submitted.eligible, false);
@@ -520,9 +613,11 @@ test('editor submit form is gated by draft, author, submit grant and action resu
  assert.match(expired.redirect, /^\/auth\/login\?returnTo=/);
  const redirect = await evaluatePageFrontmatter(page, {
   params: { id: '5', assignmentId: '17' }, url: '/kinesiology-evaluations/5?assignment_id=99&limit=10&offset=20',
-  submitResult: { data: { success: true, id: largeId, assignment_id: '17', limit: '50', offset: '0' } },
+  submitResult: { data: { success: true, id: largeId, assignment_id: '17', limit: '7', offset: '14', list_limit: '7', list_offset: '14', list_filters: { patient_id: patientId, subject_id: subjectId } } },
  });
- assert.equal(redirect.redirect, `/kinesiology-evaluations/${largeId}?assignment_id=17&limit=50&offset=0&submitted=1`);
+ assert.equal(redirect.redirect, `/kinesiology-evaluations/${largeId}?assignment_id=17&list_limit=7&list_offset=14&list_patient_id=${patientId}&list_subject_id=${subjectId}&submitted=1`);
+ const legacyRedirect = await evaluatePageFrontmatter(page, { url: '/kinesiology-evaluations/5?assignment_id=99&limit=10&offset=20', submitResult: { data: { success: true, id: largeId, assignment_id: '17', limit: '7', offset: '14' } } });
+ assert.equal(legacyRedirect.redirect, `/kinesiology-evaluations/${largeId}?assignment_id=17&limit=7&offset=14&submitted=1`);
  const template = await source(page);
  assert.match(template, /canSubmit && !submitUncertain/);
  assert.match(template, /última versión guardada/);
@@ -1049,7 +1144,7 @@ test('editor amend panel is offered on validated same-context records to any stu
  const validated = async () => evaluation({ status: 'validated' });
  const author = await evaluatePageFrontmatter(page, { url, getEvaluation: validated });
  assert.equal(author.canAmend, true);
- assert.equal(author.amendHref, '/_actions/createKinesiologyAmendment?_action=createKinesiologyAmendment&assignment_id=17&limit=50&offset=0');
+ assert.equal(author.amendHref, '/_actions/createKinesiologyAmendment?_action=createKinesiologyAmendment&assignment_id=17&list_limit=50&list_offset=0');
  const replacement = await evaluatePageFrontmatter(page, { url, getEvaluation: validated, actor: { sub: otherSubjectId, role: 'estudiante', permissions: ['kinesiology-evaluations:write'] } });
  assert.equal(replacement.canAmend, true);
  assert.equal((await evaluatePageFrontmatter(page, { url })).canAmend, false);
@@ -1072,9 +1167,11 @@ test('confirmed amendment redirects to the new draft through the validated conte
  const page = 'src/pages/kinesiology-evaluations/[id].astro';
  const redirect = await evaluatePageFrontmatter(page, {
   params: { id: largeId }, url: `/kinesiology-evaluations/${largeId}?assignment_id=99&limit=10&offset=20`,
-  amendResult: { data: { success: true, id: amendmentId, amendment_of_evaluation_id: largeId, assignment_id: '17', limit: '50', offset: '0' } },
+  amendResult: { data: { success: true, id: amendmentId, amendment_of_evaluation_id: largeId, assignment_id: '17', limit: '7', offset: '14', list_limit: '7', list_offset: '14', list_filters: { patient_id: patientId, subject_id: subjectId } } },
  });
- assert.equal(redirect.redirect, `/kinesiology-evaluations/${amendmentId}?assignment_id=17&limit=50&offset=0&amended=1`);
+ assert.equal(redirect.redirect, `/kinesiology-evaluations/${amendmentId}?assignment_id=17&list_limit=7&list_offset=14&list_patient_id=${patientId}&list_subject_id=${subjectId}&amended=1`);
+ const legacy = await evaluatePageFrontmatter(page, { url: `/kinesiology-evaluations/${largeId}?assignment_id=99&limit=10&offset=20`, amendResult: { data: { success: true, id: amendmentId, assignment_id: '17', limit: '7', offset: '14' } } });
+ assert.equal(legacy.redirect, `/kinesiology-evaluations/${amendmentId}?assignment_id=17&limit=7&offset=14&amended=1`);
  const draft = await evaluatePageFrontmatter(page, {
   params: { id: amendmentId }, url: `/kinesiology-evaluations/${amendmentId}?assignment_id=17&limit=50&offset=0&amended=1`,
   getEvaluation: async () => amendment({ author_id: authorId }),
@@ -1095,7 +1192,7 @@ test('assignment frontmatter without the oral-surgery read grant makes no discov
  const page = await evaluatePageFrontmatter('src/pages/my-patients/[assignmentId].astro', { listOralSurgeryContexts: async () => { discoveries += 1; return { status: 'ok', items: [{ subject_id: subjectId, academic_group_id: groupId }] }; } });
  assert.equal(discoveries, 0);
  assert.equal(page.oralSurgeryEnabled, false);
- assert.equal(page.createHref, '/_actions/createKinesiologyEvaluation?_action=createKinesiologyEvaluation&assignment_id=17&limit=50&offset=0');
+ assert.equal(page.createHref, '/_actions/createKinesiologyEvaluation?_action=createKinesiologyEvaluation&assignment_id=17&list_limit=50&list_offset=0');
  assert.equal(page.drafts.length, 1);
  assert.equal(page.oralSurgeryDrafts.length, 0);
 });
@@ -1110,5 +1207,5 @@ test('assignment frontmatter with the grant but no matching pair keeps the Kines
  assert.equal(oralLists, 0);
  assert.equal(page.oralSurgeryEnabled, false);
  assert.equal(page.drafts.length, 1);
- assert.equal(page.createHref, '/_actions/createKinesiologyEvaluation?_action=createKinesiologyEvaluation&assignment_id=17&limit=50&offset=0');
+ assert.equal(page.createHref, '/_actions/createKinesiologyEvaluation?_action=createKinesiologyEvaluation&assignment_id=17&list_limit=50&list_offset=0');
 });

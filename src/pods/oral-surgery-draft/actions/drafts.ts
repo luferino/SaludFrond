@@ -1,6 +1,7 @@
 import type { AstroCookies } from 'astro';
 import { ApiError } from '../../../shared/apiClient';
-import { listAssignedPatients, parseAssignmentPagination, type AssignedPatient } from '../../patient-assignment/api';
+import { listAssignedPatients, type AssignedPatient } from '../../patient-assignment/api';
+import { parseAssignmentActionCoordinates } from '../../patient-assignment/list-coordinates';
 import {
 	createOralSurgeryDraft,
 	declarePaperConsent,
@@ -23,7 +24,7 @@ type AnswerKind = 'date' | 'boolean' | 'text';
 type Answer = boolean | string | null;
 export interface FormControl { section: OralSurgerySectionName | null; field: string; kind: AnswerKind }
 interface Pagination { limit: number; offset: number }
-interface ActiveAssignment { assignment: AssignedPatient; page: Pagination }
+interface ActiveAssignment { assignment: AssignedPatient; page: Pagination; filters: import('../../patient-assignment/api').AssignmentListingFilters }
 
 /** Spanish copy for the student editor. Uncertain outcomes never claim that nothing was stored. */
 export const ORAL_SURGERY_COPY = {
@@ -49,7 +50,7 @@ export const ORAL_SURGERY_COPY = {
 	readOnly: 'Este borrador se muestra en modo de solo lectura. Solo su autor, con permiso de escritura, puede editarlo; el servicio vuelve a comprobarlo al guardar.',
 } as const;
 
-const HIDDEN_FIELDS = ['id', 'expected_version', 'assignment_id', 'limit', 'offset'];
+const HIDDEN_FIELDS = ['id', 'expected_version', 'assignment_id', 'limit', 'offset', 'list_limit', 'list_offset', 'list_patient_id', 'list_student_id', 'list_subject_id', 'list_academic_group_id'];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Editor sections in contract order, each with its Yes/No and free-text field names. */
@@ -71,13 +72,13 @@ export const ORAL_SURGERY_FORM_CONTROLS: ReadonlyMap<string, FormControl> = (() 
 /** Names the registry schema must accept; the page renders one control per name. */
 export const ORAL_SURGERY_FORM_FIELDS: string[] = [...ORAL_SURGERY_FORM_CONTROLS.keys()];
 
-export interface SaveSuccess { success: true; id: string; assignment_id: string; limit: string; offset: string; draft: OralSurgeryDraft }
+export interface SaveSuccess { success: true; id: string; assignment_id: string; limit: string; offset: string; list_filters?: import('../../patient-assignment/api').AssignmentListingFilters; draft: OralSurgeryDraft }
 /** `values` are the submitted controls, kept so the page can re-render them; `expected_version` is the version the student submitted. */
 export interface SaveFailure { success: false; uncertain: boolean; conflict: boolean; error: string; expected_version: string; values?: FormValues }
 export type SaveResult = SaveSuccess | SaveFailure;
-export interface DeclareSuccess { success: true; id: string; assignment_id: string; limit: string; offset: string; declaration: ConsentDeclaration }
+export interface DeclareSuccess { success: true; id: string; assignment_id: string; limit: string; offset: string; list_filters?: import('../../patient-assignment/api').AssignmentListingFilters; declaration: ConsentDeclaration }
 export interface DeclareFailure { success: false; uncertain: boolean; error: string }
-export interface CreateSuccess { success: true; id: string; assignment_id: string; limit: string; offset: string; draft: OralSurgeryDraft }
+export interface CreateSuccess { success: true; id: string; assignment_id: string; limit: string; offset: string; list_filters?: import('../../patient-assignment/api').AssignmentListingFilters; draft: OralSurgeryDraft }
 export interface CreateFailure { success: false; uncertain: boolean; error: string }
 
 class FormInputError extends Error {}
@@ -188,21 +189,20 @@ function readFailure(error: unknown): string {
 	return error instanceof ApiError && error.status < 500 ? safeError(error) : ORAL_SURGERY_COPY.readFailure;
 }
 
-function pagination(input: Record<string, unknown>): Pagination | null {
+function pagination(input: Record<string, unknown>): { page: Pagination; filters: import('../../patient-assignment/api').AssignmentListingFilters } | null {
 	try {
-		return parseAssignmentPagination(new URLSearchParams({ limit: String(input.limit), offset: String(input.offset) }));
-	} catch {
-		return null;
-	}
+		const coordinates = parseAssignmentActionCoordinates(input, true);
+		return { page: { limit: coordinates.limit, offset: coordinates.offset }, filters: coordinates.filters };
+	} catch { return null; }
 }
 
 /** The assignment must still be active in the caller's own list; the backend re-checks every write. */
 async function activeAssignment(input: Record<string, unknown>, cookies: AstroCookies): Promise<ActiveAssignment | null> {
-	const page = pagination(input);
-	if (!page || !validId(input.assignment_id)) return null;
-	const list = await listAssignedPatients(page, cookies);
+	const selected = pagination(input);
+	if (!selected || !validId(input.assignment_id)) return null;
+	const list = await listAssignedPatients(selected.page, cookies, selected.filters);
 	const assignment = list.items.find((item) => item.id === input.assignment_id && item.ended_at === null);
-	return assignment ? { assignment, page } : null;
+	return assignment ? { assignment, page: selected.page, filters: selected.filters } : null;
 }
 
 function contextOf(assignment: AssignedPatient): OralSurgeryContext {
@@ -254,7 +254,7 @@ export async function handleUpdateOralSurgeryDraft(input: Record<string, unknown
 		const saved = await updateOralSurgeryDraft(id, expectedVersion, content, contextOf(current.assignment), context.cookies);
 		return {
 			success: true, id: saved.id, assignment_id: current.assignment.id,
-			limit: String(current.page.limit), offset: String(current.page.offset), draft: saved,
+			limit: String(current.page.limit), offset: String(current.page.offset), ...(Object.keys(input).some((key) => key.startsWith('list_')) ? { list_filters: current.filters } : {}), draft: saved,
 		};
 	} catch (error) {
 		if (error instanceof ApiError && error.status === 409) return failure(ORAL_SURGERY_COPY.conflict, { conflict: true, values });
@@ -285,7 +285,7 @@ export async function handleDeclareOralSurgeryConsent(input: Record<string, unkn
 		const declaration = await declarePaperConsent(id, expectedVersion, context.cookies);
 		return {
 			success: true, id, assignment_id: current.assignment.id,
-			limit: String(current.page.limit), offset: String(current.page.offset), declaration,
+			limit: String(current.page.limit), offset: String(current.page.offset), ...(Object.keys(input).some((key) => key.startsWith('list_')) ? { list_filters: current.filters } : {}), declaration,
 		};
 	} catch (error) {
 		if (error instanceof ApiError && error.status === 409) return failure(ORAL_SURGERY_COPY.declareConflict);
@@ -314,7 +314,7 @@ export async function handleCreateOralSurgeryDraft(input: Record<string, unknown
 		const draft = await createOralSurgeryDraft({ ...contextOf(current.assignment), content: {} }, context.cookies);
 		return {
 			success: true, id: draft.id, assignment_id: current.assignment.id,
-			limit: String(current.page.limit), offset: String(current.page.offset), draft,
+			limit: String(current.page.limit), offset: String(current.page.offset), ...(Object.keys(input).some((key) => key.startsWith('list_')) ? { list_filters: current.filters } : {}), draft,
 		};
 	} catch (error) {
 		if (isTyped(error)) return failure(safeError(error, ORAL_SURGERY_COPY.patientUnavailable));

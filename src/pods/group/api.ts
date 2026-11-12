@@ -39,9 +39,16 @@ function isGroupSummary(value: unknown): value is GroupSummary {
 export async function listGroups(
 	pagination: AcademicPagination,
 	cookies: AstroCookies,
+	q?: string,
+	careerId?: string,
 ): Promise<GroupListResult> {
+	const term = q?.trim() ?? '';
+	if (term.length > 100) return { state: 'failed' };
 	try {
-		const page = await apiFetch<AcademicPage<GroupSummary>>(`/groups${academicPaginationQuery(pagination)}`, { cookies });
+		const query = new URLSearchParams(academicPaginationQuery(pagination).slice(1));
+		if (careerId) query.set('career_id', careerId);
+		if (term) query.set('q', term);
+		const page = await apiFetch<AcademicPage<GroupSummary>>(`/groups?${query}`, { cookies });
 		if (!page || !Array.isArray(page.items)
 			|| page.limit !== pagination.limit || page.offset !== pagination.offset
 			|| !page.items.every(isGroupSummary)) {

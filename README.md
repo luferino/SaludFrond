@@ -41,6 +41,16 @@ All commands are run from the root of the project, from a terminal:
 | `pnpm astro ...`       | Run CLI commands like `astro add`, `astro check` |
 | `pnpm astro -- --help` | Get help using the Astro CLI                     |
 
+## Listing and search integration
+
+- [Patient registry and Reception](docs/patient-listing-search.md): administrator registry and live-career-scoped Reception search, with bounded pagination.
+- [Students and teachers](docs/person-listing-search.md): paginated name/code searches alongside existing registration forms.
+- [Subjects and groups](docs/catalog-listing-search.md): name-only search retaining career and pagination context.
+- [Assignments](docs/assignment-listing-search.md): scoped UUID filters, eligible-student name search, and validated list-state navigation; final independent verification is tracked in the feature task document.
+- [Patient-context clinical filters](docs/contextual-clinical-filters.md): GET-only status/date filters for kinesiology lists, date filters for Oral Surgery lists, and an evaluation-id filter for evolutions.
+
+These integrations target the local backend `feat/patient-list-search` worktree, not an assumed deployment. Patient-context clinical filters are implemented and committed locally. Local synthetic tests and compiled HTML checks do not establish live-backend, PostgreSQL, or real-browser behavior.
+
 ## Patient availability and assignment workflows
 
 - [Administrative patient availability](docs/patient-availability.md): `/patient-availability`, exact-document lookup, linked academic context, availability history and withdrawal. Withdrawing availability does not end existing assignments or clinical access; enabling again creates a new period.

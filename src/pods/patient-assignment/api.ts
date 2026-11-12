@@ -26,6 +26,23 @@ export interface AssignmentPage {
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 100;
 const MAX_SAFE_OFFSET = Number.MAX_SAFE_INTEGER;
+export const ASSIGNMENT_FILTER_KEYS = ['patient_id', 'student_id', 'subject_id', 'academic_group_id'] as const;
+export type AssignmentListingFilters = Partial<Record<typeof ASSIGNMENT_FILTER_KEYS[number], string>>;
+
+export function parseAssignmentListingFilters(params: URLSearchParams): AssignmentListingFilters {
+ const filters: AssignmentListingFilters = {};
+ for (const key of ASSIGNMENT_FILTER_KEYS) {
+  const related = [...params.keys()].filter((name) => name === key || name.startsWith(`${key}[`) || name.startsWith(`${key}.`));
+  if (related.length > 1 || (related.length === 1 && related[0] !== key)) throw new Error(`El filtro ${key} no es válido.`);
+  const values = params.getAll(key);
+  if (values.length > 1) throw new Error(`El filtro ${key} no es válido.`);
+  const value = values[0]?.trim();
+  if (!value) continue;
+  if (!UUID.test(value)) throw new Error(`El filtro ${key} no es válido.`);
+  filters[key] = value;
+ }
+ return filters;
+}
 
 export function parseAssignmentPagination(params: URLSearchParams): { limit: number; offset: number } {
 	return {
@@ -52,8 +69,10 @@ const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:
 export async function listAssignedPatients(
 	pagination: { limit: number; offset: number },
 	cookies: AstroCookies,
+ filters: AssignmentListingFilters = {},
 ): Promise<AssignmentPage> {
 	const query = new URLSearchParams({ limit: String(pagination.limit), offset: String(pagination.offset) });
+ for (const key of ASSIGNMENT_FILTER_KEYS) if (filters[key]) query.set(key, filters[key]!);
 	const response = await apiFetch<unknown>(`/patient-assignments/mine?${query}`, { cookies });
 	if (!isRecord(response) || !Array.isArray(response.items)
 		|| response.limit !== pagination.limit || response.offset !== pagination.offset) {

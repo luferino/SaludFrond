@@ -2,6 +2,7 @@ import type { AstroCookies } from 'astro';
 import { apiFetch } from '../../shared/apiClient';
 import { getEvaluation, isEvaluation, listCorrections, listSubmissions, type CorrectionList, type Evaluation, type SubmissionList } from '../kinesiology-evaluation/api';
 import { decodeJwt } from '../../shared/jwt';
+import { clinicalFilterQuery, type ClinicalListFilters } from '../kinesiology-evaluation/list-filters';
 
 export interface ClinicalContext { patient_id: string; subject_id: string; academic_group_id: string }
 export interface TeacherPatient extends ClinicalContext {
@@ -21,6 +22,20 @@ export function teacherGrant(cookies: AstroCookies, permission: string): boolean
  const actor = token ? decodeJwt(token) : null;
  return !!actor && ['teacher', 'docente'].includes(String(actor.role).toLowerCase())
   && Array.isArray(actor.permissions) && actor.permissions.every((grant) => typeof grant === 'string') && actor.permissions.includes(permission);
+}
+const ASSIGNMENT_FILTERS = ['patient_id','student_id','subject_id','academic_group_id'] as const;
+export type TeacherAssignmentFilters = Partial<Record<typeof ASSIGNMENT_FILTERS[number],string>>;
+export function parseTeacherAssignmentFilters(params: URLSearchParams): TeacherAssignmentFilters {
+ const result: TeacherAssignmentFilters = {};
+ for (const key of ASSIGNMENT_FILTERS) {
+  const names = [...params.keys()].filter((name) => name === key || name.startsWith(`${key}[`) || name.startsWith(`${key}.`));
+  const values = params.getAll(key);
+  if (names.length > 1 || (names.length === 1 && names[0] !== key) || values.length > 1) throw new Error('Los filtros de asignación no son válidos.');
+  const value = values[0]?.trim(); if (!value) continue;
+  if (!UUID.test(value)) throw new Error('Los filtros de asignación no son válidos.');
+  result[key] = value;
+ }
+ return result;
 }
 export function parseTeacherPagination(params: URLSearchParams) {
  const parse = (key: string, fallback: number, min: number, max: number) => {
@@ -52,9 +67,11 @@ export function originEvaluation(value: unknown, context: ClinicalContext): Eval
  }
  return value;
 }
-export async function listTeacherPatients(pagination: { limit: number; offset: number }, cookies: AstroCookies) {
+export async function listTeacherPatients(pagination: { limit: number; offset: number }, cookies: AstroCookies, filters: TeacherAssignmentFilters = {}) {
  const validated = parseTeacherPagination(new URLSearchParams({ limit: String(pagination.limit), offset: String(pagination.offset) }));
- const response = await apiFetch<unknown>(`/patient-assignments?${new URLSearchParams({ limit: String(validated.limit), offset: String(validated.offset) })}`, { cookies });
+ const query = new URLSearchParams({ limit: String(validated.limit), offset: String(validated.offset) });
+ for (const key of ASSIGNMENT_FILTERS) if (filters[key]) query.set(key, filters[key]!);
+ const response = await apiFetch<unknown>(`/patient-assignments?${query}`, { cookies });
  if (!record(response) || !Array.isArray(response.items) || response.limit !== validated.limit || response.offset !== validated.offset) {
   throw new Error('La respuesta de asignaciones no es válida.');
  }
@@ -68,9 +85,11 @@ export async function listTeacherPatients(pagination: { limit: number; offset: n
  });
  return { items, ...validated };
 }
-export async function listTeacherEvaluations(context: ClinicalContext, cookies: AstroCookies): Promise<Evaluation[]> {
+export async function listTeacherEvaluations(context: ClinicalContext, cookies: AstroCookies, filters?: ClinicalListFilters): Promise<Evaluation[]> {
  validateContext(context);
- const response = await apiFetch<unknown>(`/kinesiology-evaluations?${new URLSearchParams({ ...context })}`, { cookies });
+ const query = new URLSearchParams({ patient_id: context.patient_id, subject_id: context.subject_id, academic_group_id: context.academic_group_id });
+ if (filters) for (const [key, value] of clinicalFilterQuery(filters)) query.set(key, value);
+ const response = await apiFetch<unknown>(`/kinesiology-evaluations?${query}`, { cookies });
  if (!record(response) || !Array.isArray(response.items)) throw new Error('La respuesta de fichas no es válida.');
  return response.items.map((item) => originEvaluation(item, context));
 }

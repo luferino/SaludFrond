@@ -28,12 +28,27 @@ export async function listTeacherContexts(page: {limit:number;offset:number}, co
   return { subject_id:v.subject_id, subject_name:v.subject_name, academic_group_id:v.academic_group_id, academic_group_name:v.academic_group_name, academic_year:v.academic_year, curriculum_semester:v.curriculum_semester };
  });
 }
-export async function listTeacherStudents(query: {subject_id:string;academic_group_id:string;limit:number;offset:number}, cookies: AstroCookies): Promise<Page<AssignmentStudent>> {
+export async function listTeacherStudents(query: {subject_id:string;academic_group_id:string;limit:number;offset:number;q?:string}, cookies: AstroCookies): Promise<Page<AssignmentStudent>> {
  assertPagination(query);
  if (!uuid(query.subject_id) || !uuid(query.academic_group_id)) throw new Error('Seleccioná un contexto docente válido.');
  const params = new URLSearchParams({subject_id:query.subject_id,academic_group_id:query.academic_group_id,limit:String(query.limit),offset:String(query.offset)});
+ const q = validateTeacherAssignmentSearch(query.q);
+ if (q) params.set('q', q);
  const result = await apiFetch<unknown>(`/patient-assignment-options/students?${params}`, { cookies });
  return validatePage(result, query, (v) => { if (!record(v)||!uuid(v.student_habilitation_id)||!uuid(v.student_id)||!text(v.nombres)||!text(v.apellidos)) throw new Error('La respuesta de estudiantes no es válida.'); return {student_habilitation_id:v.student_habilitation_id,student_id:v.student_id,nombres:v.nombres,apellidos:v.apellidos}; });
+}
+export function validateTeacherAssignmentSearch(value: unknown): string {
+ if (value === undefined) return '';
+ if (typeof value !== 'string') throw new Error('La búsqueda no es válida.');
+ const trimmed = value.trim();
+ if (trimmed.length > 100) throw new Error('La búsqueda no es válida.');
+ return trimmed;
+}
+export function parseTeacherAssignmentFilters(params: URLSearchParams): { q: string } {
+ const names = [...params.keys()].filter((name) => name === 'q' || name.startsWith('q[') || name.startsWith('q.'));
+ const values = params.getAll('q');
+ if (names.length > 1 || (names.length === 1 && names[0] !== 'q') || values.length > 1) throw new Error('La búsqueda no es válida.');
+ return { q: validateTeacherAssignmentSearch(values[0]) };
 }
 export async function listAvailablePatients(query: {subject_id:string;academic_group_id:string;limit:number;offset:number}, cookies: AstroCookies): Promise<Page<AvailablePatient>> {
  assertPagination(query);

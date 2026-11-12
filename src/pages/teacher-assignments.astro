@@ -4,7 +4,7 @@ import { actions } from 'astro:actions';
 import Layout from '../layouts/Layout.astro';
 import { ApiError } from '../shared/apiClient';
 import { getSession } from '../shared/session';
-import { listAvailablePatients, listTeacherContexts, listTeacherStudents, parseTeacherAssignmentPagination } from '../pods/teacher-assignment/api';
+import { listAvailablePatients, listTeacherContexts, listTeacherStudents, parseTeacherAssignmentFilters, parseTeacherAssignmentPagination } from '../pods/teacher-assignment/api';
 
 Astro.response.headers.set('Cache-Control', 'no-store');
 const token = getSession(Astro.cookies);
@@ -23,6 +23,7 @@ if (action?.data?.success === false || action?.error) {
 }
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 let queryError = '';
+let studentSearch = '';
 let queryValid = true;
 let contextPage = { limit:50, offset:0 };
 let studentPage = { limit:50, offset:0 };
@@ -33,7 +34,8 @@ let patients: Awaited<ReturnType<typeof listAvailablePatients>>['items'] = [];
 let contextsState = 'idle'; let studentsState = 'idle'; let patientsState = 'idle';
 const actionFailed = action?.data?.success === false || Boolean(action?.error);
 const submittedContextValid = UUID.test(submitted.subject_id ?? '') && UUID.test(submitted.academic_group_id ?? '');
-const queryContexts = Astro.url.searchParams.getAll('context');
+const assignmentSearch = Astro.url.searchParams;
+const queryContexts = assignmentSearch.getAll('context');
 const currentContexts = Astro.url.searchParams.getAll('current_context');
 let selectedContext = actionFailed ? (submittedContextValid ? `${submitted.subject_id}:${submitted.academic_group_id}` : '') : queryContexts[0] ?? '';
 let preserveDependentPages = false;
@@ -51,6 +53,7 @@ const pageFor = (prefix: string) => {
 try {
  if (queryContexts.length > 1 || currentContexts.length > 1 || (selectedContext && (selectedContext.split(':').length !== 2 || !selectedContext.split(':').every((value) => UUID.test(value)))) || (currentContexts[0] && (currentContexts[0].split(':').length !== 2 || !currentContexts[0].split(':').every((value) => UUID.test(value))))) throw new Error('El contexto seleccionado no es válido.');
  preserveDependentPages = currentContexts.length === 1 && currentContexts[0] === selectedContext;
+ studentSearch = actionFailed && submitted.q !== undefined ? submitted.q.trim() : parseTeacherAssignmentFilters(assignmentSearch).q;
  const requestedContextPage = pageFor('');
  const requestedStudentPage = pageFor('student_');
  const requestedPatientPage = pageFor('patient_');
@@ -76,11 +79,12 @@ const contextParts = selectedContext.split(':');
 const contextValid = queryValid && contextsState === 'success' && contextParts.length === 2 && contexts.some((item) => item.subject_id === contextParts[0] && item.academic_group_id === contextParts[1]);
 if (contextValid) {
  const [subjectId, groupId] = contextParts;
- try { students = (await listTeacherStudents({ subject_id:subjectId, academic_group_id:groupId, ...studentPage }, Astro.cookies)).items; studentsState = 'success'; }
+ try { students = (await listTeacherStudents({ subject_id:subjectId, academic_group_id:groupId, ...studentPage, ...(studentSearch ? { q:studentSearch } : {}) }, Astro.cookies)).items; studentsState = 'success'; }
  catch (error) {
   if (error instanceof ApiError && error.status === 401) return Astro.redirect(`/auth/login?returnTo=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`);
   studentsState = error instanceof ApiError && error.status === 403 ? 'denied' : 'failed';
  }
+ if (studentsState === 'success' && selectedStudent && !students.some((item) => item.student_habilitation_id === selectedStudent)) selectedStudent = '';
  if (studentsState !== 'unauthorized') {
   try { patients = (await listAvailablePatients({ subject_id:subjectId, academic_group_id:groupId, ...patientPage }, Astro.cookies)).items; patientsState = 'success'; }
   catch (error) {
@@ -91,7 +95,7 @@ if (contextValid) {
 } else if (!submittedContextValid) { selectedStudent = ''; selectedPatient = ''; }
 const coordinates = (context: {limit:number;offset:number}, student: {limit:number;offset:number}, patient: {limit:number;offset:number}) => ({contextLimit:context.limit,contextOffset:context.offset,studentLimit:student.limit,studentOffset:student.offset,patientLimit:patient.limit,patientOffset:patient.offset});
 const nav = (name:string, offset:number, limit:number, context:string, current = coordinates(contextPage,studentPage,patientPage)) => {
- const params = new URLSearchParams(); if (context) params.set('context',context); params.set('current_context',context);
+ const params = new URLSearchParams(); if (context) params.set('context',context); params.set('current_context',context); if (studentSearch) params.set('q',studentSearch);
  const pages = { context: {limit:current.contextLimit,offset:current.contextOffset}, student: {limit:current.studentLimit,offset:current.studentOffset}, patient: {limit:current.patientLimit,offset:current.patientOffset} };
  const target = name === '' ? 'context' : name.startsWith('student_') ? 'student' : 'patient';
  pages[target] = {limit,offset};
@@ -111,6 +115,7 @@ const optionLabel = (name:string, surname:string) => `${name} ${surname}`;
    {contextsState === 'unauthorized' ? <p role="alert">Tu sesión venció. Iniciá sesión nuevamente.</p> : contextsState === 'denied' ? <p role="alert">No tenés permiso para consultar tus contextos docentes.</p> : contextsState === 'failed' ? <p role="alert">No se pudieron cargar los contextos docentes.</p> : contextsState === 'idle' ? <p>Revisá los parámetros para cargar contextos.</p> : contexts.length === 0 ? <><p>No hay contextos docentes activos disponibles.</p><nav aria-label="Paginación de contextos">{showPrevious(contextPage) && <a href={nav('',Math.max(0,contextPage.offset-contextPage.limit),contextPage.limit,selectedContext)}>Anterior</a>}</nav></> : <form method="GET" action="/teacher-assignments">
     <input type="hidden" name="limit" value={contextPage.limit} /><input type="hidden" name="offset" value={contextPage.offset} />
     <input type="hidden" name="current_context" value={selectedContext} />
+    <input type="hidden" name="q" value={studentSearch} />
     <input type="hidden" name="student_limit" value={studentPage.limit} /><input type="hidden" name="student_offset" value={studentPage.offset} />
     <input type="hidden" name="patient_limit" value={patientPage.limit} /><input type="hidden" name="patient_offset" value={patientPage.offset} />
     <label for="context">Contexto</label><select id="context" name="context" required><option value="">Elegí contexto…</option>{contexts.map((item) => { const value = `${item.subject_id}:${item.academic_group_id}`; return <option value={value} selected={selectedContext===value}>{item.subject_name} — {item.academic_group_name} ({item.academic_year}, semestre {item.curriculum_semester})</option>; })}</select>
@@ -119,7 +124,16 @@ const optionLabel = (name:string, surname:string) => `${name} ${surname}`;
    </form>}
   </section>
   {queryValid && contextValid && <section aria-labelledby="selection-title"><h2 id="selection-title">Estudiante y paciente</h2>
+   <form method="GET" action="/teacher-assignments" aria-label="Buscar estudiantes habilitados">
+    <input type="hidden" name="context" value={selectedContext} /><input type="hidden" name="current_context" value={selectedContext} />
+    <input type="hidden" name="limit" value={contextPage.limit} /><input type="hidden" name="offset" value={contextPage.offset} />
+    <input type="hidden" name="student_limit" value={studentPage.limit} /><input type="hidden" name="student_offset" value="0" />
+    <input type="hidden" name="patient_limit" value={patientPage.limit} /><input type="hidden" name="patient_offset" value={patientPage.offset} />
+    <label for="student-search">Buscar estudiante habilitado</label><input id="student-search" name="q" value={studentSearch} maxlength="100" />
+    <button type="submit">Buscar</button>
+   </form>
    <form method="POST" action={actions.createTeacherAssignment}>
+    <input type="hidden" name="q" value={studentSearch} />
     <input type="hidden" name="subject_id" value={contextParts[0]} /><input type="hidden" name="academic_group_id" value={contextParts[1]} />
     <input type="hidden" name="limit" value={contextPage.limit} /><input type="hidden" name="offset" value={contextPage.offset} />
     <input type="hidden" name="student_limit" value={studentPage.limit} /><input type="hidden" name="student_offset" value={studentPage.offset} />

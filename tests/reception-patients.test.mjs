@@ -156,14 +156,14 @@ test('loadCareerScope with zero granted careers selects nothing', async () => {
 });
 
 test('GET /reception/patients is scoped by career and validates the exact DTO list', async () => {
-	const net = backend(() => ({ body: { items: [dto(), dto({ id: ids.other, fecha_nacimiento: null })] } }));
+	const net = backend(() => ({ body: { items: [dto(), dto({ id: ids.other, fecha_nacimiento: null })], limit: 100, offset: 0 } }));
 	const api = await compile(apiModule, net.fetch);
 	const items = await api.listReceptionPatients('kinesiology', cookies());
 	assert.equal(items.length, 2);
 	assert.equal(items[1].fecha_nacimiento, null);
 	assert.equal(net.calls[0].method, 'GET');
 	assert.equal(net.calls[0].path, '/reception/patients');
-	assert.equal(net.calls[0].search, '?career=kinesiology');
+	assert.equal(net.calls[0].search, '?career=kinesiology&limit=100&offset=0');
 	assert.equal(net.calls[0].body, undefined);
 });
 
@@ -182,7 +182,7 @@ test('patient DTO rejects extra keys, missing keys and malformed values', async 
 		const api = await compile(apiModule, net.fetch);
 		await assert.rejects(api.listReceptionPatients('kinesiology', cookies()), /inválid/);
 	}
-	const extraEnvelope = backend(() => ({ body: { items: [], limit: 100 } }));
+	const extraEnvelope = backend(() => ({ body: { items: [], limit: 100, offset: 0, total: 0 } }));
 	await assert.rejects((await compile(apiModule, extraEnvelope.fetch)).listReceptionPatients('kinesiology', cookies()), /inválid/);
 });
 
@@ -374,7 +374,7 @@ test('no-careers state makes no patient or global calls', async () => {
 
 test('ungranted or invalid career selects nothing and makes no patient calls', async () => {
 	for (const search of ['career=odontology', 'career=pediatrics', 'career=kinesiology&career=kinesiology', '']) {
-		const net = backend(({ path }) => (path === '/reception/careers' ? { body: { careers: ['kinesiology'] } } : { body: { items: [dto()] } }));
+		const net = backend(({ path }) => (path === '/reception/careers' ? { body: { careers: ['kinesiology'] } } : { body: { items: [dto()], limit: 100, offset: 0 } }));
 		const api = await compile(stateModule, net.fetch);
 		const state = await api.loadReceptionPatientsState(new URLSearchParams(search), cookies());
 		assert.equal(state.kind, 'select', search);
@@ -384,20 +384,20 @@ test('ungranted or invalid career selects nothing and makes no patient calls', a
 });
 
 test('granted career loads only the career-scoped patient list', async () => {
-	const net = backend(({ path }) => (path === '/reception/careers' ? { body: { careers: ['kinesiology', 'odontology'] } } : { body: { items: [dto()] } }));
+	const net = backend(({ path }) => (path === '/reception/careers' ? { body: { careers: ['kinesiology', 'odontology'] } } : { body: { items: [dto()], limit: 100, offset: 0 } }));
 	const api = await compile(stateModule, net.fetch);
 	const state = await api.loadReceptionPatientsState(new URLSearchParams('career=kinesiology'), cookies());
 	assert.equal(state.kind, 'list');
 	assert.equal(state.career, 'kinesiology');
 	assert.equal(state.patients.length, 1);
-	assert.deepEqual(net.calls.map((call) => `${call.method} ${call.path}${call.search}`), ['GET /reception/careers', 'GET /reception/patients?career=kinesiology']);
+	assert.deepEqual(net.calls.map((call) => `${call.method} ${call.path}${call.search}`), ['GET /reception/careers', 'GET /reception/patients?career=kinesiology&limit=100&offset=0']);
 	assert.ok(net.calls.every((call) => !/^\/(patients|patient-availabilities)/.test(call.path)), 'no global endpoints');
 });
 
 test('switching career renders only the current request data', async () => {
 	const net = backend(({ path, search }) => {
 		if (path === '/reception/careers') return { body: { careers: ['kinesiology', 'odontology'] } };
-		return { body: { items: [dto({ id: search.includes('odontology') ? ids.other : ids.patient, nombres: search.includes('odontology') ? 'Bea' : 'Ana' })] } };
+		return { body: { items: [dto({ id: search.includes('odontology') ? ids.other : ids.patient, nombres: search.includes('odontology') ? 'Bea' : 'Ana' })], limit: 100, offset: 0 } };
 	});
 	const api = await compile(stateModule, net.fetch);
 	const first = await api.loadReceptionPatientsState(new URLSearchParams('career=kinesiology'), cookies());

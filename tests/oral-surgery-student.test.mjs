@@ -259,8 +259,8 @@ test('D2 the editor renders every contract control with stored answers as browse
 test('D4 save and declare forms post with the assignment context so a failed result re-renders the editor, not the unavailable page', async () => {
 	const env = await environment(baseRoutes());
 	const page = await env.renderPage(pagePath, { url: `${draftPath}?assignment_id=17&limit=20&offset=40` });
-	assert.equal(page.saveHref, '/_actions/updateOralSurgeryDraft?assignment_id=17&limit=20&offset=40');
-	assert.equal(page.declareHref, '/_actions/declareOralSurgeryConsent?assignment_id=17&limit=20&offset=40');
+	assert.equal(page.saveHref, '/_actions/updateOralSurgeryDraft?assignment_id=17&list_limit=20&list_offset=40');
+	assert.equal(page.declareHref, '/_actions/declareOralSurgeryConsent?assignment_id=17&list_limit=20&list_offset=40');
 	const source = await readFile(new URL(pagePath, root), 'utf8');
 	assert.match(source, /<form method="POST" action={saveHref} id="draft-form">/);
 	assert.match(source, /<form method="POST" action={declareHref} id="declare-form">/);
@@ -271,6 +271,19 @@ test('D4 save and declare forms post with the assignment context so a failed res
 });
 
 // D3: save action (one PATCH, exact replacement, conflict before PATCH).
+
+test('D3 direct save and declaration handlers reject missing legacy pagination before requests or writes', async () => {
+	const env = await environment(baseRoutes());
+	const pod = await env.importModule(draftsPath);
+	const save = { ...saveInput(env, stored), limit: undefined, offset: undefined, list_limit: '7', list_offset: '14' };
+	const saved = plain(await pod.handleUpdateOralSurgeryDraft(save, { cookies: env.cookies }));
+	assert.equal(saved.success, false);
+	assert.deepEqual(plain(env.requests), []);
+	const declarationInput = { id: largeId, expected_version: '3', assignment_id: '17', paper_signed: 'on', list_limit: '7', list_offset: '14' };
+	const declared = plain(await pod.handleDeclareOralSurgeryConsent(declarationInput, { cookies: env.cookies }));
+	assert.equal(declared.success, false);
+	assert.deepEqual(plain(env.requests), []);
+});
 
 test('D3 untouched saves reproduce stored content exactly, keeping absent, null and empty answers as stored', async () => {
 	for (const content of [stored, minimal]) {
@@ -450,17 +463,19 @@ test('D4 network failure, 5xx or a PATCH response that does not advance the vers
 	}
 });
 
-test('D4 a successful save returns the advanced draft in the context the action validated', async () => {
+test('D4 a successful save returns validated list coordinates without putting them in the clinical mutation', async () => {
 	const env = await environment(baseRoutes({ [`PATCH ${draftPath}`]: patchEcho }));
 	const pod = await env.importModule(draftsPath);
-	const result = plain(await pod.handleUpdateOralSurgeryDraft(saveInput(env, stored, { 'medical_history.medication': 'Ibuprofeno' }), { cookies: env.cookies }));
+	const result = plain(await pod.handleUpdateOralSurgeryDraft(saveInput(env, stored, { limit: '7', offset: '14', list_limit: '7', list_offset: '14', list_patient_id: patientId, 'medical_history.medication': 'Ibuprofeno' }), { cookies: env.cookies }));
 	assert.equal(result.success, true);
 	assert.equal(result.id, largeId);
 	assert.equal(result.assignment_id, '17');
-	assert.equal(result.limit, '50');
-	assert.equal(result.offset, '0');
+	assert.equal(result.limit, '7');
+	assert.equal(result.offset, '14');
+	assert.deepEqual(result.list_filters, { patient_id: patientId });
 	assert.equal(result.draft.version, '4');
 	assert.equal(result.draft.content.medical_history.medication, 'Ibuprofeno');
+	assert.deepEqual(env.requests.at(-1).body, { expected_version: '3', content: { ...stored, medical_history: { ...stored.medical_history, medication: 'Ibuprofeno' } } });
 });
 
 // D5: consent declaration (one POST, never retried, uncertain outcomes).
@@ -468,18 +483,16 @@ test('D4 a successful save returns the advanced draft in the context the action 
 const consentPost = `POST ${draftPath}/consent`;
 const declareInput = (overrides = {}) => ({ id: largeId, expected_version: '3', assignment_id: '17', limit: '50', offset: '0', paper_signed: 'on', ...overrides });
 
-test('D5 declaring paper consent sends one POST with the expected version and literal true, then returns the declaration', async () => {
+test('D5 declaring paper consent sends one POST without list coordinates in the mutation', async () => {
 	const env = await environment(baseRoutes({ [consentPost]: { status: 201, body: declaration() } }));
 	const pod = await env.importModule(draftsPath);
-	const result = plain(await pod.handleDeclareOralSurgeryConsent(declareInput(), { cookies: env.cookies }));
+	const result = plain(await pod.handleDeclareOralSurgeryConsent(declareInput({ limit: '7', offset: '14', list_limit: '7', list_offset: '14', list_subject_id: subjectId }), { cookies: env.cookies }));
 	assert.deepEqual(plain(env.requests), [
-		GET_ASSIGNMENT,
+		{ method: 'GET', url: `https://backend.invalid/patient-assignments/mine?limit=7&offset=14&subject_id=${subjectId}` },
 		GET_DRAFT,
 		{ method: 'POST', url: `${draftUrl}/consent`, body: { expected_version: '3', paper_signed: true } },
 	]);
-	assert.equal(result.success, true);
-	assert.equal(result.id, largeId);
-	assert.equal(result.declaration.id, '7');
+	assert.deepEqual(result, { success: true, id: largeId, assignment_id: '17', limit: '7', offset: '14', list_filters: { subject_id: subjectId }, declaration: declaration() });
 });
 
 test('D5 an unchecked confirmation or a stale version sends no POST', async () => {
@@ -544,6 +557,22 @@ test('D6 creating a draft sends one POST with the exact context and empty conten
 	assert.equal(result.draft.version, '1');
 });
 
+test('D6 filtered create revalidates the constrained assignment and keeps the clinical POST payload identical', async () => {
+	const filtered = await environment({ [createPost]: { status: 201, body: draft({ id: '5', version: '1', content: {} }) } });
+	const pod = await filtered.importModule(draftsPath);
+	const carrier = { list_limit: '50', list_offset: '20', list_patient_id: patientId, list_subject_id: subjectId };
+	const result = plain(await pod.handleCreateOralSurgeryDraft(createInput(carrier), { cookies: filtered.cookies }));
+	assert.equal(result.success, true);
+	const assignmentUrl = new URL(filtered.requests[0].url);
+	assert.equal(assignmentUrl.searchParams.get('patient_id'), patientId);
+	assert.equal(assignmentUrl.searchParams.get('subject_id'), subjectId);
+	assert.deepEqual(filtered.requests.find((request) => request.method === 'POST').body, { ...context, content: {} });
+	const invalid = await environment({ [createPost]: { status: 201, body: draft() } });
+	const invalidPod = await invalid.importModule(draftsPath);
+	assert.equal((await invalidPod.handleCreateOralSurgeryDraft(createInput({ 'list_patient_id[x]': patientId }), { cookies: invalid.cookies })).success, false);
+	assert.deepEqual(plain(invalid.requests), []);
+});
+
 test('D6 create refuses a context that no longer matches the active assignment, and invalid identifiers, without any POST', async () => {
 	const mismatch = await environment({ [createPost]: { status: 201, body: draft() } });
 	const mismatchPod = await mismatch.importModule(draftsPath);
@@ -605,6 +634,11 @@ test('D4 a saved result redirects to the editor with saved=1 before any read', a
 	});
 	assert.equal(page.redirect, `/oral-surgery-drafts/${largeId}?assignment_id=17&limit=50&offset=0&saved=1`);
 	assert.deepEqual(plain(env.requests), []);
+	const filtered = await env.renderPage(pagePath, {
+		url: `${draftPath}?assignment_id=99&limit=1&offset=2&list_limit=7&list_offset=14&list_patient_id=${patientId}`,
+		results: { updateOralSurgeryDraft: { data: { success: true, id: largeId, assignment_id: '17', limit: '7', offset: '14', list_filters: { patient_id: patientId }, draft: draft({ version: '4' }) } } },
+	});
+	assert.equal(filtered.redirect, `/oral-surgery-drafts/${largeId}?assignment_id=17&list_limit=7&list_offset=14&list_patient_id=${patientId}&saved=1`);
 });
 
 test('D4 a conflict renders the current stored version in the form and the typed values in an unsaved panel', async () => {
@@ -689,6 +723,11 @@ test('D5 a declaration redirects to declared=1, and the history keeps the backen
 		results: { declareOralSurgeryConsent: { data: { success: true, id: largeId, assignment_id: '17', limit: '50', offset: '0', declaration: declaration() } } },
 	});
 	assert.equal(redirected.redirect, `/oral-surgery-drafts/${largeId}?assignment_id=17&limit=50&offset=0&declared=1`);
+	const filtered = await env.renderPage(pagePath, {
+		url: `${draftPath}?assignment_id=99&limit=1&offset=2&list_limit=7&list_offset=14&list_subject_id=${subjectId}`,
+		results: { declareOralSurgeryConsent: { data: { success: true, id: largeId, assignment_id: '17', limit: '7', offset: '14', list_filters: { subject_id: subjectId }, declaration: declaration() } } },
+	});
+	assert.equal(filtered.redirect, `/oral-surgery-drafts/${largeId}?assignment_id=17&list_limit=7&list_offset=14&list_subject_id=${subjectId}&declared=1`);
 	const history = { draft_version: '3', plan_revision: '2', current_declaration_id: '7', declarations: [declaration({ id: '6', plan_revision: '1', treatment_plan: null }), declaration()] };
 	const withHistory = await environment(baseRoutes({ [`GET ${draftPath}/consent`]: { body: history } }));
 	const page = await withHistory.renderPage(pagePath);
