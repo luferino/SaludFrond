@@ -32,7 +32,7 @@ async function render(query, options = {}) {
  const Astro = { cookies: {}, url: new URL(`https://fixture.invalid/teacher-assignments?${query}`), response: { headers: new Headers() }, getActionResult: () => undefined, redirect: (url) => ({ redirect: url }) };
  const mocks = {
   actions: { createTeacherAssignment: 'create' }, Layout: {}, Fragment: (props) => props.children, ApiError: class ApiError extends Error { constructor(status) { super('error'); this.status = status; } },
-  getSession: () => 'token', parseTeacherAssignmentPagination: (params) => ({ limit: Number(params.get('limit') ?? 50), offset: Number(params.get('offset') ?? 0) }),
+  getSession: () => 'token', parseTeacherAssignmentPagination: (params) => ({ limit: Number(params.get('limit') ?? 50), offset: Number(params.get('offset') ?? 0) }), parseTeacherAssignmentFilters: (params) => ({ q: params.get('q')?.trim() ?? '' }),
   listTeacherContexts: async (pagination) => { requests.push('contexts'); return page(options.emptyContexts ? [] : [contextItem], pagination); },
   listTeacherStudents: async (pagination) => { requests.push('students'); return page(options.emptyStudents ? [] : [{ student_habilitation_id: patient, student_id: patient, nombres: 'Ana', apellidos: 'Pérez' }], pagination); },
   listAvailablePatients: async (pagination) => { requests.push('patients'); return page(options.emptyPatients ? [] : [{ patient_id: patient, nombres: 'Luis', apellidos: 'Díaz' }], pagination); },
