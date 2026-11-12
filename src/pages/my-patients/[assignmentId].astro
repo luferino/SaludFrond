@@ -31,6 +31,7 @@ let clinicalError = false;
 let clinicalFilters: ClinicalListFilters = {};
 let evolutionFilters: EvolutionFilters = {};
 let evolutions: KinesiologyEvolutionListItem[] = [];
+let evolutionError = false;
 const oralSurgeryPage = { limit: 50, offset: 0 };
 const result = Astro.getActionResult(actions.createKinesiologyEvaluation);
 if (result?.data?.success === false && /sesión venció/i.test(result.data.error)) {
@@ -79,7 +80,13 @@ try {
 					hasFilters ? listSubmittedEvaluations(context, Astro.cookies, clinicalFilters) : listSubmittedEvaluations(context, Astro.cookies),
 				]);
 				if (Array.isArray(permissions) && permissions.includes('kinesiology-evolutions:read')) {
-					evolutions = await listKinesiologyEvolutions(context, Astro.cookies, evolutionFilters);
+					// Isolated: an evolution failure must not hide the evaluation lists already loaded above.
+					try {
+						evolutions = await listKinesiologyEvolutions(context, Astro.cookies, evolutionFilters);
+					} catch (error) {
+						if (error instanceof ApiError && error.status === 401) throw error;
+						evolutionError = true;
+					}
 				}
 			}
 		}
@@ -160,13 +167,15 @@ const createOralSurgeryHref = oralSurgeryEnabled ? actionHrefWithContext(actions
 				</form> : null}
 			</header>
 			{!discoveryError && <form method="GET" class="clinical-filters" aria-label="Filtrar listas clínicas">
-				{Object.entries(listCarrier).map(([key, value]) => <input type="hidden" name={key} value={value} />)}
+				<input type="hidden" name="limit" value={pagination.limit} />
+				<input type="hidden" name="offset" value={pagination.offset} />
+				{Object.entries(listFilters).map(([key, value]) => <input type="hidden" name={key} value={value} />)}
 				{oralSurgeryEnabled ? <>
 					<label for="oral-date-from">Desde</label><input id="oral-date-from" type="date" name="date_from" value={clinicalFilters.date_from ?? ''} />
 					<label for="oral-date-to">Hasta</label><input id="oral-date-to" type="date" name="date_to" value={clinicalFilters.date_to ?? ''} />
 					<button type="submit">Aplicar filtros de fecha</button>
 				</> : <>
-					<label for="clinical-status">Estado</label><select id="clinical-status" name="status" value={clinicalFilters.status ?? ''}><option value="">Todos</option><option value="draft">Borrador</option><option value="submitted">Enviada</option><option value="validated">Validada</option></select>
+					<label for="clinical-status">Estado</label><select id="clinical-status" name="status"><option value="">Todos</option><option value="draft" selected={clinicalFilters.status === 'draft'}>Borrador</option><option value="submitted" selected={clinicalFilters.status === 'submitted'}>Enviada</option><option value="validated" selected={clinicalFilters.status === 'validated'}>Validada</option></select>
 					<label for="clinical-date-from">Desde</label><input id="clinical-date-from" type="date" name="date_from" value={clinicalFilters.date_from ?? ''} />
 					<label for="clinical-date-to">Hasta</label><input id="clinical-date-to" type="date" name="date_to" value={clinicalFilters.date_to ?? ''} />
 					<label for="evolution-evaluation">Evaluación</label><input id="evolution-evaluation" name="evaluation_id" inputmode="numeric" value={evolutionFilters.evaluation_id ?? ''} />
@@ -205,7 +214,7 @@ const createOralSurgeryHref = oralSurgeryEnabled ? actionHrefWithContext(actions
 				</section>
 				{Array.isArray(permissions) && permissions.includes('kinesiology-evolutions:read') && <section aria-labelledby="evolutions-title">
 					<h2 id="evolutions-title">Evoluciones kinésicas</h2>
-					{evolutions.length ? <ul class="draft-list">{evolutions.map((evolution) => <li><span>Evaluación {evolution.evaluation_id} · {evolution.status === 'draft' ? 'Borrador' : evolution.status === 'submitted' ? 'Enviada' : 'Validada'} · {new Date(evolution.created_at).toLocaleDateString('es')}</span></li>)}</ul> : <p>No hay evoluciones visibles para este paciente y contexto.</p>}
+					{evolutionError ? <p class="error" role="alert">No se pudieron cargar las evoluciones kinésicas. Las fichas de esta asignación siguen disponibles.</p> : evolutions.length ? <ul class="draft-list">{evolutions.map((evolution) => <li><span>Evaluación {evolution.evaluation_id} · {evolution.status === 'draft' ? 'Borrador' : evolution.status === 'submitted' ? 'Enviada' : 'Validada'} · {new Date(evolution.created_at).toLocaleDateString('es')}</span></li>)}</ul> : <p>No hay evoluciones visibles para este paciente y contexto.</p>}
 				</section>}
 			</> : null}
 		</> : null}

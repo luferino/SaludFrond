@@ -157,14 +157,17 @@ async function renderAssignment(options = {}) {
   actions: { createKinesiologyEvaluation: 'kinesiology', createOralSurgeryDraft: 'oral-surgery' }, isInputError: () => false,
   decodeJwt: () => ({ sub: teacherId, role: 'student', permissions: options.permissions ?? [] }),
   parseAssignmentPagination: () => ({ limit: 50, offset: 0 }),
-  parseEvolutionListFilters: (params) => Object.fromEntries(['status','date_from','date_to','evaluation_id'].filter((key) => params.has(key) && params.get(key)).map((key) => [key, params.get(key)])),
+  parseEvolutionListFilters: (params) => {
+   if (params.has('evaluation_id') && !/^[1-9]\d*$/.test(params.get('evaluation_id'))) throw new Error('El filtro de evaluación no es válido.');
+   return Object.fromEntries(['status','date_from','date_to','evaluation_id'].filter((key) => params.has(key) && params.get(key)).map((key) => [key, params.get(key)]));
+  },
   parseAssignmentListCoordinates: (params) => ({ filters: Object.fromEntries(['patient_id','student_id','subject_id','academic_group_id'].flatMap((key) => { const values = params.getAll(key); if (values.length > 1 || [...params.keys()].some((name) => name.startsWith(`${key}[`) || name.startsWith(`${key}.`))) throw Error('invalid'); return values.length ? [[key,values[0]]] : []; })), limit: Number(params.get('limit') ?? 50), offset: Number(params.get('offset') ?? 0) }),
   assignmentListCarrier: (coordinates) => Object.fromEntries([['list_limit',String(coordinates.limit)],['list_offset',String(coordinates.offset)], ...Object.entries(coordinates.filters).map(([key,value])=>[`list_${key}`,value])]),
   assignmentListQuery: (coordinates) => new URLSearchParams({limit:String(coordinates.limit),offset:String(coordinates.offset),...coordinates.filters}).toString(),
   listAssignedPatients: async () => { requests.push('assignments'); if (options.assignmentsFailure) throw new Error('offline'); return { items: options.items ?? [assignment], limit: 50, offset: 0 }; },
-  listEvaluations: async (_context, _cookies, filters) => { requests.push('kinesiology-drafts'); clinicalCalls.push({ kind: 'drafts', filters }); return []; },
+  listEvaluations: async (_context, _cookies, filters) => { requests.push('kinesiology-drafts'); clinicalCalls.push({ kind: 'drafts', filters }); return options.kinesiologyDrafts ?? []; },
   listSubmittedEvaluations: async (_context, _cookies, filters) => { requests.push('kinesiology-submitted'); clinicalCalls.push({ kind: 'submitted', filters }); return []; },
-  listKinesiologyEvolutions: async (_context, _cookies, filters) => { requests.push('evolutions'); clinicalCalls.push({ kind: 'evolutions', filters }); return []; },
+  listKinesiologyEvolutions: async (_context, _cookies, filters) => { requests.push('evolutions'); clinicalCalls.push({ kind: 'evolutions', filters }); if (options.evolutionsStatus) throw new mocks.ApiError(options.evolutionsStatus); if (options.evolutionsFailure) throw new Error('offline'); return []; },
   EVALUATION_STATUS_LABELS: {},
   actionHrefWithContext: (href, context) => { const url = new URL(href, 'http://localhost'); for (const [key, value] of Object.entries(context)) url.searchParams.set(key, value); return `${url.pathname}${url.search}`; },
   listOralSurgeryContexts: async () => {
@@ -235,8 +238,9 @@ test('compiled student HTML keeps GET clinical controls in the selected assignme
  ]);
  const controls = result.html.match(/<form method="GET" class="clinical-filters[^>]*>[\s\S]*?<\/form>/)?.[0];
  assert.ok(controls);
- assert.match(controls, /name="list_limit" value="7"/);
- assert.match(controls, /name="list_offset" value="14"/);
+ assert.match(controls, /name="limit" value="7"/);
+ assert.match(controls, /name="offset" value="14"/);
+ assert.doesNotMatch(controls, /name="list_/);
  assert.doesNotMatch(controls, /method="POST"/);
 });
 
@@ -305,4 +309,65 @@ test('student page Oral Surgery list failure replaces the view with the load err
  const result = await renderAssignment({ permissions: ['oral-surgery-drafts:read'], contexts: [pair()], oralFailure: true });
  assert.match(result.html, /No se pudieron cargar las asignaciones y sus fichas/);
  assert.doesNotMatch(result.html, /id="new-draft"|Crear nuevo borrador de Cirugía Oral I/);
+});
+
+/** Load the real list-coordinate parser so form submissions are checked against the page's actual contract. */
+async function actualListCoordinatesParser() {
+ const code = await readFile(new URL('src/pods/patient-assignment/list-coordinates.ts', root), 'utf8');
+ const output = ts.transpileModule(code, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+ const exports = {};
+ new Function('exports', output)(exports);
+ return exports.parseAssignmentListCoordinates;
+}
+
+test('RED R3-001: student status select renders the applied clinical status as the selected option', async () => {
+ const result = await renderAssignment({ url: 'https://fixture.invalid/my-patients/17?limit=50&offset=0&status=submitted' });
+ const select = result.html.match(/<select id="clinical-status"[\s\S]*?<\/select>/)?.[0];
+ assert.ok(select);
+ assert.doesNotMatch(select, /<select[^>]* value=/);
+ assert.deepEqual([...select.matchAll(/<option value="([^"]*)"[^>]* selected[ >]/g)].map((match) => match[1]), ['submitted']);
+ assert.match(select, /<option value="" [^>]*>Todos<\/option>/);
+});
+
+test('RED R2-001: student clinical filter form carries limit, offset and assignment filters under the names the page parses', async () => {
+ const result = await renderAssignment({ url: `https://fixture.invalid/my-patients/17?limit=7&offset=14&subject_id=${subject}&status=submitted` });
+ const controls = result.html.match(/<form method="GET" class="clinical-filters[^>]*>[\s\S]*?<\/form>/)?.[0];
+ assert.ok(controls);
+ const hidden = [...controls.matchAll(/<input type="hidden" name="([^"]+)" value="([^"]*)"/g)].map((match) => [match[1], match[2]]);
+ assert.deepEqual(hidden, [['limit', '7'], ['offset', '14'], ['subject_id', subject]]);
+ assert.doesNotMatch(controls, /name="list_/);
+ const parse = await actualListCoordinatesParser();
+ assert.deepEqual(parse(new URLSearchParams([...hidden, ['status', 'submitted']])), { filters: { subject_id: subject }, limit: 7, offset: 14 });
+});
+
+test('RED R3-002: student evolution read failure keeps the evaluation lists rendered and shows an evolution-specific error', async () => {
+ const result = await renderAssignment({ permissions: ['kinesiology-evolutions:read'], kinesiologyDrafts: [{ id: '31', updated_at: iso }], evolutionsFailure: true });
+ assert.deepEqual(result.requests, ['assignments', 'kinesiology-drafts', 'kinesiology-submitted', 'evolutions']);
+ assert.match(result.html, /Abrir borrador de ficha · actualizado /);
+ assert.match(result.html, /role="alert"[^>]*>No se pudieron cargar las evoluciones kinésicas\./);
+ assert.doesNotMatch(result.html, /No se pudieron cargar las asignaciones y sus fichas/);
+ assert.doesNotMatch(result.html, /No hay evoluciones visibles/);
+});
+
+test('student evolution 401 still redirects to login with the current list state', async () => {
+ const result = await renderAssignment({ permissions: ['kinesiology-evolutions:read'], evolutionsStatus: 401 });
+ assert.equal(result.html, 'REDIRECT:/auth/login?returnTo=%2Fmy-patients%2F17%3Flimit%3D50%26offset%3D0');
+});
+
+test('student invalid evolution filter is rejected before any clinical or evolution read', async () => {
+ const result = await renderAssignment({ permissions: ['kinesiology-evolutions:read'], url: 'https://fixture.invalid/my-patients/17?limit=50&offset=0&evaluation_id=0' });
+ assert.deepEqual(result.requests, []);
+ assert.match(result.html, /role="alert"[^>]*>El filtro de evaluación no es válido\./);
+});
+
+test('student no-filter page keeps the default lists, default status option and no evolution error', async () => {
+ const result = await renderAssignment({ permissions: ['kinesiology-evolutions:read'], kinesiologyDrafts: [{ id: '31', updated_at: iso }] });
+ assert.deepEqual(result.requests, ['assignments', 'kinesiology-drafts', 'kinesiology-submitted', 'evolutions']);
+ assert.deepEqual(result.clinicalCalls.map((call) => call.kind), ['drafts', 'submitted', 'evolutions']);
+ assert.match(result.html, /Abrir borrador de ficha · actualizado /);
+ assert.match(result.html, /No hay evoluciones visibles para este paciente y contexto\./);
+ assert.doesNotMatch(result.html, /role="alert"/);
+ const select = result.html.match(/<select id="clinical-status"[\s\S]*?<\/select>/)?.[0];
+ assert.ok(select);
+ assert.doesNotMatch(select, / selected/);
 });

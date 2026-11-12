@@ -16,6 +16,7 @@ let patients: TeacherPatient[] = [];
 let selected: TeacherPatient | undefined;
 let evaluations: Evaluation[] = [];
 let evolutions: KinesiologyEvolutionListItem[] = [];
+let evolutionError = false;
 let clinicalFilters: ClinicalListFilters = {};
 let evolutionFilters: EvolutionFilters = {};
 let filterError = '';
@@ -58,7 +59,15 @@ try {
      else {
       const hasFilters = Object.keys(clinicalFilters).length > 0;
       evaluations = hasFilters ? await listTeacherEvaluations(context, Astro.cookies, clinicalFilters) : await listTeacherEvaluations(context, Astro.cookies);
-      if (teacherGrant(Astro.cookies, 'kinesiology-evolutions:read')) evolutions = await listKinesiologyEvolutions(context, Astro.cookies, evolutionFilters);
+      if (teacherGrant(Astro.cookies, 'kinesiology-evolutions:read')) {
+       // Isolated: an evolution failure must not hide the evaluation lists already loaded above.
+       try {
+        evolutions = await listKinesiologyEvolutions(context, Astro.cookies, evolutionFilters);
+       } catch (failure) {
+        if (failure instanceof ApiError && failure.status === 401) throw failure;
+        evolutionError = true;
+       }
+      }
      }
     }
    }
@@ -129,7 +138,7 @@ const listCarrier = assignmentListCarrier({ ...pagination, filters });
     {evaluations.length ? <ul>{evaluations.map((evaluation) => <li>
      <a href={`/teacher-clinical/${evaluation.id}?${new URLSearchParams({ patient_id: selected!.patient_id, subject_id: selected!.subject_id, academic_group_id: selected!.academic_group_id, assignment_id: selected!.id, ...listCarrier })}`}>Abrir ficha · {evaluation.status === 'draft' ? 'Borrador' : evaluation.status === 'submitted' ? 'Enviada' : 'Validada'}</a>
     </li>)}</ul> : <p>No hay fichas para este paciente y contexto de origen.</p>}
-    {teacherGrant(Astro.cookies, 'kinesiology-evolutions:read') && <section aria-labelledby="teacher-evolutions-title"><h3 id="teacher-evolutions-title">Evoluciones kinésicas</h3>{evolutions.length ? <ul>{evolutions.map((item) => <li><span>Evaluación {item.evaluation_id} · {item.status === 'draft' ? 'Borrador' : item.status === 'submitted' ? 'Enviada' : 'Validada'} · {new Date(item.created_at).toLocaleDateString('es')}</span></li>)}</ul> : <p>No hay evoluciones visibles para este paciente y contexto de origen.</p>}</section>}
+    {teacherGrant(Astro.cookies, 'kinesiology-evolutions:read') && <section aria-labelledby="teacher-evolutions-title"><h3 id="teacher-evolutions-title">Evoluciones kinésicas</h3>{evolutionError ? <p role="alert">No se pudieron cargar las evoluciones kinésicas. Las fichas de este contexto siguen disponibles.</p> : evolutions.length ? <ul>{evolutions.map((item) => <li><span>Evaluación {item.evaluation_id} · {item.status === 'draft' ? 'Borrador' : item.status === 'submitted' ? 'Enviada' : 'Validada'} · {new Date(item.created_at).toLocaleDateString('es')}</span></li>)}</ul> : <p>No hay evoluciones visibles para este paciente y contexto de origen.</p>}</section>}
    </section>}
   </>}
  </main>

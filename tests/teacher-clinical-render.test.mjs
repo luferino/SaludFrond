@@ -39,14 +39,17 @@ async function render(path, options = {}) {
   parseAssignmentListCoordinates: (params, namespaced = false) => { const prefix = namespaced ? 'list_' : ''; const filters = Object.fromEntries(['patient_id','student_id','subject_id','academic_group_id'].filter((key) => params.has(`${prefix}${key}`)).map((key) => [key,params.get(`${prefix}${key}`)])); return { filters, limit: Number(params.get(namespaced && params.has('list_limit') ? 'list_limit' : 'limit') ?? 50), offset: Number(params.get(namespaced && params.has('list_offset') ? 'list_offset' : 'offset') ?? 0) }; },
   assignmentListCarrier: (coordinates) => Object.fromEntries([['list_limit',String(coordinates.limit)],['list_offset',String(coordinates.offset)], ...Object.entries(coordinates.filters).map(([key,value])=>[`list_${key}`,value])]),
   assignmentListQuery: (coordinates) => new URLSearchParams({limit:String(coordinates.limit),offset:String(coordinates.offset),...coordinates.filters}).toString(),
-  parseEvolutionListFilters: (params) => Object.fromEntries(['status','date_from','date_to','evaluation_id'].filter((key) => params.has(key) && params.get(key)).map((key) => [key,params.get(key)])),
+  parseEvolutionListFilters: (params) => {
+   if (params.has('evaluation_id') && !/^[1-9]\d*$/.test(params.get('evaluation_id'))) throw new Error('El filtro de evaluación no es válido.');
+   return Object.fromEntries(['status','date_from','date_to','evaluation_id'].filter((key) => params.has(key) && params.get(key)).map((key) => [key,params.get(key)]));
+  },
   parseClinicalContext: (params) => {
    if (options.rejectQuery || !params?.has('patient_id') || !params?.has('subject_id') || !params?.has('academic_group_id')) throw new Error('invalid query context');
    return Object.fromEntries(['patient_id', 'subject_id', 'academic_group_id'].map((key) => [key, params.get(key)]));
   },
   listTeacherPatients: async () => { requests.push('assignments'); if (options.failure) throw new Error('failed'); return { items: options.empty ? [] : [row], limit: 50, offset: options.offset ?? 0 }; },
   listTeacherEvaluations: async (context, _cookies, filters) => { requests.push('list'); clinicalCalls.push({ context, filters }); return options.emptyEvaluations ? [] : [evaluation]; },
-  listKinesiologyEvolutions: async (context, _cookies, filters) => { requests.push('evolutions'); clinicalCalls.push({ context, filters, evolution: true }); return []; },
+  listKinesiologyEvolutions: async (context, _cookies, filters) => { requests.push('evolutions'); clinicalCalls.push({ context, filters, evolution: true }); if (options.evolutionsStatus) throw new mocks.ApiError(options.evolutionsStatus); if (options.evolutionsFailure) throw new Error('offline'); return []; },
   listOralSurgeryContexts: async () => { requests.push('discovery'); if (options.discoveryStatus) throw new mocks.ApiError(options.discoveryStatus); if (options.discoveryFailure) throw new Error('offline'); if (options.forbidden) return { status: 'forbidden' }; return { status: 'ok', items: options.contexts ?? [] }; },
   isOralSurgeryContext: (contexts, subjectId, groupId) => contexts.some((item) => item.subject_id === subjectId && item.academic_group_id === groupId),
   listOralSurgeryDrafts: async (context, _cookies, page) => { requests.push('oral-list'); oralListings.push({ context, page }); return options.oralDrafts ?? []; },
@@ -358,4 +361,44 @@ test('teacher discovery 401 redirects to login and no discovery runs without a s
  assert.deepEqual(expired.requests, ['assignments', 'discovery']);
  assert.equal(expired.html, 'REDIRECT:/auth/login?returnTo=%2Fteacher-clinical');
  assert.deepEqual((await render('src/pages/teacher-clinical.astro', { query: '', oralSurgeryRead: true })).requests, ['assignments']);
+});
+
+const selectedContext = `assignment_id=${id}&patient_id=${patient}&subject_id=${subject}&academic_group_id=${group}`;
+
+test('RED R3-002: teacher evolution read failure keeps the evaluation list rendered and shows an evolution-specific error', async () => {
+ const result = await render('src/pages/teacher-clinical.astro', { evolutions: true, evolutionsFailure: true, query: selectedContext });
+ assert.deepEqual(result.requests, ['assignments', 'list', 'evolutions']);
+ assert.match(result.html, /Abrir ficha · Borrador/);
+ assert.match(result.html, /role="alert"[^>]*>No se pudieron cargar las evoluciones kinésicas\./);
+ assert.doesNotMatch(result.html, /No se pudo cargar el acceso clínico/);
+});
+
+test('teacher evolution 401 still redirects to login', async () => {
+ const result = await render('src/pages/teacher-clinical.astro', { evolutions: true, evolutionsStatus: 401, query: selectedContext });
+ assert.equal(result.html, 'REDIRECT:/auth/login?returnTo=%2Fteacher-clinical');
+});
+
+test('teacher invalid evolution filter is rejected before any clinical or evolution read', async () => {
+ const result = await render('src/pages/teacher-clinical.astro', { evolutions: true, query: `${selectedContext}&evaluation_id=0` });
+ assert.deepEqual(result.requests, ['assignments']);
+ assert.match(result.html, /role="alert"[^>]*>El filtro de evaluación no es válido\./);
+});
+
+test('teacher no-filter page keeps the default evaluation list and evolutions without an error', async () => {
+ const result = await render('src/pages/teacher-clinical.astro', { evolutions: true, query: selectedContext });
+ assert.deepEqual(result.requests, ['assignments', 'list', 'evolutions']);
+ assert.match(result.html, /Abrir ficha · Borrador/);
+ assert.match(result.html, /No hay evoluciones visibles para este paciente y contexto de origen\./);
+ assert.doesNotMatch(result.html, /role="alert"/);
+ const select = result.html.match(/<select id="clinical-status"[\s\S]*?<\/select>/)?.[0];
+ assert.ok(select);
+ assert.doesNotMatch(select, / selected/);
+});
+
+test('teacher status select already renders the applied clinical status as the selected option (R3-001 check)', async () => {
+ const result = await render('src/pages/teacher-clinical.astro', { query: `${selectedContext}&status=validated` });
+ const select = result.html.match(/<select id="clinical-status"[\s\S]*?<\/select>/)?.[0];
+ assert.ok(select);
+ assert.doesNotMatch(select, /<select[^>]* value=/);
+ assert.deepEqual([...select.matchAll(/<option value="([^"]*)"[^>]* selected[ >]/g)].map((match) => match[1]), ['validated']);
 });
