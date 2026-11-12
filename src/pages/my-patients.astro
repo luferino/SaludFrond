@@ -3,15 +3,18 @@ export const prerender = false;
 
 import Layout from '../layouts/Layout.astro';
 import { ApiError } from '../shared/apiClient';
-import { listAssignedPatients, parseAssignmentPagination, type AssignedPatient } from '../pods/patient-assignment/api';
+import { ASSIGNMENT_FILTER_KEYS, listAssignedPatients, parseAssignmentListingFilters, parseAssignmentPagination, type AssignedPatient } from '../pods/patient-assignment/api';
 
 let pagination = { limit: 50, offset: 0 };
 let items: AssignedPatient[] = [];
 let state: 'ok' | 'empty' | 'denied' | 'error' = 'ok';
 let message = '';
+let filters: ReturnType<typeof parseAssignmentListingFilters> = {};
+const params = Astro.url.searchParams;
 try {
-	pagination = parseAssignmentPagination(Astro.url.searchParams);
-	const page = await listAssignedPatients(pagination, Astro.cookies);
+	pagination = parseAssignmentPagination(params);
+ filters = parseAssignmentListingFilters(params);
+	const page = await listAssignedPatients(pagination, Astro.cookies, filters);
 	items = page.items;
 	if (items.length === 0) state = 'empty';
 } catch (error) {
@@ -28,7 +31,9 @@ const { limit, offset } = pagination;
 const previousOffset = offset > 0 ? Math.max(0, offset - limit) : null;
 const canAdvance = offset <= Number.MAX_SAFE_INTEGER - limit;
 const nextOffset = state === 'ok' && items.length === limit && canAdvance ? offset + limit : null;
-const pageLink = (value: number) => `/my-patients?limit=${limit}&offset=${value}`;
+const filteredHref = (offsetValue: number, includeFilters = true) => { const params = new URLSearchParams({ limit:String(limit), offset:String(offsetValue) }); if (includeFilters) for (const key of ASSIGNMENT_FILTER_KEYS) { const value = filters[key]; if (value) params.set(key, value); } return `/my-patients?${params}`; };
+const detailHref = (id: string) => { const params = new URLSearchParams({limit:String(limit),offset:String(offset)}); for (const key of ASSIGNMENT_FILTER_KEYS) { const value = filters[key]; if (value) params.set(key,value); } return `/my-patients/${id}?${params}`; };
+const pageLink = (value: number) => filteredHref(value);
 ---
 
 <Layout>
@@ -38,6 +43,14 @@ const pageLink = (value: number) => `/my-patients?limit=${limit}&offset=${value}
 			<h1 id="assigned-title">Mis pacientes asignados</h1>
 			<p>Consulta los pacientes que tienes asignados actualmente.</p>
 		</header>
+  <form method="GET" action="/my-patients" aria-label="Filtrar asignaciones">
+   <label>Paciente <input name="patient_id" value={filters.patient_id ?? ''} /></label>
+   <label>Estudiante (perfil) <input name="student_id" value={filters.student_id ?? ''} /></label>
+   <label>Asignatura <input name="subject_id" value={filters.subject_id ?? ''} /></label>
+   <label>Grupo académico <input name="academic_group_id" value={filters.academic_group_id ?? ''} /></label>
+   <input type="hidden" name="limit" value={limit} /><input type="hidden" name="offset" value="0" />
+   <button type="submit">Filtrar</button>
+  </form>
 
 		{state === 'denied' || state === 'error' ? (
 			<section class="notice" role="alert"><h2>No se pudo mostrar la lista</h2><p>{message}</p></section>
@@ -47,7 +60,7 @@ const pageLink = (value: number) => `/my-patients?limit=${limit}&offset=${value}
 				<ul class="assignments" aria-label="Pacientes asignados">
 					{items.map((row) => (
 						<li class="assignment-card">
-							<a class="record-link" href={`/my-patients/${row.id}?limit=${limit}&offset=${offset}`}>
+							<a class="record-link" href={detailHref(row.id)}>
 								<span class="patient-name">{row.nombres} {row.apellidos}</span>
 								<span class="document">Documento: {row.documento}</span>
 								<span class="context">Asignatura <code>{row.subject_id}</code></span>

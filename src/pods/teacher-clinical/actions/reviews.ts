@@ -2,6 +2,7 @@ import type { AstroCookies } from 'astro';
 import { ApiError } from '../../../shared/apiClient';
 import { getTeacherEvaluation, listTeacherSubmissions, parseClinicalContext, teacherGrant, validId, type ClinicalContext } from '../api';
 import { requestTeacherCorrection, validateTeacherSubmission } from '../api';
+import { assignmentListCarrier, parseAssignmentActionCoordinates } from '../../patient-assignment/list-coordinates';
 
 const FIELDS = ['id', 'patient_id', 'subject_id', 'academic_group_id', 'submission_id'];
 const CONTEXT_FIELDS = ['patient_id', 'subject_id', 'academic_group_id'];
@@ -9,7 +10,7 @@ type ReviewInput = Record<string, unknown>;
 type ReviewContext = { cookies: AstroCookies };
 
 function allowedFields(input: ReviewInput, correction: boolean): boolean {
- const fields = new Set([...FIELDS, ...(correction ? ['reason'] : [])]);
+ const fields = new Set([...FIELDS, 'list_limit', 'list_offset', 'list_patient_id', 'list_student_id', 'list_subject_id', 'list_academic_group_id', ...(correction ? ['reason'] : [])]);
  return Object.keys(input).every((key) => fields.has(key))
   && [...FIELDS, ...(correction ? ['reason'] : [])].every((key) => Object.hasOwn(input, key));
 }
@@ -37,6 +38,8 @@ function knownRejection(error: unknown): string | null {
 async function review(input: ReviewInput, context: ReviewContext, correction: boolean) {
  const reason = typeof input.reason === 'string' ? input.reason : '';
  const failure = (error: string, uncertain = false) => ({ success: false as const, error, uncertain, ...(correction ? { reason } : {}) });
+ let listCoordinates;
+ try { listCoordinates = parseAssignmentActionCoordinates(input); } catch { return failure('La coordenada de lista no es válida.'); }
  if (!allowedFields(input, correction)) return failure('El formulario contiene campos no permitidos.');
  if (!teacherGrant(context.cookies, 'kinesiology-evaluations:review')) return failure('No tenés permiso vigente para revisar esta ficha.');
  if (!validId(input.id) || !validId(input.submission_id)) return failure('Revisá la ficha y la versión seleccionadas.');
@@ -61,7 +64,7 @@ async function review(input: ReviewInput, context: ReviewContext, correction: bo
   const result = correction
    ? await requestTeacherCorrection(input.id, latest.id, reason.trim(), context.cookies)
    : await validateTeacherSubmission(input.id, latest.id, context.cookies);
-  return { success: true as const, id: input.id, context: selected, result, outcome: correction ? 'corrections-requested' as const : 'validated' as const };
+  return { success: true as const, id: input.id, context: selected, result, outcome: correction ? 'corrections-requested' as const : 'validated' as const, ...(Object.keys(input).some((key) => key.startsWith('list_')) ? assignmentListCarrier(listCoordinates) : {}) };
  } catch (error) {
   const rejection = knownRejection(error);
   if (rejection) return failure(rejection);

@@ -1,5 +1,6 @@
 import type { AstroCookies } from 'astro';
-import { listAssignedPatients, parseAssignmentPagination } from '../../patient-assignment/api';
+import { listAssignedPatients } from '../../patient-assignment/api';
+import { parseAssignmentActionCoordinates } from '../../patient-assignment/list-coordinates';
 import { ApiError } from '../../../shared/apiClient';
 import { createAmendment, createEvaluation, getEvaluation, submitEvaluation, updateEvaluation, validateEvaluationContent, type EvaluationContent } from '../api';
 
@@ -10,7 +11,7 @@ const FIELDS = new Set([
 	'admission_date', 'admission_status', 'occupation', 'referring_physician',
 	'antecedent-hta', 'antecedent-dbt', 'antecedent-diu', 'antecedent-sedentary_lifestyle',
 	'antecedent-pacemaker', 'antecedent-other', 'antecedents_keys', 'illness_history', 'medical_diagnosis',
-	'kinesiology_diagnosis', 'objectives', 'proposed_treatment', 'id', 'assignment_id', 'limit', 'offset',
+	'kinesiology_diagnosis', 'objectives', 'proposed_treatment', 'id', 'assignment_id', 'limit', 'offset', 'list_limit', 'list_offset', 'list_patient_id', 'list_student_id', 'list_subject_id', 'list_academic_group_id',
 ]);
 const ANTECEDENTS = ['hta', 'dbt', 'diu', 'sedentary_lifestyle', 'pacemaker'];
 
@@ -99,14 +100,25 @@ function safeError(error: unknown): string {
 		: 'No se pudo guardar la ficha. Intentá nuevamente más tarde.';
 }
 
+function listResultCoordinates(input: Record<string, unknown>, coordinates: Awaited<ReturnType<typeof parseAssignmentActionCoordinates>>) {
+ const result: { limit: string; offset: string; list_limit?: string; list_offset?: string; list_filters?: typeof coordinates.filters } = {
+  limit: String(coordinates.limit), offset: String(coordinates.offset),
+ };
+ if (Object.keys(input).some((key) => key.startsWith('list_'))) {
+  result.list_limit = String(coordinates.limit);
+  result.list_offset = String(coordinates.offset);
+  result.list_filters = coordinates.filters;
+ }
+ return result;
+}
+
 async function selectedAssignment(input: Record<string, unknown>, cookies: AstroCookies) {
 	if (!validId(input.assignment_id)) throw new Error('La asignación seleccionada no es válida.');
-	const params = new URLSearchParams({ limit: String(input.limit ?? ''), offset: String(input.offset ?? '') });
-	const pagination = parseAssignmentPagination(params);
-	const page = await listAssignedPatients(pagination, cookies);
+	const coordinates = parseAssignmentActionCoordinates(input, true);
+	const page = await listAssignedPatients({ limit: coordinates.limit, offset: coordinates.offset }, cookies, coordinates.filters);
 	const assignment = page.items.find((item) => item.id === input.assignment_id && item.ended_at === null);
 	if (!assignment) throw new Error('La asignación ya no está disponible.');
-	return assignment;
+	return { assignment, coordinates };
 }
 
 export async function handleCreateKinesiologyEvaluation(input: Record<string, unknown>, context: { cookies: AstroCookies }) {
@@ -114,7 +126,7 @@ export async function handleCreateKinesiologyEvaluation(input: Record<string, un
 		return { success: false as const, error: 'Revisá el contexto de paciente, asignatura y grupo.' };
 	}
 	try {
-		const assignment = await selectedAssignment(input, context.cookies);
+		const { assignment, coordinates } = await selectedAssignment(input, context.cookies);
 		if (assignment.patient_id !== input.patient_id || assignment.subject_id !== input.subject_id
 			|| assignment.academic_group_id !== input.academic_group_id) {
 			return { success: false as const, error: 'La asignación ya no coincide con este paciente y su contexto.' };
@@ -129,7 +141,7 @@ export async function handleCreateKinesiologyEvaluation(input: Record<string, un
 			academic_group_id: assignment.academic_group_id,
 			content,
 		}, context.cookies);
-		return { success: true as const, evaluation };
+		return { success: true as const, evaluation, assignment_id: assignment.id, ...listResultCoordinates(input, coordinates) };
 	} catch (error) { return { success: false as const, error: safeError(error) }; }
 }
 
@@ -138,7 +150,7 @@ export async function handleUpdateKinesiologyEvaluation(input: Record<string, un
 	let content: EvaluationContent | undefined;
 	try {
 		content = rawEvaluationContentFromForm(input);
-		const assignment = await selectedAssignment(input, context.cookies);
+		const { assignment, coordinates } = await selectedAssignment(input, context.cookies);
 		const record = await getEvaluation(input.id, context.cookies);
 		if (record.id !== input.id || record.patient_id !== assignment.patient_id
 			|| record.origin_subject_id !== assignment.subject_id || record.origin_group_id !== assignment.academic_group_id) {
@@ -151,7 +163,7 @@ export async function handleUpdateKinesiologyEvaluation(input: Record<string, un
 			subject_id: assignment.subject_id,
 			academic_group_id: assignment.academic_group_id,
 		});
-		return { success: true as const, evaluation };
+		return { success: true as const, evaluation, assignment_id: assignment.id, ...listResultCoordinates(input, coordinates) };
 	} catch (error) {
 		const message = safeError(error);
 		return { success: false as const, error: content ? `${message} Conservamos los valores enviados.` : message, content };
@@ -173,9 +185,12 @@ function submitRejection(error: ApiError): string {
 /** Explicit single submission of the saved draft: no content is sent and the POST is never retried. */
 export async function handleSubmitKinesiologyEvaluation(input: Record<string, unknown>, context: { cookies: AstroCookies }) {
 	if (!validId(input.id)) return { success: false as const, uncertain: false, error: 'El identificador de ficha no es válido.' };
-	let assignment;
+	let assignment: Awaited<ReturnType<typeof selectedAssignment>>['assignment'];
+	let coordinates: Awaited<ReturnType<typeof selectedAssignment>>['coordinates'];
 	try {
-		assignment = await selectedAssignment(input, context.cookies);
+		const selected = await selectedAssignment(input, context.cookies);
+		assignment = selected.assignment;
+		coordinates = selected.coordinates;
 		const record = await getEvaluation(input.id, context.cookies);
 		if (record.id !== input.id || record.patient_id !== assignment.patient_id
 			|| record.origin_subject_id !== assignment.subject_id || record.origin_group_id !== assignment.academic_group_id) {
@@ -189,12 +204,11 @@ export async function handleSubmitKinesiologyEvaluation(input: Record<string, un
 			error: error instanceof Error && /asignación/.test(error.message) ? error.message : 'No se pudo verificar la ficha antes de enviarla. No se envió nada.',
 		};
 	}
-	const pagination = parseAssignmentPagination(new URLSearchParams({ limit: String(input.limit), offset: String(input.offset) }));
 	try {
 		const submission = await submitEvaluation(input.id, context.cookies);
 		return {
 			success: true as const, id: input.id, assignment_id: assignment.id,
-			limit: String(pagination.limit), offset: String(pagination.offset), submission,
+			...listResultCoordinates(input, coordinates), submission,
 		};
 	} catch (error) {
 		// Only a typed rejection proves nothing was stored; anything else may have committed.
@@ -218,9 +232,12 @@ function amendRejection(error: ApiError): string {
 export async function handleCreateKinesiologyAmendment(input: Record<string, unknown>, context: { cookies: AstroCookies }) {
 	if (!validId(input.id)) return { success: false as const, uncertain: false, error: 'El identificador de ficha no es válido.' };
 	if (input.confirm !== 'on') return { success: false as const, uncertain: false, error: 'Confirmá que querés crear una enmienda nueva.' };
-	let assignment;
+	let assignment: Awaited<ReturnType<typeof selectedAssignment>>['assignment'];
+	let coordinates: Awaited<ReturnType<typeof selectedAssignment>>['coordinates'];
 	try {
-		assignment = await selectedAssignment(input, context.cookies);
+		const selected = await selectedAssignment(input, context.cookies);
+		assignment = selected.assignment;
+		coordinates = selected.coordinates;
 		const record = await getEvaluation(input.id, context.cookies);
 		if (record.id !== input.id || record.patient_id !== assignment.patient_id
 			|| record.origin_subject_id !== assignment.subject_id || record.origin_group_id !== assignment.academic_group_id) {
@@ -234,7 +251,6 @@ export async function handleCreateKinesiologyAmendment(input: Record<string, unk
 			error: error instanceof Error && /asignación/.test(error.message) ? error.message : 'No se pudo verificar la ficha antes de enmendarla. No se creó nada.',
 		};
 	}
-	const pagination = parseAssignmentPagination(new URLSearchParams({ limit: String(input.limit), offset: String(input.offset) }));
 	try {
 		const amendment = await createAmendment(input.id, context.cookies);
 		// A 201 outside the confirmed context cannot be opened here, but something may have been stored.
@@ -244,7 +260,7 @@ export async function handleCreateKinesiologyAmendment(input: Record<string, unk
 		}
 		return {
 			success: true as const, id: amendment.id, amendment_of_evaluation_id: amendment.amendment_of_evaluation_id,
-			assignment_id: assignment.id, limit: String(pagination.limit), offset: String(pagination.offset),
+			assignment_id: assignment.id, ...listResultCoordinates(input, coordinates),
 		};
 	} catch (error) {
 		// Only a typed rejection proves nothing was stored; anything else may have committed.

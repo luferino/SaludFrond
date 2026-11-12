@@ -156,6 +156,9 @@ async function renderAssignment(options = {}) {
   actions: { createKinesiologyEvaluation: 'kinesiology', createOralSurgeryDraft: 'oral-surgery' }, isInputError: () => false,
   decodeJwt: () => ({ sub: teacherId, role: 'student', permissions: options.permissions ?? [] }),
   parseAssignmentPagination: () => ({ limit: 50, offset: 0 }),
+  parseAssignmentListCoordinates: (params) => ({ filters: Object.fromEntries(['patient_id','student_id','subject_id','academic_group_id'].flatMap((key) => { const values = params.getAll(key); if (values.length > 1 || [...params.keys()].some((name) => name.startsWith(`${key}[`) || name.startsWith(`${key}.`))) throw Error('invalid'); return values.length ? [[key,values[0]]] : []; })), limit: Number(params.get('limit') ?? 50), offset: Number(params.get('offset') ?? 0) }),
+  assignmentListCarrier: (coordinates) => Object.fromEntries([['list_limit',String(coordinates.limit)],['list_offset',String(coordinates.offset)], ...Object.entries(coordinates.filters).map(([key,value])=>[`list_${key}`,value])]),
+  assignmentListQuery: (coordinates) => new URLSearchParams({limit:String(coordinates.limit),offset:String(coordinates.offset),...coordinates.filters}).toString(),
   listAssignedPatients: async () => { requests.push('assignments'); if (options.assignmentsFailure) throw new Error('offline'); return { items: options.items ?? [assignment], limit: 50, offset: 0 }; },
   listEvaluations: async () => { requests.push('kinesiology-drafts'); return []; },
   listSubmittedEvaluations: async () => { requests.push('kinesiology-submitted'); return []; },
@@ -213,8 +216,8 @@ test('student page with an enabled pair renders only Oral Surgery: create form, 
   assert.match(result.html, new RegExp(`<input type="hidden" name="${name}" value="${value}"`));
  }
  assert.doesNotMatch(result.html, /name="content"/);
- assert.match(result.html, /action="\/oral-surgery\?assignment_id=17&amp;limit=50&amp;offset=0"/);
- assert.match(result.html, /href="\/oral-surgery-drafts\/9007199254741061\?assignment_id=17&amp;limit=50&amp;offset=0"/);
+ assert.match(result.html, /action="\/oral-surgery\?assignment_id=17&amp;list_limit=50&amp;list_offset=0"/);
+ assert.match(result.html, /href="\/oral-surgery-drafts\/9007199254741061\?assignment_id=17&amp;list_limit=50&amp;list_offset=0"/);
  assert.match(result.html, /Abrir borrador · versión 3 · actualizado /);
  assert.doesNotMatch(result.html, /Ficha kinésica inicial|Crear nuevo borrador<|Borradores de ficha inicial|Fichas enviadas/);
 });
@@ -275,7 +278,7 @@ test('student page pair absent from an ok discovery answer keeps Kinesiology wit
 
 test('student page create success redirects to the editor and create failure shows the action error', async () => {
  const created = await renderAssignment({ permissions: ['oral-surgery-drafts:read'], contexts: [pair()], drafts: [], results: { 'oral-surgery': { data: { success: true, draft: oralDraft({ id: '28' }) } } } });
- assert.equal(created.html, 'REDIRECT:/oral-surgery-drafts/28?assignment_id=17&limit=50&offset=0');
+ assert.equal(created.html, 'REDIRECT:/oral-surgery-drafts/28?assignment_id=17&list_limit=50&list_offset=0');
  const failed = await renderAssignment({ permissions: ['oral-surgery-drafts:read'], contexts: [pair()], drafts: [], results: { 'oral-surgery': { data: { success: false, uncertain: true, error: 'No se pudo confirmar la creación. Revisá la lista de borradores antes de volver a intentarlo.' } } } });
  assert.match(failed.html, /role="alert"[^>]*>No se pudo confirmar la creación\./);
 });

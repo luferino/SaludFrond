@@ -4,7 +4,8 @@ import { actions, isInputError } from 'astro:actions';
 import Layout from '../../layouts/Layout.astro';
 import SubmissionSnapshot from '../../components/clinical/SubmissionSnapshot.astro';
 import { ApiError } from '../../shared/apiClient';
-import { listAssignedPatients, parseAssignmentPagination } from '../../pods/patient-assignment/api';
+import { listAssignedPatients } from '../../pods/patient-assignment/api';
+import { assignmentListCarrier, assignmentListQuery, parseAssignmentListCoordinates } from '../../pods/patient-assignment/list-coordinates';
 import { actionHrefWithContext, antecedentOptionState, EVALUATION_STATUS_LABELS, getEvaluation, listCorrections, listSubmissions, type CorrectionEvent, type Evaluation, type EvaluationContent, type Submission } from '../../pods/kinesiology-evaluation/api';
 import { rawEvaluationContentFromForm } from '../../pods/kinesiology-evaluation/actions/evaluations';
 import { decodeJwt } from '../../shared/jwt';
@@ -15,6 +16,8 @@ const assignmentParams = search.getAll('assignment_id');
 const assignmentId = assignmentParams.length === 1 ? assignmentParams[0] : '';
 let limit = 50;
 let offset = 0;
+let listFilters: ReturnType<typeof parseAssignmentListCoordinates>['filters'] = {};
+let coordinates: ReturnType<typeof parseAssignmentListCoordinates> = { filters: {}, limit: 50, offset: 0 };
 let evaluation: Evaluation | null = null;
 let patientLabel = '';
 let eligible = false;
@@ -44,8 +47,17 @@ if (result?.error) {
 const submitResult = Astro.getActionResult(actions.submitKinesiologyEvaluation);
 const submitData = submitResult?.data;
 if (submitData?.success) {
-	// Redirect from the context the action validated, before any fallible read.
-	const returnParams = new URLSearchParams({ assignment_id: submitData.assignment_id, limit: submitData.limit, offset: submitData.offset, submitted: '1' });
+	// Redirect from the context and coordinates the action validated, before any fallible read.
+	const returnParams = new URLSearchParams({ assignment_id: submitData.assignment_id });
+	if (submitData.list_limit !== undefined) {
+		for (const [key, value] of Object.entries(assignmentListCarrier({
+			limit: Number(submitData.list_limit), offset: Number(submitData.list_offset), filters: submitData.list_filters ?? {},
+		}))) returnParams.set(key, value);
+	} else {
+		returnParams.set('limit', submitData.limit);
+		returnParams.set('offset', submitData.offset);
+	}
+	returnParams.set('submitted', '1');
 	return Astro.redirect(`/kinesiology-evaluations/${encodeURIComponent(submitData.id)}?${returnParams}`);
 }
 const submitUncertain = submitData?.success === false && submitData.uncertain || !!submitResult?.error && !isInputError(submitResult.error);
@@ -55,8 +67,17 @@ const submitError = submitUncertain && submitResult?.error
 const amendResult = Astro.getActionResult(actions.createKinesiologyAmendment);
 const amendData = amendResult?.data;
 if (amendData?.success) {
-	// Open the new draft through the context the action validated.
-	const returnParams = new URLSearchParams({ assignment_id: amendData.assignment_id, limit: amendData.limit, offset: amendData.offset, amended: '1' });
+	// Open the new draft through the context and coordinates the action validated.
+	const returnParams = new URLSearchParams({ assignment_id: amendData.assignment_id });
+	if (amendData.list_limit !== undefined) {
+		for (const [key, value] of Object.entries(assignmentListCarrier({
+			limit: Number(amendData.list_limit), offset: Number(amendData.list_offset), filters: amendData.list_filters ?? {},
+		}))) returnParams.set(key, value);
+	} else {
+		returnParams.set('limit', amendData.limit);
+		returnParams.set('offset', amendData.offset);
+	}
+	returnParams.set('amended', '1');
 	return Astro.redirect(`/kinesiology-evaluations/${encodeURIComponent(amendData.id)}?${returnParams}`);
 }
 const amendUncertain = amendData?.success === false && amendData.uncertain || !!amendResult?.error && !isInputError(amendResult.error);
@@ -67,14 +88,16 @@ if (/sesión venció/i.test(errorText) || /sesión venció/i.test(submitError) |
 	return Astro.redirect(`/auth/login?returnTo=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`);
 }
 try {
-	const pagination = parseAssignmentPagination(search);
+	coordinates = parseAssignmentListCoordinates(search, true);
+	const pagination = { limit: coordinates.limit, offset: coordinates.offset };
+	listFilters = coordinates.filters;
 	limit = pagination.limit;
 	offset = pagination.offset;
 	if (!/^[1-9]\d{0,18}$/.test(assignmentId) || BigInt(assignmentId) > 9223372036854775807n
 		|| !/^[1-9]\d{0,18}$/.test(id) || BigInt(id) > 9223372036854775807n) {
 		unavailable = true;
 	} else {
-		const page = await listAssignedPatients(pagination, Astro.cookies);
+		const page = await listAssignedPatients(pagination, Astro.cookies, listFilters);
 		const assignment = page.items.find((item) => item.id === assignmentId && item.ended_at === null);
 		if (!assignment) unavailable = true;
 		else {
@@ -130,32 +153,36 @@ try {
 	loadError = 'No se pudo verificar esta ficha. Volvé a la lista antes de intentar otra acción.';
 }
 if (result?.data?.success && evaluation) {
-	return Astro.redirect(`/kinesiology-evaluations/${id}?assignment_id=${encodeURIComponent(assignmentId)}&limit=${limit}&offset=${offset}&saved=1`);
+	const savedData = result.data;
+	const returnParams = new URLSearchParams({ assignment_id: savedData.assignment_id });
+	if (savedData.list_limit !== undefined) {
+		for (const [key, value] of Object.entries(assignmentListCarrier({
+			limit: Number(savedData.list_limit), offset: Number(savedData.list_offset), filters: savedData.list_filters ?? {},
+		}))) returnParams.set(key, value);
+	} else {
+		returnParams.set('limit', savedData.limit);
+		returnParams.set('offset', savedData.offset);
+	}
+	returnParams.set('saved', '1');
+	return Astro.redirect(`/kinesiology-evaluations/${encodeURIComponent(savedData.id)}?${returnParams}`);
 }
-const contextHref = `/my-patients/${encodeURIComponent(assignmentId)}?limit=${limit}&offset=${offset}`;
+coordinates = { limit, offset, filters: listFilters };
+const listCarrier = assignmentListCarrier(coordinates);
+const contextHref = `/my-patients/${encodeURIComponent(assignmentId)}?${assignmentListQuery(coordinates)}`;
 const actionHref = actionHrefWithContext(actions.updateKinesiologyEvaluation.toString(), {
 	assignment_id: assignmentId,
-	limit: String(limit),
-	offset: String(offset),
-}, Astro.url.href);
-const submitHref = actionHrefWithContext(actions.submitKinesiologyEvaluation.toString(), {
-	assignment_id: assignmentId,
-	limit: String(limit),
-	offset: String(offset),
-}, Astro.url.href);
+	...listCarrier,
+});
+const submitHref = actionHrefWithContext(actions.submitKinesiologyEvaluation.toString(), { assignment_id: assignmentId, ...listCarrier });
 const c = retainedContent ?? evaluation?.content ?? {};
 const antecedents = c.antecedents ?? {};
 const antecedentKeys = Object.keys(antecedents).join(',');
 const saved = search.getAll('saved').length === 1 && search.get('saved') === '1';
 const justSubmitted = search.getAll('submitted').length === 1 && search.get('submitted') === '1';
 const justAmended = search.getAll('amended').length === 1 && search.get('amended') === '1';
-const amendHref = actionHrefWithContext(actions.createKinesiologyAmendment.toString(), {
-	assignment_id: assignmentId,
-	limit: String(limit),
-	offset: String(offset),
-}, Astro.url.href);
+const amendHref = actionHrefWithContext(actions.createKinesiologyAmendment.toString(), { assignment_id: assignmentId, ...listCarrier });
 const amendmentOfHref = evaluation?.amendment_of_evaluation_id
-	? `/kinesiology-evaluations/${encodeURIComponent(evaluation.amendment_of_evaluation_id)}?assignment_id=${encodeURIComponent(assignmentId)}&limit=${limit}&offset=${offset}`
+	? `/kinesiology-evaluations/${encodeURIComponent(evaluation.amendment_of_evaluation_id)}?assignment_id=${encodeURIComponent(assignmentId)}&${new URLSearchParams(listCarrier)}`
 	: '';
 const textFields = [
 	['admission_status', 'Estado al ingreso'], ['occupation', 'Ocupación'],
@@ -202,6 +229,7 @@ const textFields = [
 				<input type="hidden" name="assignment_id" value={assignmentId} />
 				<input type="hidden" name="limit" value={limit} />
 				<input type="hidden" name="offset" value={offset} />
+				{Object.entries(listCarrier).map(([key, value]) => <input type="hidden" name={key} value={value} />)}
 				<input type="hidden" name="antecedents_keys" value={antecedentKeys} />
 				<fieldset disabled={!eligible}>
 					<legend>Datos de admisión</legend>
@@ -252,6 +280,7 @@ const textFields = [
 				<input type="hidden" name="assignment_id" value={assignmentId} />
 				<input type="hidden" name="limit" value={limit} />
 				<input type="hidden" name="offset" value={offset} />
+				{Object.entries(listCarrier).map(([key, value]) => <input type="hidden" name={key} value={value} />)}
 				<h2>{correctionDraft ? 'Reenviar versión guardada' : 'Enviar ficha'}</h2>
 				<p>Se envía la última versión guardada del borrador. Los cambios sin guardar no se incluyen; guardalos antes de enviar. Después del envío la ficha ya no se puede editar.</p>
 				<p id="dirty-notice" class="notice error" role="status" hidden>Hay cambios sin guardar. Guardá el borrador antes de enviarlo.</p>
@@ -263,6 +292,7 @@ const textFields = [
 				<input type="hidden" name="assignment_id" value={assignmentId} />
 				<input type="hidden" name="limit" value={limit} />
 				<input type="hidden" name="offset" value={offset} />
+				{Object.entries(listCarrier).map(([key, value]) => <input type="hidden" name={key} value={value} />)}
 				<h2>Crear enmienda</h2>
 				<p>Se crea un borrador nuevo con el contenido de la versión validada. Esta ficha y su versión validada no cambian. El borrador se edita, se envía y pasa por revisión docente como cualquier ficha.</p>
 				<label class="confirm"><input type="checkbox" name="confirm" required /> Confirmo que quiero crear una enmienda nueva. Cada confirmación crea una enmienda distinta.</label>
