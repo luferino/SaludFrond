@@ -125,6 +125,35 @@ test('compiled page components render all seven native forms and real registered
   }
 });
 
+test('Kinesiology save redirects from the real handler evaluation and retains filtered and legacy coordinates', async () => {
+  const registeredFixture = fixtureFetch('updateKinesiologyEvaluation');
+  const { server } = await loadRegisteredActions(registeredFixture.fetch);
+  const registered = server.updateKinesiologyEvaluation;
+  for (const [url, expected] of [
+    [`/kinesiology-evaluations/${recordId}?assignment_id=${assignmentId}&list_limit=7&list_offset=14&list_patient_id=${ids.patient}`, { list_limit: '7', list_offset: '14', list_patient_id: ids.patient }],
+    [`/kinesiology-evaluations/${recordId}?assignment_id=${assignmentId}&limit=50&offset=0`, { list_limit: '50', list_offset: '0' }],
+  ]) {
+    const page = await renderCompiledPage('src/pages/kinesiology-evaluations/[id].astro', { url });
+    const { data } = formDataFromHtml(page.html, 'evaluation-form');
+    const input = registered.input.safeParse(formDataToObject(data, registered.input));
+    assert.equal(input.success, true);
+    const result = await registered.handler(input.data, { cookies: { get: () => ({ value: 'synthetic-session' }), set() {}, delete() {} } });
+    assert.equal(result.success, true);
+    assert.equal(Object.hasOwn(result, 'id'), false, 'real handler response has no top-level id');
+    assert.equal(result.evaluation.id, recordId);
+
+    const redirected = await renderCompiledPage('src/pages/kinesiology-evaluations/[id].astro', {
+      url, actionResults: { updateKinesiologyEvaluation: { data: result } },
+    });
+    assert.match(redirected.html, /^REDIRECT:/);
+    const target = new URL(redirected.html.slice('REDIRECT:'.length), page.url);
+    assert.equal(target.pathname, `/kinesiology-evaluations/${recordId}`);
+    assert.equal(target.searchParams.get('assignment_id'), assignmentId);
+    assert.equal(target.searchParams.get('saved'), '1');
+    for (const [key, value] of Object.entries(expected)) assert.equal(target.searchParams.get(key), value, key);
+  }
+});
+
 test('action coordinates omit only known undefined optional carriers and retain strict validation', async () => {
   const { importModule } = await loadRegisteredActions(async () => Response.json({}));
   const { parseAssignmentActionCoordinates } = await importModule('src/pods/patient-assignment/list-coordinates.ts');

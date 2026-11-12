@@ -164,7 +164,7 @@ if (result?.data?.success && evaluation) {
 		returnParams.set('offset', savedData.offset);
 	}
 	returnParams.set('saved', '1');
-	return Astro.redirect(`/kinesiology-evaluations/${encodeURIComponent(savedData.id)}?${returnParams}`);
+	return Astro.redirect(`/kinesiology-evaluations/${encodeURIComponent(savedData.evaluation.id)}?${returnParams}`);
 }
 coordinates = { limit, offset, filters: listFilters };
 const listCarrier = assignmentListCarrier(coordinates);

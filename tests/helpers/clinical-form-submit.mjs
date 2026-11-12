@@ -107,7 +107,7 @@ async function html(value) {
 const escapeHtml = (value) => String(value).replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 
 /** Execute a transformed Astro page component with synthetic data and return its rendered HTML. */
-export async function renderCompiledPage(path, { url, oralEnabled = false, status = 'draft' } = {}) {
+export async function renderCompiledPage(path, { url, oralEnabled = false, status = 'draft', actionResults = {} } = {}) {
   const pageUrl = new URL(url, 'https://fixture.invalid');
   const nativeAssignment = {
     id: assignmentId, patient_id: ids.patient, student_habilitation_id: ids.habilitation,
@@ -138,7 +138,10 @@ export async function renderCompiledPage(path, { url, oralEnabled = false, statu
   const Astro = {
     params: { assignmentId, id: recordId }, url: pageUrl,
     cookies: { get: (name) => name === 'session' ? { value: 'synthetic-session' } : undefined, set() {}, delete() {} },
-    getActionResult: () => undefined,
+    getActionResult: (action) => {
+      const name = Object.entries(actions).find(([, registered]) => registered === action)?.[0];
+      return name ? actionResults[name] : undefined;
+    },
     request: new Request(pageUrl), response: { headers: new Headers() },
     redirect: (href) => `REDIRECT:${href}`,
   };
