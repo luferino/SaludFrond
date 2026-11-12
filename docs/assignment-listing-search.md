@@ -13,7 +13,7 @@ Assignment lists keep their current authorization and active-assignment scope. F
 
 Downstream clinical pages carry list filters and pagination in validated `list_*` fields. These navigation coordinates are separate from the selected record's clinical-origin keys. They must not replace the patient/origin context, bypass discovery, or trigger an unfiltered fallback when an assignment disappears.
 
-Frontend action schemas accept explicit optional navigation fields while retaining their other validation. Actions use validated coordinates for assignment lookup and return navigation, not as backend mutation payload fields. Existing workflows without list state remain covered by regression tests.
+Frontend action schemas accept explicit optional navigation fields while retaining their other validation. Actions use validated coordinates for assignment lookup and return navigation, not as backend mutation payload fields. Astro may normalize omitted optional list fields to `undefined`; only known optional carriers are ignored. Existing workflows without list state remain covered by regression tests.
 
 ## Verification limits
 

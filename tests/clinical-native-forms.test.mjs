@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createRequire } from 'node:module';
+import { dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+const require = createRequire(import.meta.resolve('astro/package.json'));
+const { formDataToObject } = await import(pathToFileURL(join(dirname(require.resolve('astro/package.json')), 'dist/actions/runtime/server.js')));
 import { assignmentId, formDataFromHtml, ids, loadRegisteredActions, recordId, renderCompiledPage } from './helpers/clinical-form-submit.mjs';
 
 const iso = '2026-06-10T12:00:00.000Z';
@@ -41,7 +46,6 @@ function fixtureFetch(actionName) {
   return { fetch, requests };
 }
 
-function objectFromFormData(formData) { return Object.fromEntries(formData.entries()); }
 function queryWithListState() { return `assignment_id=${assignmentId}&list_limit=7&list_offset=14&list_patient_id=${ids.patient}`; }
 
 async function renderedCases() {
@@ -88,8 +92,13 @@ test('compiled page components render all seven native forms and real registered
     assert.ok(action.includes(name), `${name} has its rendered form action`);
     const { server } = await loadRegisteredActions(async () => Response.json({}));
     const registered = server[name];
-    const parsed = registered.input.safeParse(objectFromFormData(data));
-    assert.equal(parsed.success, true, `${name} rendered FormData accepted by registered schema: ${JSON.stringify(data)}`);
+    const astroInput = formDataToObject(data, registered.input);
+    for (const key of ['list_student_id', 'list_subject_id', 'list_academic_group_id']) {
+      assert.equal(Object.hasOwn(astroInput, key), true);
+      assert.equal(astroInput[key], undefined);
+    }
+    const parsed = registered.input.safeParse(astroInput);
+    assert.equal(parsed.success, true, `${name} Astro-normalized FormData accepted by registered schema: ${JSON.stringify(astroInput)}`);
     assert.equal(parsed.data.assignment_id, assignmentId);
     assert.equal(parsed.data.limit, '7');
     assert.equal(parsed.data.offset, '14');
@@ -99,7 +108,7 @@ test('compiled page components render all seven native forms and real registered
 
     const fixture = fixtureFetch(name);
     const live = await loadRegisteredActions(fixture.fetch);
-    const actionData = live.server[name].input.safeParse(objectFromFormData(data));
+    const actionData = live.server[name].input.safeParse(formDataToObject(data, live.server[name].input));
     assert.equal(actionData.success, true);
     const result = await live.server[name].handler(actionData.data, { cookies: live.cookies });
     assert.equal(result.success, true, `${name} handler result: ${JSON.stringify(result)}`);
@@ -114,6 +123,92 @@ test('compiled page components render all seven native forms and real registered
     assert.deepEqual(mutations[0].body, expectedBodies[name], `${name} exact mutation body`);
     assert.ok(Object.keys(mutations[0].body ?? {}).every((key) => !['limit', 'offset'].includes(key) && !key.startsWith('list_')));
   }
+});
+
+test('Kinesiology save redirects from the real handler evaluation and retains filtered and legacy coordinates', async () => {
+  const registeredFixture = fixtureFetch('updateKinesiologyEvaluation');
+  const { server } = await loadRegisteredActions(registeredFixture.fetch);
+  const registered = server.updateKinesiologyEvaluation;
+  for (const [url, expected] of [
+    [`/kinesiology-evaluations/${recordId}?assignment_id=${assignmentId}&list_limit=7&list_offset=14&list_patient_id=${ids.patient}`, { list_limit: '7', list_offset: '14', list_patient_id: ids.patient }],
+    [`/kinesiology-evaluations/${recordId}?assignment_id=${assignmentId}&limit=50&offset=0`, { list_limit: '50', list_offset: '0' }],
+  ]) {
+    const page = await renderCompiledPage('src/pages/kinesiology-evaluations/[id].astro', { url });
+    const { data } = formDataFromHtml(page.html, 'evaluation-form');
+    const input = registered.input.safeParse(formDataToObject(data, registered.input));
+    assert.equal(input.success, true);
+    const result = await registered.handler(input.data, { cookies: { get: () => ({ value: 'synthetic-session' }), set() {}, delete() {} } });
+    assert.equal(result.success, true);
+    assert.equal(Object.hasOwn(result, 'id'), false, 'real handler response has no top-level id');
+    assert.equal(result.evaluation.id, recordId);
+
+    const redirected = await renderCompiledPage('src/pages/kinesiology-evaluations/[id].astro', {
+      url, actionResults: { updateKinesiologyEvaluation: { data: result } },
+    });
+    assert.match(redirected.html, /^REDIRECT:/);
+    const target = new URL(redirected.html.slice('REDIRECT:'.length), page.url);
+    assert.equal(target.pathname, `/kinesiology-evaluations/${recordId}`);
+    assert.equal(target.searchParams.get('assignment_id'), assignmentId);
+    assert.equal(target.searchParams.get('saved'), '1');
+    for (const [key, value] of Object.entries(expected)) assert.equal(target.searchParams.get(key), value, key);
+  }
+});
+
+test('action coordinates omit only known undefined optional carriers and retain strict validation', async () => {
+  const { importModule } = await loadRegisteredActions(async () => Response.json({}));
+  const { parseAssignmentActionCoordinates } = await importModule('src/pods/patient-assignment/list-coordinates.ts');
+  const carriers = {
+    list_patient_id: ids.patient, list_student_id: undefined, list_subject_id: undefined,
+    list_academic_group_id: undefined, list_limit: '7', list_offset: '14',
+  };
+  assert.deepEqual(JSON.parse(JSON.stringify(parseAssignmentActionCoordinates(carriers))), { filters: { patient_id: ids.patient }, limit: 7, offset: 14 });
+  for (const invalid of [
+    { ...carriers, list_unknown: undefined },
+    { ...carriers, 'list_patient_id[x]': ids.patient },
+    { ...carriers, 'list_patient_id.foo': ids.patient },
+    { ...carriers, list_patient_id: null },
+    { ...carriers, list_patient_id: 7 },
+    { ...carriers, list_patient_id: 'not-a-uuid' },
+    { ...carriers, list_limit: '0' },
+    { ...carriers, list_limit: '1.5' },
+    { ...carriers, list_offset: '-1' },
+    { ...carriers, list_offset: 'nope' },
+  ]) assert.throws(() => parseAssignmentActionCoordinates(invalid));
+  assert.throws(() => parseAssignmentActionCoordinates({ ...carriers, limit: undefined }, true));
+  assert.throws(() => parseAssignmentActionCoordinates({ ...carriers, offset: 'bad' }, true));
+  assert.deepEqual(JSON.parse(JSON.stringify(parseAssignmentActionCoordinates({}))), { filters: {}, limit: 50, offset: 0 });
+  assert.deepEqual(JSON.parse(JSON.stringify(parseAssignmentActionCoordinates({ limit: '8', offset: '16', list_limit: undefined, list_offset: undefined }, true))), { filters: {}, limit: 8, offset: 16 });
+});
+
+test('Kinesiology editor action URLs resolve against the rendered editor URL and retain list context', async () => {
+  const filters = `list_patient_id=${ids.patient}&list_student_id=${ids.actor}&list_subject_id=${ids.subject}&list_academic_group_id=${ids.group}`;
+  const editorUrl = `/kinesiology-evaluations/${recordId}?assignment_id=${assignmentId}&list_limit=7&list_offset=14&${filters}`;
+  const expectedActions = [
+    ['evaluation-form', 'updateKinesiologyEvaluation', 'draft'],
+    ['submit-form', 'submitKinesiologyEvaluation', 'draft'],
+    ['amend-form', 'createKinesiologyAmendment', 'validated'],
+  ];
+  async function assertActions(url, expectedLimit, expectedOffset, expectedFilters) {
+    const pages = new Map();
+    for (const status of ['draft', 'validated']) pages.set(status, await renderCompiledPage('src/pages/kinesiology-evaluations/[id].astro', { url, status }));
+    for (const [formId, actionName, status] of expectedActions) {
+      const page = pages.get(status);
+      const { action } = formDataFromHtml(page.html, formId);
+      const resolved = new URL(action, page.url);
+      assert.equal(resolved.pathname, page.url.pathname, `${actionName} stays on the editor route`);
+      assert.equal(resolved.searchParams.get('_action'), actionName);
+      assert.equal(resolved.searchParams.get('assignment_id'), assignmentId);
+      assert.equal(resolved.searchParams.get('list_limit'), expectedLimit);
+      assert.equal(resolved.searchParams.get('list_offset'), expectedOffset);
+      for (const [key, value] of Object.entries(expectedFilters)) {
+        assert.equal(resolved.searchParams.get(`list_${key}`), value, `${actionName} retains list_${key}`);
+      }
+    }
+  }
+
+  await assertActions(editorUrl, '7', '14', { patient_id: ids.patient, student_id: ids.actor, subject_id: ids.subject, academic_group_id: ids.group });
+  const legacyUrl = `/kinesiology-evaluations/${recordId}?assignment_id=${assignmentId}&limit=50&offset=0`;
+  await assertActions(legacyUrl, '50', '0', {});
 });
 
 test('legacy no-filter HTML forms remain schema-valid and removing the required pair from rendered FormData rejects before handler calls', async () => {
@@ -131,8 +226,9 @@ test('legacy no-filter HTML forms remain schema-valid and removing the required 
     const { data } = formDataFromHtml(page.html, formId, { checkboxes });
     const fixture = fixtureFetch(name);
     const live = await loadRegisteredActions(fixture.fetch);
-    const parsed = live.server[name].input.safeParse(objectFromFormData(data));
-    assert.equal(parsed.success, true, `${name} rendered legacy form schema acceptance: ${JSON.stringify(objectFromFormData(data))}`);
+    const normalized = formDataToObject(data, live.server[name].input);
+    const parsed = live.server[name].input.safeParse(normalized);
+    assert.equal(parsed.success, true, `${name} Astro-normalized legacy form schema acceptance: ${JSON.stringify(normalized)}`);
     const mutated = Object.fromEntries(data.entries());
     delete mutated.limit;
     delete mutated.offset;

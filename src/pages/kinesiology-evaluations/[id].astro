@@ -164,7 +164,7 @@ if (result?.data?.success && evaluation) {
 		returnParams.set('offset', savedData.offset);
 	}
 	returnParams.set('saved', '1');
-	return Astro.redirect(`/kinesiology-evaluations/${encodeURIComponent(savedData.id)}?${returnParams}`);
+	return Astro.redirect(`/kinesiology-evaluations/${encodeURIComponent(savedData.evaluation.id)}?${returnParams}`);
 }
 coordinates = { limit, offset, filters: listFilters };
 const listCarrier = assignmentListCarrier(coordinates);
@@ -172,15 +172,15 @@ const contextHref = `/my-patients/${encodeURIComponent(assignmentId)}?${assignme
 const actionHref = actionHrefWithContext(actions.updateKinesiologyEvaluation.toString(), {
 	assignment_id: assignmentId,
 	...listCarrier,
-});
-const submitHref = actionHrefWithContext(actions.submitKinesiologyEvaluation.toString(), { assignment_id: assignmentId, ...listCarrier });
+}, Astro.url.href);
+const submitHref = actionHrefWithContext(actions.submitKinesiologyEvaluation.toString(), { assignment_id: assignmentId, ...listCarrier }, Astro.url.href);
 const c = retainedContent ?? evaluation?.content ?? {};
 const antecedents = c.antecedents ?? {};
 const antecedentKeys = Object.keys(antecedents).join(',');
 const saved = search.getAll('saved').length === 1 && search.get('saved') === '1';
 const justSubmitted = search.getAll('submitted').length === 1 && search.get('submitted') === '1';
 const justAmended = search.getAll('amended').length === 1 && search.get('amended') === '1';
-const amendHref = actionHrefWithContext(actions.createKinesiologyAmendment.toString(), { assignment_id: assignmentId, ...listCarrier });
+const amendHref = actionHrefWithContext(actions.createKinesiologyAmendment.toString(), { assignment_id: assignmentId, ...listCarrier }, Astro.url.href);
 const amendmentOfHref = evaluation?.amendment_of_evaluation_id
 	? `/kinesiology-evaluations/${encodeURIComponent(evaluation.amendment_of_evaluation_id)}?assignment_id=${encodeURIComponent(assignmentId)}&${new URLSearchParams(listCarrier)}`
 	: '';
