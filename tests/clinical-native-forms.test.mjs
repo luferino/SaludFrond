@@ -265,6 +265,20 @@ test('Kinesiology editor action URLs resolve against the rendered editor URL and
   await assertActions(legacyUrl, '50', '0', {});
 });
 
+test('Kinesiology editor offers study add/remove controls only for an editable draft', async () => {
+  const url = `/kinesiology-evaluations/${recordId}?assignment_id=${assignmentId}&limit=50&offset=0`;
+  const draft = await renderCompiledPage('src/pages/kinesiology-evaluations/[id].astro', { url, status: 'draft' });
+  assert.match(draft.html, /id="add-study"[^>]*>Agregar estudio</);
+  assert.match(draft.html, />Quitar estudio</);
+  for (const status of ['submitted', 'validated']) {
+    const readOnly = await renderCompiledPage('src/pages/kinesiology-evaluations/[id].astro', { url, status });
+    assert.match(readOnly.html, /modo de solo lectura/, `${status} renders read-only`);
+    assert.match(readOnly.html, /value="RX"/, `${status} still shows the stored study`);
+    assert.doesNotMatch(readOnly.html, /Agregar estudio|id="add-study"/, `${status} hides Agregar estudio`);
+    assert.doesNotMatch(readOnly.html, /Quitar estudio/, `${status} hides Quitar estudio`);
+  }
+});
+
 test('list and oral surgery draft form actions post back to the rendered route with list context', async () => {
   const listUrl = `http://127.0.0.1:4321/my-patients/${assignmentId}?limit=7&offset=14&patient_id=${ids.patient}`;
   const draftUrl = `http://127.0.0.1:4321/oral-surgery-drafts/${recordId}?${queryWithListState()}`;

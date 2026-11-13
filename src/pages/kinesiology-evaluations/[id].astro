@@ -268,10 +268,11 @@ const textFields = [
 							<label>Tipo <input name={`study-type-${index}`} value={study.type} /></label>
 							<label>Descripción <textarea name={`study-description-${index}`}>{study.description}</textarea></label>
 							<label>Fecha <input name={`study-date-${index}`} type="date" value={study.date ?? ''} /></label>
-							<button class="remove-study" type="button" aria-label="Quitar estudio">Quitar estudio</button>
+							{eligible && <button class="remove-study" type="button" aria-label="Quitar estudio">Quitar estudio</button>}
 						</div>)}
 					</div>
-					<button id="add-study" class="button secondary" type="button">Agregar estudio</button>
+					{/* Read-only records show stored studies without add/remove controls. */}
+					{eligible && <button id="add-study" class="button secondary" type="button">Agregar estudio</button>}
 				</fieldset>
 				{eligible && <button class="button" type="submit">Guardar borrador</button>}
 			</form>}
