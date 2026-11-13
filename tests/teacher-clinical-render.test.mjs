@@ -49,7 +49,11 @@ async function render(path, options = {}) {
   },
   listTeacherPatients: async () => { requests.push('assignments'); if (options.failure) throw new Error('failed'); return { items: options.empty ? [] : [row], limit: 50, offset: options.offset ?? 0 }; },
   listTeacherEvaluations: async (context, _cookies, filters) => { requests.push('list'); clinicalCalls.push({ context, filters }); if (options.evaluationsFailure) throw new Error('raw 500: relation "kinesiology_evaluations" is missing'); return options.emptyEvaluations ? [] : [evaluation]; },
-  listKinesiologyEvolutions: async (context, _cookies, filters) => { requests.push('evolutions'); clinicalCalls.push({ context, filters, evolution: true }); if (options.evolutionsStatus) throw new mocks.ApiError(options.evolutionsStatus); if (options.evolutionsFailure) throw new Error('offline'); return []; },
+  listTeacherCrossContextEvaluations: async () => { if (options.crossFailure) throw new Error('private error'); return options.crossEvaluations ?? []; },
+  loadOriginNames: async () => ({ subjects: {}, groups: {} }),
+  otherContext: (item, context) => item.origin_subject_id !== context.subject_id || item.origin_group_id !== context.academic_group_id,
+  getTeacherCrossContextSnapshot: async () => { requests.push('snapshot'); if (options.crossFailure) throw new mocks.ApiError(options.crossFailure); return { origin_subject_id: subject, origin_group_id: otherGroup, submission: reviewSnapshot() }; },
+  listKinesiologyEvolutions: async (context, _cookies, filters) => { requests.push('evolutions'); clinicalCalls.push({ context, filters, evolution: true }); if (options.evolutionsStatus) throw new mocks.ApiError(options.evolutionsStatus); if (options.evolutionsFailure) throw new Error('offline'); return options.evolutionItems ?? []; },
   listOralSurgeryContexts: async () => { requests.push('discovery'); if (options.discoveryStatus) throw new mocks.ApiError(options.discoveryStatus); if (options.discoveryFailure) throw new Error('offline'); if (options.forbidden) return { status: 'forbidden' }; return { status: 'ok', items: options.contexts ?? [] }; },
   isOralSurgeryContext: (contexts, subjectId, groupId) => contexts.some((item) => item.subject_id === subjectId && item.academic_group_id === groupId),
   listOralSurgeryDrafts: async (context, _cookies, page) => { requests.push('oral-list'); oralListings.push({ context, page }); return options.oralDrafts ?? []; },
@@ -82,6 +86,37 @@ async function render(path, options = {}) {
  const component = await compile(path);
  return { html: await html(component({ createAstro: () => Astro }, {}, {})), requests, oralListings, clinicalCalls };
 }
+
+test('teacher other-context block links only to action-free snapshot detail and isolates failures', async () => {
+ const result = await render('src/pages/teacher-clinical.astro', { query: `assignment_id=${id}`, crossEvaluations: [{ ...evaluation, origin_group_id: otherGroup, status: 'validated' }] });
+ assert.match(result.html, /De otros contextos/);
+ assert.match(result.html, new RegExp(`teacher-clinical/other-contexts/${id}`));
+ assert.match(result.html, new RegExp(`Grupo de origen: ${otherGroup}`));
+ const failed = await render('src/pages/teacher-clinical.astro', { query: `assignment_id=${id}`, crossFailure: true });
+ assert.match(failed.html, /No se pudieron cargar las fichas de otros contextos/);
+ assert.match(failed.html, /Abrir ficha · Borrador/);
+});
+
+test('teacher other-context evolutions show origin/status/date but neither drafts nor own-context rows', async () => {
+ const cross = { ...evaluation, id: '77', evaluation_id: '55', patient_id: patient, origin_group_id: otherGroup, status: 'validated', created_at: '2026-01-02T00:00:00Z' };
+ const result = await render('src/pages/teacher-clinical.astro', { query: `assignment_id=${id}`, evolutions: true, evolutionItems: [cross, { ...cross, status: 'draft', evaluation_id: 'DRAFT-SECRET' }, { ...cross, origin_group_id: group, evaluation_id: 'OWN-ROW' }] });
+ const block = result.html.split('id="other-contexts-title"')[1];
+ assert.match(block, /Evaluación 55 · Validada/);
+ assert.match(block, new RegExp(new Date(cross.created_at).toLocaleDateString('es')));
+ assert.doesNotMatch(block, /DRAFT-SECRET|OWN-ROW|<form/);
+ assert.deepEqual(result.clinicalCalls.at(-1), { context: { patient_id: patient }, filters: {}, evolution: true });
+});
+
+test('teacher cross snapshot HTML contains clinical content but no origin actions or private history', async () => {
+ const result = await render('src/pages/teacher-clinical/other-contexts/[id].astro');
+ assert.deepEqual(result.requests, ['snapshot']);
+ assert.match(result.html, /Estable/);
+ assert.match(result.html, /solo lectura/);
+ assert.doesNotMatch(result.html, /<form|method="POST"|paper_signature_date|Corrección solicitada|Registrar constancia|Validar versión/);
+ const denied = await render('src/pages/teacher-clinical/other-contexts/[id].astro', { crossFailure: 404 });
+ assert.match(denied.html, /La ficha no está disponible/);
+ assert.doesNotMatch(denied.html, /Estable|Enviada:/);
+});
 
 test('teacher discovery renders selected contextual patient and all-status list without mutation controls', async () => {
  const result = await render('src/pages/teacher-clinical.astro', { query: `assignment_id=${id}&patient_id=${patient}&student_id=${group}&subject_id=${subject}&academic_group_id=${group}&limit=7&offset=14` });
@@ -368,7 +403,7 @@ const selectedContext = `assignment_id=${id}&patient_id=${patient}&subject_id=${
 
 test('RED R3-002: teacher evolution read failure keeps the evaluation list rendered and shows an evolution-specific error', async () => {
  const result = await render('src/pages/teacher-clinical.astro', { evolutions: true, evolutionsFailure: true, query: selectedContext });
- assert.deepEqual(result.requests, ['assignments', 'list', 'evolutions']);
+ assert.deepEqual(result.requests, ['assignments', 'list', 'evolutions', 'evolutions']);
  assert.match(result.html, /Abrir ficha · Borrador/);
  assert.match(result.html, /role="alert"[^>]*>No se pudieron cargar las evoluciones kinésicas\./);
  assert.doesNotMatch(result.html, /No se pudo cargar el acceso clínico/);
@@ -387,7 +422,7 @@ test('teacher invalid evolution filter is rejected before any clinical or evolut
 
 test('teacher no-filter page keeps the default evaluation list and evolutions without an error', async () => {
  const result = await render('src/pages/teacher-clinical.astro', { evolutions: true, query: selectedContext });
- assert.deepEqual(result.requests, ['assignments', 'list', 'evolutions']);
+ assert.deepEqual(result.requests, ['assignments', 'list', 'evolutions', 'evolutions']);
  assert.match(result.html, /Abrir ficha · Borrador/);
  assert.match(result.html, /No hay evoluciones visibles para este paciente y contexto de origen\./);
  assert.doesNotMatch(result.html, /role="alert"/);

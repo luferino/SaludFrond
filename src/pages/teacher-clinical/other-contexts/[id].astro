@@ -1,0 +1,45 @@
+---
+export const prerender = false;
+import Layout from '../../../layouts/Layout.astro';
+import SubmissionSnapshot from '../../../components/clinical/SubmissionSnapshot.astro';
+import { ApiError } from '../../../shared/apiClient';
+import { teacherGrant, parseClinicalContext } from '../../../pods/teacher-clinical/api';
+import { getTeacherCrossContextSnapshot, loadOriginNames } from '../../../pods/teacher-clinical/cross-context';
+import { assignmentListQuery, parseAssignmentListCoordinates } from '../../../pods/patient-assignment/list-coordinates';
+Astro.response.headers.set('Cache-Control', 'no-store');
+const allowed = teacherGrant(Astro.cookies, 'patient-assignments:read') && teacherGrant(Astro.cookies, 'kinesiology-evaluations:read');
+let snapshot: Awaited<ReturnType<typeof getTeacherCrossContextSnapshot>> | null = null;
+let error = '';
+let originNames: Awaited<ReturnType<typeof loadOriginNames>> = { subjects: {}, groups: {} };
+let returnHref = '/teacher-clinical';
+try {
+ if (allowed) {
+  const context = parseClinicalContext(Astro.url.searchParams);
+  const coordinates = parseAssignmentListCoordinates(Astro.url.searchParams, true);
+  const params = new URLSearchParams(assignmentListQuery(coordinates));
+  const choices = Astro.url.searchParams.getAll('assignment_id');
+  if (choices.length === 1 && /^[1-9]\d{0,18}$/.test(choices[0])) params.set('assignment_id', choices[0]);
+  returnHref = `/teacher-clinical?${params}`;
+  snapshot = await getTeacherCrossContextSnapshot(Astro.params.id ?? '', context, Astro.cookies);
+  originNames = await loadOriginNames([snapshot], Astro.cookies);
+ }
+} catch (failure) {
+ if (failure instanceof ApiError && failure.status === 401) return Astro.redirect('/auth/login?returnTo=%2Fteacher-clinical');
+ error = 'La ficha no está disponible.';
+}
+---
+<Layout>
+ <main>
+  <a href={returnHref}>Volver al acceso clínico docente</a>
+  <h1>Ficha de otro contexto · solo lectura</h1>
+  {!allowed ? <p role="alert">No tenés permiso para consultar esta ficha como docente.</p> : error ? <p role="alert">{error}</p> : snapshot && <>
+   <p>Asignatura de origen: {originNames.subjects[snapshot.origin_subject_id] ?? snapshot.origin_subject_id}<br />Grupo de origen: {originNames.groups[snapshot.origin_group_id] ?? snapshot.origin_group_id}</p>
+   <p>Se muestra únicamente la última versión enviada disponible. No se permiten acciones desde este contexto.</p>
+   <SubmissionSnapshot submission={snapshot.submission} crossContext={true} />
+  </>}
+ </main>
+</Layout>
+<style>
+ main { max-width: 64rem; margin: auto; overflow-wrap: anywhere; }
+ a { color: var(--rust-deep); text-decoration: underline; }
+</style>
