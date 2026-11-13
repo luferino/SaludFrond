@@ -86,7 +86,7 @@ try {
 				if (Array.isArray(permissions) && permissions.includes('kinesiology-evolutions:read')) {
 					// Isolated: an evolution failure must not hide the evaluation lists already loaded above.
 					try {
-						evolutions = await listKinesiologyEvolutions(context, Astro.cookies, evolutionFilters);
+						evolutions = await listKinesiologyEvolutions({ patient_id: assignment.patient_id }, Astro.cookies, evolutionFilters);
 					} catch (error) {
 						if (error instanceof ApiError && error.status === 401) throw error;
 						evolutionError = true;

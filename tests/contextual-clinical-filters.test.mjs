@@ -60,6 +60,26 @@ test('evaluation readers forward only supplied filters while submitted snapshots
  assert.equal(new URL(requests[3].url).searchParams.get('status'), 'validated');
 });
 
+test('evolution adapter accepts patient-only cross-context reads and preserves full-context requests', async () => {
+ const { api, requests } = await load('src/pods/kinesiology-evolution/listing.ts', [{ items: [] }, { items: [] }, { items: [] }]);
+ await api.listKinesiologyEvolutions({ patient_id: patient }, cookies);
+ await api.listKinesiologyEvolutions({ patient_id: patient, subject_id: subject, academic_group_id: group }, cookies);
+ await api.listKinesiologyEvolutions({ patient_id: patient }, cookies, { status: 'submitted', date_from: '2026-01-01', evaluation_id: '42' });
+ assert.equal(requests[0].url, `https://backend.invalid/kinesiology-evolutions?patient_id=${patient}`);
+ assert.equal(requests[1].url, `https://backend.invalid/kinesiology-evolutions?patient_id=${patient}&subject_id=${subject}&academic_group_id=${group}`);
+ assert.equal(requests[2].url, `https://backend.invalid/kinesiology-evolutions?patient_id=${patient}&status=submitted&date_from=2026-01-01&evaluation_id=42`);
+ assert.equal(requests[0].init.method, 'GET');
+});
+
+test('evolution adapter rejects missing or malformed patient and any supplied malformed origin before requests', async () => {
+ const { api, requests } = await load('src/pods/kinesiology-evolution/listing.ts');
+ for (const context of [
+  {}, { patient_id: '' }, { patient_id: 'invalid' }, { patient_id: patient, subject_id: 'invalid' },
+  { patient_id: patient, academic_group_id: 'invalid' },
+ ]) await assert.rejects(() => api.listKinesiologyEvolutions(context, cookies));
+ assert.equal(requests.length, 0);
+});
+
 test('evolution filters preserve BIGINT decimal precision and reject invalid IDs before requests', async () => {
  const { api, requests } = await load('src/pods/kinesiology-evolution/listing.ts', [{ items: [] }]);
  const context = { patient_id: patient, subject_id: subject, academic_group_id: group };
