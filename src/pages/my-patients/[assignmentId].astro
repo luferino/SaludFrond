@@ -120,11 +120,11 @@ const listQuery = assignmentListQuery(coordinates);
 const createHref = actionHrefWithContext(actions.createKinesiologyEvaluation.toString(), {
 	assignment_id: assignmentId,
 	...listCarrier,
-});
+}, Astro.url.href);
 const createOralSurgeryHref = oralSurgeryEnabled ? actionHrefWithContext(actions.createOralSurgeryDraft.toString(), {
 	assignment_id: assignmentId,
 	...listCarrier,
-}) : '';
+}, Astro.url.href) : '';
 ---
 <Layout>
 	<main class="clinical-page" aria-labelledby="title">

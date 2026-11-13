@@ -153,8 +153,8 @@ const listCarrier = assignmentListCarrier(coordinates);
 const contextHref = `/my-patients/${encodeURIComponent(assignmentId)}?${assignmentListQuery(coordinates)}`;
 // Keep the validated assignment-list coordinates on the form post, separate from clinical context.
 const actionContext = { assignment_id: assignmentId, ...listCarrier };
-const saveHref = actionHrefWithContext(actions.updateOralSurgeryDraft.toString(), actionContext);
-const declareHref = actionHrefWithContext(actions.declareOralSurgeryConsent.toString(), actionContext);
+const saveHref = actionHrefWithContext(actions.updateOralSurgeryDraft.toString(), actionContext, Astro.url.href);
+const declareHref = actionHrefWithContext(actions.declareOralSurgeryConsent.toString(), actionContext, Astro.url.href);
 ---
 <Layout>
 	<main class="clinical-page" aria-labelledby="title">

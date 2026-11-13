@@ -211,6 +211,24 @@ test('Kinesiology editor action URLs resolve against the rendered editor URL and
   await assertActions(legacyUrl, '50', '0', {});
 });
 
+test('list and oral surgery draft form actions post back to the rendered route with list context', async () => {
+  const listUrl = `http://127.0.0.1:4321/my-patients/${assignmentId}?limit=7&offset=14&patient_id=${ids.patient}`;
+  const draftUrl = `http://127.0.0.1:4321/oral-surgery-drafts/${recordId}?${queryWithListState()}`;
+  const carrier = `assignment_id=${assignmentId}&list_limit=7&list_offset=14&list_patient_id=${ids.patient}`;
+  const rows = [
+    ['src/pages/my-patients/[assignmentId].astro', { url: listUrl }, 'new-draft', `/my-patients/${assignmentId}?_action=createKinesiologyEvaluation&${carrier}`],
+    ['src/pages/my-patients/[assignmentId].astro', { url: listUrl, oralEnabled: true }, 'new-draft', `/my-patients/${assignmentId}?_action=createOralSurgeryDraft&${carrier}`],
+    ['src/pages/oral-surgery-drafts/[id].astro', { url: draftUrl }, 'draft-form', `/oral-surgery-drafts/${recordId}?_action=updateOralSurgeryDraft&${carrier}`],
+    ['src/pages/oral-surgery-drafts/[id].astro', { url: draftUrl }, 'declare-form', `/oral-surgery-drafts/${recordId}?_action=declareOralSurgeryConsent&${carrier}`],
+  ];
+  const actual = [];
+  for (const [path, options, formId] of rows) {
+    const page = await renderCompiledPage(path, options);
+    actual.push(formDataFromHtml(page.html, formId).action);
+  }
+  assert.deepEqual(actual, rows.map(([, , , expectedAction]) => expectedAction));
+});
+
 test('legacy no-filter HTML forms remain schema-valid and removing the required pair from rendered FormData rejects before handler calls', async () => {
   const legacyRows = [
     ['createKinesiologyEvaluation', 'src/pages/my-patients/[assignmentId].astro', `/my-patients/${assignmentId}?limit=50&offset=0`, false, 'new-draft', []],
