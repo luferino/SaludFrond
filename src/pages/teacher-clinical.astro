@@ -3,6 +3,7 @@ export const prerender = false;
 import Layout from '../layouts/Layout.astro';
 import { ApiError } from '../shared/apiClient';
 import { listTeacherPatients, listTeacherEvaluations, parseTeacherAssignmentFilters, parseTeacherPagination, teacherGrant, type TeacherPatient } from '../pods/teacher-clinical/api';
+import { listTeacherCrossContextEvaluations, otherContext, loadOriginNames } from '../pods/teacher-clinical/cross-context';
 import { assignmentListCarrier } from '../pods/patient-assignment/list-coordinates';
 import type { Evaluation } from '../pods/kinesiology-evaluation/api';
 import type { ClinicalListFilters } from '../pods/kinesiology-evaluation/list-filters';
@@ -17,6 +18,11 @@ let selected: TeacherPatient | undefined;
 let evaluations: Evaluation[] = [];
 let evolutions: KinesiologyEvolutionListItem[] = [];
 let evolutionError = false;
+let crossEvaluations: Evaluation[] = [];
+let crossEvolutions: KinesiologyEvolutionListItem[] = [];
+let crossError = false;
+let crossEvolutionError = false;
+let originNames: Awaited<ReturnType<typeof loadOriginNames>> = { subjects: {}, groups: {} };
 let clinicalFilters: ClinicalListFilters = {};
 let evolutionFilters: EvolutionFilters = {};
 let filterError = '';
@@ -74,6 +80,22 @@ try {
          evolutionError = true;
         }
        }
+       // Separate reads: cross-context failures cannot hide the origin lists or their links.
+       try { crossEvaluations = await listTeacherCrossContextEvaluations(context, Astro.cookies, clinicalFilters); }
+       catch (failure) {
+        if (failure instanceof ApiError && failure.status === 401) throw failure;
+        crossError = true;
+       }
+       if (teacherGrant(Astro.cookies, 'kinesiology-evolutions:read')) {
+        try {
+         const rows = await listKinesiologyEvolutions({ patient_id: context.patient_id }, Astro.cookies, evolutionFilters);
+         if (rows.some((item) => item.patient_id !== context.patient_id)) throw new Error('Paciente no válido.');
+         crossEvolutions = rows.filter((item) => otherContext(item, context) && item.status !== 'draft');
+        } catch (failure) {
+         if (failure instanceof ApiError && failure.status === 401) throw failure;
+         crossEvolutionError = true;
+        }
+       }
       }
      }
     }
@@ -85,6 +107,10 @@ try {
  error = failure instanceof ApiError && failure.status === 403 ? 'No tenés permiso vigente para consultar este contexto.' : 'No se pudo cargar el acceso clínico. No se muestra una lista vacía porque la consulta falló.';
 }
 // Submitted values are shown as typed, so an invalid filter stays editable in the form.
+if (selected && !error) {
+ try { originNames = await loadOriginNames([...crossEvaluations, ...crossEvolutions], Astro.cookies); }
+ catch (failure) { if (failure instanceof ApiError && failure.status === 401) return Astro.redirect('/auth/login?returnTo=%2Fteacher-clinical'); }
+}
 const shownFilters = { status: searchParams.get('status') ?? '', date_from: searchParams.get('date_from') ?? '', date_to: searchParams.get('date_to') ?? '', evaluation_id: searchParams.get('evaluation_id') ?? '' };
 const link = (offset: number) => { const params = new URLSearchParams({limit:String(pagination.limit),offset:String(offset)}); for (const [key,value] of Object.entries(filters)) if (value) params.set(key,value); return `/teacher-clinical?${params}`; };
 const previous = pagination.offset > 0 ? Math.max(0, pagination.offset - pagination.limit) : null;
@@ -147,6 +173,18 @@ const listCarrier = assignmentListCarrier({ ...pagination, filters });
      <a href={`/teacher-clinical/${evaluation.id}?${new URLSearchParams({ patient_id: selected!.patient_id, subject_id: selected!.subject_id, academic_group_id: selected!.academic_group_id, assignment_id: selected!.id, ...listCarrier })}`}>Abrir ficha · {evaluation.status === 'draft' ? 'Borrador' : evaluation.status === 'submitted' ? 'Enviada' : 'Validada'}</a>
     </li>)}</ul> : <p>No hay fichas para este paciente y contexto de origen.</p>}
     {teacherGrant(Astro.cookies, 'kinesiology-evolutions:read') && <section aria-labelledby="teacher-evolutions-title"><h3 id="teacher-evolutions-title">Evoluciones kinésicas</h3>{evolutionError ? <p role="alert">No se pudieron cargar las evoluciones kinésicas. Las fichas de este contexto siguen disponibles.</p> : evolutions.length ? <ul>{evolutions.map((item) => <li><span>Evaluación {item.evaluation_id} · {item.status === 'draft' ? 'Borrador' : item.status === 'submitted' ? 'Enviada' : 'Validada'} · {new Date(item.created_at).toLocaleDateString('es')}</span></li>)}</ul> : <p>No hay evoluciones visibles para este paciente y contexto de origen.</p>}</section>}
+   </section>}
+   {selected && !error && !filterError && !oralSurgeryEnabled && <section aria-labelledby="other-contexts-title">
+    <h2 id="other-contexts-title">De otros contextos</h2>
+    <p>Últimas versiones enviadas o validadas · solo lectura.</p>
+    {crossError ? <p role="alert">No se pudieron cargar las fichas de otros contextos.</p> : crossEvaluations.length ? <ul>{crossEvaluations.map((item) => <li>
+     <p>Asignatura de origen: {originNames.subjects[item.origin_subject_id] ?? item.origin_subject_id} · Grupo de origen: {originNames.groups[item.origin_group_id] ?? item.origin_group_id}</p>
+     <a href={`/teacher-clinical/other-contexts/${item.id}?${new URLSearchParams({ patient_id: selected!.patient_id, subject_id: selected!.subject_id, academic_group_id: selected!.academic_group_id, assignment_id: selected!.id, ...listCarrier })}`}>Ver ficha · {item.status === 'validated' ? 'Validada' : 'Enviada'} · {new Date(item.created_at).toLocaleDateString('es')}</a>
+    </li>)}</ul> : <p>No hay fichas visibles de otros contextos.</p>}
+    {teacherGrant(Astro.cookies, 'kinesiology-evolutions:read') && <section aria-labelledby="other-evolutions-title">
+     <h3 id="other-evolutions-title">Evoluciones de otros contextos</h3>
+     {crossEvolutionError ? <p role="alert">No se pudieron cargar las evoluciones de otros contextos.</p> : crossEvolutions.length ? <ul>{crossEvolutions.map((item) => <li>Asignatura de origen: {originNames.subjects[item.origin_subject_id] ?? item.origin_subject_id} · Grupo de origen: {originNames.groups[item.origin_group_id] ?? item.origin_group_id} · Evaluación {item.evaluation_id} · {item.status === 'validated' ? 'Validada' : 'Enviada'} · {new Date(item.created_at).toLocaleDateString('es')}</li>)}</ul> : <p>No hay evoluciones visibles de otros contextos.</p>}
+    </section>}
    </section>}
   </>}
  </main>

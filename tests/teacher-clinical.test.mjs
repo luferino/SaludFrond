@@ -144,6 +144,55 @@ test('teacher correction reasons are read only after exact origin and never use 
  await assert.rejects(projected.listTeacherCorrections(id, context, cookies));
 });
 
+test('teacher cross-context lists are patient-only, exclude own context/drafts, and preserve filters', async () => {
+ const requests = [];
+ const cross = { ...evaluation, origin_group_id: patient, status: 'validated' };
+ const api = await compile(async (url, init) => { requests.push([url, init]); return Response.json({ items: [evaluation, { ...evaluation, status: 'submitted' }, cross, { ...cross, status: 'draft' }] }); }, 'src/pods/teacher-clinical/cross-context.ts');
+ const rows = await api.listTeacherCrossContextEvaluations(context, cookies, { status: 'validated', date_from: '2026-01-01' });
+ assert.deepEqual(Array.from(rows, (row) => row.origin_group_id), [patient]);
+ assert.equal(requests[0][0], `https://api.invalid/kinesiology-evaluations?patient_id=${patient}&status=validated&date_from=2026-01-01`);
+ assert.equal(requests[0][1].method, 'GET');
+ assert.equal(requests[0][1].body, undefined);
+ const bad = await compile(async () => Response.json({ items: [{ ...cross, patient_id: group }] }), 'src/pods/teacher-clinical/cross-context.ts');
+ await assert.rejects(bad.listTeacherCrossContextEvaluations(context, cookies));
+});
+
+test('teacher origin names resolve beyond the first catalog page with safe ID fallback on denied catalogs', async () => {
+ const requests = [];
+ const api = await compile(async (url) => {
+  requests.push(url);
+  const offset = Number(new URL(url).searchParams.get('offset'));
+  if (url.includes('/groups?')) return Response.json({ error: { message: 'denied' } }, { status: 403 });
+  return Response.json({ items: offset ? [{ id: subject, name: 'Kinesiología' }] : Array.from({ length: 100 }, (_, i) => ({ id: `unrelated-${i}`, name: 'Other' })), limit: 100, offset });
+ }, 'src/pods/teacher-clinical/cross-context.ts');
+ const names = await api.loadOriginNames([{ origin_subject_id: subject, origin_group_id: group }], cookies);
+ assert.equal(names.subjects[subject], 'Kinesiología');
+ assert.equal(names.groups[group], undefined);
+ assert.ok(requests.some((url) => url.includes('offset=100')));
+});
+
+test('teacher cross-context detail renders only latest immutable submission, even with origin access elsewhere', async () => {
+ const snapshot = { id: '8', evaluation_id: id, ordinal: '2', submitted_by: patient, submitted_at: '2026-01-02T00:00:00Z', status: 'validated', clinical_content: { admission_status: 'SNAPSHOT' }, studies: [], patient: null, age_at_admission: null, consent: { id: '5', paper_signature_date: '2026-01-01', verified_by: patient, verified_at: '2026-01-02T00:00:00Z' } };
+ for (const projected of [false, true]) {
+  const requests = [];
+  const cross = { ...evaluation, origin_group_id: patient, status: 'validated', content: { admission_status: 'LIVE MUST NOT RENDER' }, ...(projected ? { submission_id: '8' } : {}) };
+  const api = await compile(async (url, init) => { requests.push([url, init]); return Response.json(url.endsWith('/submissions') ? { evaluation_id: id, items: [snapshot] } : cross); }, 'src/pods/teacher-clinical/cross-context.ts');
+  const result = await api.getTeacherCrossContextSnapshot(id, context, cookies);
+  assert.equal(result.submission.clinical_content.admission_status, 'SNAPSHOT');
+  assert.equal(result.submission.id, '8');
+  assert.deepEqual(requests.map(([url]) => url), [`https://api.invalid/kinesiology-evaluations/${id}`, `https://api.invalid/kinesiology-evaluations/${id}/submissions`]);
+  assert.ok(requests.every(([, init]) => init.method === 'GET' && init.body === undefined));
+ }
+ for (const patch of [{ status: 'draft' }, { patient_id: group }, { origin_group_id: group }]) {
+  const requests = [];
+  const api = await compile(async (url) => { requests.push(url); return Response.json({ ...evaluation, status: 'submitted', origin_group_id: patient, ...patch }); }, 'src/pods/teacher-clinical/cross-context.ts');
+  await assert.rejects(api.getTeacherCrossContextSnapshot(id, context, cookies));
+  assert.equal(requests.length, 1);
+ }
+ const denied = await compile(async () => Response.json({ error: { message: 'hidden' } }, { status: 404 }), 'src/pods/teacher-clinical/cross-context.ts');
+ await assert.rejects(denied.getTeacherCrossContextSnapshot(id, context, cookies), (error) => error.status === 404);
+});
+
 const teacherCookies = (permissions, role = 'teacher') => ({ get: () => ({ value: `header.${Buffer.from(JSON.stringify({ role, permissions, exp: 9999999999 })).toString('base64url')}.signature` }), delete() {} });
 test('consent action checks separate teacher verify grant, exact origin and origin-only consent before one append', async () => {
  const input = { id, ...context, paper_signature_date: '2099-12-31' };
