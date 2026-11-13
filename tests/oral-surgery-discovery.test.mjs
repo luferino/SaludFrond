@@ -146,6 +146,7 @@ async function renderAssignment(options = {}) {
  const requests = [];
  const oralListings = [];
  const clinicalCalls = [];
+ const evaluationContexts = [];
  const cookies = { get: (name) => name === 'session' ? { value: 'token' } : undefined };
  const Astro = {
   params: { assignmentId: '17' }, cookies, url: new URL(options.url ?? 'https://fixture.invalid/my-patients/17?limit=50&offset=0'),
@@ -165,9 +166,9 @@ async function renderAssignment(options = {}) {
   assignmentListCarrier: (coordinates) => Object.fromEntries([['list_limit',String(coordinates.limit)],['list_offset',String(coordinates.offset)], ...Object.entries(coordinates.filters).map(([key,value])=>[`list_${key}`,value])]),
   assignmentListQuery: (coordinates) => new URLSearchParams({limit:String(coordinates.limit),offset:String(coordinates.offset),...coordinates.filters}).toString(),
   listAssignedPatients: async () => { requests.push('assignments'); if (options.assignmentsFailure) throw new Error('offline'); return { items: options.items ?? [assignment], limit: 50, offset: 0 }; },
-  listEvaluations: async (_context, _cookies, filters) => { requests.push('kinesiology-drafts'); clinicalCalls.push({ kind: 'drafts', filters }); if (options.draftsFailure) throw new Error('raw 500: relation "kinesiology_evaluations" is missing'); return options.kinesiologyDrafts ?? []; },
-  listSubmittedEvaluations: async (_context, _cookies, filters) => { requests.push('kinesiology-submitted'); clinicalCalls.push({ kind: 'submitted', filters }); return []; },
-  listKinesiologyEvolutions: async (_context, _cookies, filters) => { requests.push('evolutions'); clinicalCalls.push({ kind: 'evolutions', filters }); if (options.evolutionsStatus) throw new mocks.ApiError(options.evolutionsStatus); if (options.evolutionsFailure) throw new Error('offline'); return []; },
+  listEvaluations: async (context, _cookies, filters) => { requests.push('kinesiology-drafts'); evaluationContexts.push({ kind: 'drafts', context }); clinicalCalls.push({ kind: 'drafts', filters }); if (options.draftsFailure) throw new Error('raw 500: relation "kinesiology_evaluations" is missing'); return options.kinesiologyDrafts ?? []; },
+  listSubmittedEvaluations: async (context, _cookies, filters) => { requests.push('kinesiology-submitted'); evaluationContexts.push({ kind: 'submitted', context }); clinicalCalls.push({ kind: 'submitted', filters }); return []; },
+  listKinesiologyEvolutions: async (context, _cookies, filters) => { requests.push('evolutions'); clinicalCalls.push({ kind: 'evolutions', context, filters }); if (options.evolutionsStatus) throw new mocks.ApiError(options.evolutionsStatus); if (options.evolutionsFailure) throw new Error('offline'); return options.evolutions ?? []; },
   EVALUATION_STATUS_LABELS: {},
   actionHrefWithContext: (href, context) => { const url = new URL(href, 'http://localhost'); for (const [key, value] of Object.entries(context)) url.searchParams.set(key, value); return `${url.pathname}${url.search}`; },
   listOralSurgeryContexts: async () => {
@@ -203,7 +204,7 @@ async function renderAssignment(options = {}) {
  if (options.parseEvolutionListFilters) mocks.parseEvolutionListFilters = options.parseEvolutionListFilters;
  const component = await compile('src/pages/my-patients/[assignmentId].astro');
  const rendered = await html(component({ createAstro: () => Astro }, {}, {}));
- return { html: rendered, requests, oralListings, clinicalCalls };
+ return { html: rendered, requests, oralListings, clinicalCalls, evaluationContexts };
 }
 async function html(value) {
  value = await value;
@@ -371,6 +372,38 @@ test('student no-filter page keeps the default lists, default status option and 
  const select = result.html.match(/<select id="clinical-status"[\s\S]*?<\/select>/)?.[0];
  assert.ok(select);
  assert.doesNotMatch(select, / selected/);
+});
+
+test('student cross-context evolution read uses only the selected patient and renders backend-authorized snapshots, not absent drafts', async () => {
+ const submitted = { id: '1', evaluation_id: '41', status: 'submitted', created_at: iso };
+ const validated = { id: '2', evaluation_id: '42', status: 'validated', created_at: iso };
+ const draftSentinel = 'UNRETURNED_A_DRAFT_SENTINEL';
+ const result = await renderAssignment({
+  permissions: ['kinesiology-evolutions:read'], evolutions: [submitted, validated],
+  kinesiologyDrafts: [{ id: '31', updated_at: iso }],
+  url: `https://fixture.invalid/my-patients/17?limit=50&offset=0&status=submitted&date_from=2026-01-01&evaluation_id=41`,
+ });
+ assert.deepEqual(result.clinicalCalls.find((call) => call.kind === 'evolutions').context, { patient_id: patient });
+ assert.deepEqual(result.evaluationContexts, [
+  { kind: 'drafts', context: { patient_id: patient, subject_id: subject, academic_group_id: group } },
+  { kind: 'submitted', context: { patient_id: patient, subject_id: subject, academic_group_id: group } },
+ ]);
+ assert.deepEqual(result.clinicalCalls, [
+  { kind: 'drafts', filters: { status: 'submitted', date_from: '2026-01-01' } },
+  { kind: 'submitted', filters: { status: 'submitted', date_from: '2026-01-01' } },
+  { kind: 'evolutions', context: { patient_id: patient }, filters: { status: 'submitted', date_from: '2026-01-01', evaluation_id: '41' } },
+ ]);
+ assert.match(result.html, /Evaluación 41 · Enviada/);
+ assert.match(result.html, /Evaluación 42 · Validada/);
+ assert.doesNotMatch(result.html, new RegExp(draftSentinel));
+ assert.match(result.html, /Abrir borrador de ficha · actualizado /);
+});
+
+test('student without evolution grant or active selected assignment makes no evolution request', async () => {
+ const withoutGrant = await renderAssignment();
+ assert.equal(withoutGrant.requests.includes('evolutions'), false);
+ const unavailable = await renderAssignment({ permissions: ['kinesiology-evolutions:read'], items: [] });
+ assert.equal(unavailable.requests.includes('evolutions'), false);
 });
 
 /** Load the real evolution and clinical filter parsers so invalid-filter cases run the actual validation rules. */

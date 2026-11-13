@@ -37,13 +37,19 @@ function validateItem(value: unknown): KinesiologyEvolutionListItem {
   || typeof row.updated_at !== 'string' || !Number.isFinite(Date.parse(row.updated_at))) throw new Error('La respuesta de evoluciones no es válida.');
  return row as unknown as KinesiologyEvolutionListItem;
 }
-export async function listKinesiologyEvolutions(context: { patient_id: string; subject_id: string; academic_group_id: string }, cookies: AstroCookies, filters: EvolutionFilters = {}): Promise<KinesiologyEvolutionListItem[]> {
- for (const [key, value] of Object.entries(context)) if (!UUID.test(value)) throw new Error(`El contexto ${key} no es válido.`);
+export async function listKinesiologyEvolutions(context: { patient_id: string; subject_id?: string; academic_group_id?: string }, cookies: AstroCookies, filters: EvolutionFilters = {}): Promise<KinesiologyEvolutionListItem[]> {
+ if (!UUID.test(context.patient_id)) throw new Error('El contexto patient_id no es válido.');
+ for (const key of ['subject_id', 'academic_group_id'] as const) {
+  const value = context[key];
+  if (value !== undefined && !UUID.test(value)) throw new Error(`El contexto ${key} no es válido.`);
+ }
  if (filters.evaluation_id !== undefined) {
   scalar(filters.evaluation_id, 'evaluation_id');
   if (!id(filters.evaluation_id)) throw new Error('El identificador de evaluación no es válido.');
  }
- const query = new URLSearchParams(context);
+ const query = new URLSearchParams({ patient_id: context.patient_id });
+ if (context.subject_id !== undefined) query.set('subject_id', context.subject_id);
+ if (context.academic_group_id !== undefined) query.set('academic_group_id', context.academic_group_id);
  const optional = clinicalFilterQuery(filters);
  for (const [key, value] of optional) query.set(key, value);
  if (filters.evaluation_id !== undefined) query.set('evaluation_id', filters.evaluation_id);
