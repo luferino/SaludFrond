@@ -426,7 +426,7 @@ test('typed backend errors distinguish 401, 403, concealed 404 and non-draft 409
 
 test('evaluated SSR frontmatter preserves Astro action query and revalidates list/detail state', async () => {
  const listPage = await evaluatePageFrontmatter('src/pages/my-patients/[assignmentId].astro');
- assert.equal(listPage.createHref, '/_actions/createKinesiologyEvaluation?_action=createKinesiologyEvaluation&assignment_id=17&list_limit=50&list_offset=0');
+ assert.equal(listPage.createHref, '/_actions/createKinesiologyEvaluation?_action=createKinesiologyEvaluation&assignment_id=17&limit=50&offset=0');
  assert.equal(listPage.assignment.id, '17');
  assert.equal(listPage.drafts.length, 1);
  const detailPage = await evaluatePageFrontmatter('src/pages/kinesiology-evaluations/[id].astro', { url: '/kinesiology-evaluations/9223372036854775807?assignment_id=17&limit=50&offset=0' });
@@ -1192,7 +1192,7 @@ test('assignment frontmatter without the oral-surgery read grant makes no discov
  const page = await evaluatePageFrontmatter('src/pages/my-patients/[assignmentId].astro', { listOralSurgeryContexts: async () => { discoveries += 1; return { status: 'ok', items: [{ subject_id: subjectId, academic_group_id: groupId }] }; } });
  assert.equal(discoveries, 0);
  assert.equal(page.oralSurgeryEnabled, false);
- assert.equal(page.createHref, '/_actions/createKinesiologyEvaluation?_action=createKinesiologyEvaluation&assignment_id=17&list_limit=50&list_offset=0');
+ assert.equal(page.createHref, '/_actions/createKinesiologyEvaluation?_action=createKinesiologyEvaluation&assignment_id=17&limit=50&offset=0');
  assert.equal(page.drafts.length, 1);
  assert.equal(page.oralSurgeryDrafts.length, 0);
 });
@@ -1207,5 +1207,5 @@ test('assignment frontmatter with the grant but no matching pair keeps the Kines
  assert.equal(oralLists, 0);
  assert.equal(page.oralSurgeryEnabled, false);
  assert.equal(page.drafts.length, 1);
- assert.equal(page.createHref, '/_actions/createKinesiologyEvaluation?_action=createKinesiologyEvaluation&assignment_id=17&list_limit=50&list_offset=0');
+ assert.equal(page.createHref, '/_actions/createKinesiologyEvaluation?_action=createKinesiologyEvaluation&assignment_id=17&limit=50&offset=0');
 });

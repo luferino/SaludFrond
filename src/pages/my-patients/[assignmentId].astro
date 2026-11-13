@@ -117,13 +117,14 @@ if (oralSurgeryResult?.data?.success && oralSurgeryEnabled && assignment && deci
 const coordinates = { ...pagination, filters: listFilters };
 const listCarrier = assignmentListCarrier(coordinates);
 const listQuery = assignmentListQuery(coordinates);
+const actionListContext = Object.fromEntries(new URLSearchParams(listQuery));
 const createHref = actionHrefWithContext(actions.createKinesiologyEvaluation.toString(), {
 	assignment_id: assignmentId,
-	...listCarrier,
+	...actionListContext,
 }, Astro.url.href);
 const createOralSurgeryHref = oralSurgeryEnabled ? actionHrefWithContext(actions.createOralSurgeryDraft.toString(), {
 	assignment_id: assignmentId,
-	...listCarrier,
+	...actionListContext,
 }, Astro.url.href) : '';
 ---
 <Layout>

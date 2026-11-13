@@ -223,7 +223,7 @@ test('student page with an enabled pair renders only Oral Surgery: create form, 
   assert.match(result.html, new RegExp(`<input type="hidden" name="${name}" value="${value}"`));
  }
  assert.doesNotMatch(result.html, /name="content"/);
- assert.match(result.html, /action="\/oral-surgery\?assignment_id=17&amp;list_limit=50&amp;list_offset=0"/);
+ assert.match(result.html, /action="\/oral-surgery\?assignment_id=17&amp;limit=50&amp;offset=0"/);
  assert.match(result.html, /href="\/oral-surgery-drafts\/9007199254741061\?assignment_id=17&amp;list_limit=50&amp;list_offset=0"/);
  assert.match(result.html, /Abrir borrador · versión 3 · actualizado /);
  assert.doesNotMatch(result.html, /Ficha kinésica inicial|Crear nuevo borrador<|Borradores de ficha inicial|Fichas enviadas/);

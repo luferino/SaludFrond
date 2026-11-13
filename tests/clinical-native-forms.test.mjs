@@ -125,6 +125,60 @@ test('compiled page components render all seven native forms and real registered
   }
 });
 
+async function assertCreationRoundTrips(scenario) {
+  for (const query of scenario.queries) {
+    const initialUrl = `/my-patients/${assignmentId}?${query}`;
+    const initial = await renderCompiledPage('src/pages/my-patients/[assignmentId].astro', { url: initialUrl, oralEnabled: scenario.oralEnabled });
+    const { action, data } = formDataFromHtml(initial.html, 'new-draft');
+    const actionUrl = new URL(action, initial.url);
+    assert.equal(actionUrl.pathname, `/my-patients/${assignmentId}`);
+    assert.equal(actionUrl.searchParams.get('_action'), scenario.name);
+    const fixture = fixtureFetch(scenario.name);
+    const live = await loadRegisteredActions(fixture.fetch);
+    const registered = live.server[scenario.name];
+    const input = registered.input.safeParse(formDataToObject(data, registered.input));
+    assert.equal(input.success, true, `${scenario.name} submitted native form is schema-valid`);
+    const result = await registered.handler(input.data, { cookies: live.cookies });
+    assert.equal(result.success, true, `${scenario.name} handler succeeds`);
+    const mutationPath = scenario.name === 'createKinesiologyEvaluation' ? '/kinesiology-evaluations' : '/oral-surgery-drafts';
+    const mutation = fixture.requests.filter((request) => request.path === mutationPath && request.method === 'POST');
+    assert.equal(mutation.length, 1, `${scenario.name} exactly one create mutation`);
+    assert.deepEqual(mutation[0].body, expectedBodies[scenario.name], `${scenario.name} exact API body`);
+    const createdId = scenario.name === 'createKinesiologyEvaluation' ? result.evaluation.id : result.draft.id;
+    const expectedId = scenario.name === 'createKinesiologyEvaluation' ? recordId : '23';
+    assert.equal(createdId, expectedId);
+
+    const receiving = await renderCompiledPage('src/pages/my-patients/[assignmentId].astro', {
+      url: actionUrl.href,
+      oralEnabled: scenario.oralEnabled,
+      actionResults: { [scenario.name]: { data: result } },
+    });
+    const listFilters = new URLSearchParams(query);
+    const expectedFilters = ['patient_id', 'student_id', 'subject_id', 'academic_group_id']
+      .filter((key) => listFilters.has(key))
+      .map((key) => `&list_${key}=${listFilters.get(key)}`).join('');
+    const expectedTarget = `${scenario.expectedPath(expectedId)}?assignment_id=${assignmentId}&list_limit=${listFilters.get('limit')}&list_offset=${listFilters.get('offset')}${expectedFilters}`;
+    assert.equal(receiving.html, `REDIRECT:${expectedTarget}`, `${scenario.name} receiving-page redirect`);
+  }
+}
+
+test('Kinesiology creation round trip redirects using the real created id and preserves filtered and legacy context', async () => {
+  await assertCreationRoundTrips({
+    name: 'createKinesiologyEvaluation', oralEnabled: false,
+    queries: [`limit=7&offset=14&patient_id=${ids.patient}&student_id=${ids.actor}&subject_id=${ids.subject}&academic_group_id=${ids.group}`, 'limit=50&offset=0'],
+    expectedPath: (id) => `/kinesiology-evaluations/${id}`,
+  });
+});
+
+test('Oral Surgery creation round trip redirects using the real created id and preserves filtered and legacy context', async () => {
+  await assertCreationRoundTrips({
+    name: 'createOralSurgeryDraft', oralEnabled: true,
+    queries: [`limit=7&offset=14&patient_id=${ids.patient}`, 'limit=50&offset=0'],
+    expectedPath: (id) => `/oral-surgery-drafts/${id}`,
+  });
+});
+
+
 test('Kinesiology save redirects from the real handler evaluation and retains filtered and legacy coordinates', async () => {
   const registeredFixture = fixtureFetch('updateKinesiologyEvaluation');
   const { server } = await loadRegisteredActions(registeredFixture.fetch);
@@ -214,12 +268,13 @@ test('Kinesiology editor action URLs resolve against the rendered editor URL and
 test('list and oral surgery draft form actions post back to the rendered route with list context', async () => {
   const listUrl = `http://127.0.0.1:4321/my-patients/${assignmentId}?limit=7&offset=14&patient_id=${ids.patient}`;
   const draftUrl = `http://127.0.0.1:4321/oral-surgery-drafts/${recordId}?${queryWithListState()}`;
-  const carrier = `assignment_id=${assignmentId}&list_limit=7&list_offset=14&list_patient_id=${ids.patient}`;
+  const createCarrier = `assignment_id=${assignmentId}&limit=7&offset=14&patient_id=${ids.patient}`;
+  const editorCarrier = `assignment_id=${assignmentId}&list_limit=7&list_offset=14&list_patient_id=${ids.patient}`;
   const rows = [
-    ['src/pages/my-patients/[assignmentId].astro', { url: listUrl }, 'new-draft', `/my-patients/${assignmentId}?_action=createKinesiologyEvaluation&${carrier}`],
-    ['src/pages/my-patients/[assignmentId].astro', { url: listUrl, oralEnabled: true }, 'new-draft', `/my-patients/${assignmentId}?_action=createOralSurgeryDraft&${carrier}`],
-    ['src/pages/oral-surgery-drafts/[id].astro', { url: draftUrl }, 'draft-form', `/oral-surgery-drafts/${recordId}?_action=updateOralSurgeryDraft&${carrier}`],
-    ['src/pages/oral-surgery-drafts/[id].astro', { url: draftUrl }, 'declare-form', `/oral-surgery-drafts/${recordId}?_action=declareOralSurgeryConsent&${carrier}`],
+    ['src/pages/my-patients/[assignmentId].astro', { url: listUrl }, 'new-draft', `/my-patients/${assignmentId}?_action=createKinesiologyEvaluation&${createCarrier}`],
+    ['src/pages/my-patients/[assignmentId].astro', { url: listUrl, oralEnabled: true }, 'new-draft', `/my-patients/${assignmentId}?_action=createOralSurgeryDraft&${createCarrier}`],
+    ['src/pages/oral-surgery-drafts/[id].astro', { url: draftUrl }, 'draft-form', `/oral-surgery-drafts/${recordId}?_action=updateOralSurgeryDraft&${editorCarrier}`],
+    ['src/pages/oral-surgery-drafts/[id].astro', { url: draftUrl }, 'declare-form', `/oral-surgery-drafts/${recordId}?_action=declareOralSurgeryConsent&${editorCarrier}`],
   ];
   const actual = [];
   for (const [path, options, formId] of rows) {
