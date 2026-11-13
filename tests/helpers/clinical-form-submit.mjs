@@ -145,22 +145,11 @@ export async function renderCompiledPage(path, { url, oralEnabled = false, statu
     request: new Request(pageUrl), response: { headers: new Headers() },
     redirect: (href) => `REDIRECT:${href}`,
   };
-  const parseCoordinates = (params, namespaced = false) => {
-    const prefix = namespaced ? 'list_' : '';
-    const limitKey = namespaced && params.has('list_limit') ? 'list_limit' : 'limit';
-    const offsetKey = namespaced && params.has('list_offset') ? 'list_offset' : 'offset';
-    const filters = Object.fromEntries(['patient_id', 'student_id', 'subject_id', 'academic_group_id']
-      .filter((key) => params.has(`${prefix}${key}`)).map((key) => [key, params.get(`${prefix}${key}`)]));
-    return { filters, limit: Number(params.get(limitKey) ?? 50), offset: Number(params.get(offsetKey) ?? 0) };
-  };
-  const carrier = ({ limit, offset, filters }) => Object.fromEntries([
-    ['list_limit', String(limit)], ['list_offset', String(offset)],
-    ...Object.entries(filters).map(([key, value]) => [`list_${key}`, value]),
-  ]);
   const actionModules = await loadRegisteredActions(async () => Response.json({}));
   const oral = await actionModules.importModule('src/pods/oral-surgery-draft/actions/drafts.ts');
   const evolution = await actionModules.importModule('src/pods/kinesiology-evolution/listing.ts');
   const kinesiology = await actionModules.importModule('src/pods/kinesiology-evaluation/api.ts');
+  const listCoordinates = await actionModules.importModule('src/pods/patient-assignment/list-coordinates.ts');
   const mocks = {
     parseEvolutionListFilters: evolution.parseEvolutionListFilters,
     listKinesiologyEvolutions: async () => [],
@@ -169,9 +158,9 @@ export async function renderCompiledPage(path, { url, oralEnabled = false, statu
     isInputError: () => false,
     decodeJwt: () => actor,
     listAssignedPatients: async (page, _cookies, filters) => ({ items: [{ ...nativeAssignment, ...filters }], limit: page.limit, offset: page.offset }),
-    parseAssignmentListCoordinates: parseCoordinates,
-    assignmentListCarrier: carrier,
-    assignmentListQuery: (coordinates) => new URLSearchParams({ limit: String(coordinates.limit), offset: String(coordinates.offset), ...coordinates.filters }).toString(),
+    parseAssignmentListCoordinates: listCoordinates.parseAssignmentListCoordinates,
+    assignmentListCarrier: listCoordinates.assignmentListCarrier,
+    assignmentListQuery: listCoordinates.assignmentListQuery,
     actionHrefWithContext: kinesiology.actionHrefWithContext,
     EVALUATION_STATUS_LABELS: { draft: 'Borrador', submitted: 'Enviada', validated: 'Validada' },
     antecedentOptionState: (value, present) => ({ unrecorded: !present, unknown: present && value === null, yes: value === true, no: value === false }),

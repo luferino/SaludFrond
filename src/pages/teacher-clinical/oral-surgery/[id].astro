@@ -80,7 +80,7 @@ const returnParams = new URLSearchParams(assignmentListQuery(listCoordinates));
 const assignmentChoices = Astro.url.searchParams.getAll('assignment_id');
 if (assignmentChoices.length === 1 && /^[1-9]\d{0,18}$/.test(assignmentChoices[0])) returnParams.set('assignment_id', assignmentChoices[0]);
 const returnToList = `/teacher-clinical?${returnParams}`;
-const actionHref = actionHrefWithContext(actions.authorizeOralSurgeryDraft.toString(), Object.fromEntries(cleanParams));
+const actionHref = actionHrefWithContext(actions.authorizeOralSurgeryDraft.toString(), Object.fromEntries(cleanParams), Astro.url.href);
 ---
 <Layout>
  <main>

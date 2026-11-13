@@ -72,9 +72,9 @@ const returnParams = new URLSearchParams(assignmentListQuery(listCoordinates));
 const assignmentChoice = Astro.url.searchParams.getAll('assignment_id');
 if (assignmentChoice.length === 1 && /^[1-9]\d{0,18}$/.test(assignmentChoice[0])) returnParams.set('assignment_id', assignmentChoice[0]);
 const listReturnHref = `/teacher-clinical?${returnParams}`;
-const actionHref = actionHrefWithContext(actions.recordTeacherConsent.toString(), Object.fromEntries(cleanParams));
-const validateHref = actionHrefWithContext(actions.validateTeacherSubmission.toString(), Object.fromEntries(cleanParams));
-const correctionHref = actionHrefWithContext(actions.requestTeacherCorrection.toString(), Object.fromEntries(cleanParams));
+const actionHref = actionHrefWithContext(actions.recordTeacherConsent.toString(), Object.fromEntries(cleanParams), Astro.url.href);
+const validateHref = actionHrefWithContext(actions.validateTeacherSubmission.toString(), Object.fromEntries(cleanParams), Astro.url.href);
+const correctionHref = actionHrefWithContext(actions.requestTeacherCorrection.toString(), Object.fromEntries(cleanParams), Astro.url.href);
 const canRecord = !!evaluation && !!consent && teacherGrant(Astro.cookies, 'kinesiology-evaluations:verify-consent');
 const uncertain = resultData?.success === false && resultData.uncertain || !!result?.error && !isInputError(result.error);
 const reviewUncertain = reviewData?.success === false && reviewData.uncertain
