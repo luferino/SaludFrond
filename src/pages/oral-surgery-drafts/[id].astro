@@ -6,6 +6,7 @@ import OralSurgeryReadOnly from '../../components/clinical/OralSurgeryReadOnly.a
 import { ApiError } from '../../shared/apiClient';
 import { listAssignedPatients } from '../../pods/patient-assignment/api';
 import { assignmentListCarrier, assignmentListQuery, parseAssignmentListCoordinates } from '../../pods/patient-assignment/list-coordinates';
+import { clinicalFilterCarrier } from '../../pods/kinesiology-evolution/listing';
 import type { AuthorizationHistory, ConsentHistory, OralSurgeryDraft } from '../../pods/oral-surgery-draft/api';
 import { getAuthorizationHistory, getConsentHistory, getOralSurgeryDraft, validId } from '../../pods/oral-surgery-draft/api';
 import type { FormValues } from '../../pods/oral-surgery-draft/actions/drafts';
@@ -42,6 +43,7 @@ function actionReturnParams(data: { assignment_id: string; limit: string; offset
 		params.set('limit', data.limit);
 		params.set('offset', data.offset);
 	}
+	for (const [key, value] of Object.entries(clinicalFilterCarrier(search))) params.set(key, value);
 	params.set(notice, '1');
 	return params;
 }
@@ -150,9 +152,12 @@ const saved = search.get('saved') === '1';
 const declared = search.get('declared') === '1';
 const coordinates = { limit, offset, filters: listFilters };
 const listCarrier = assignmentListCarrier(coordinates);
-const contextHref = `/my-patients/${encodeURIComponent(assignmentId)}?${assignmentListQuery(coordinates)}`;
+const clinicalCarrier = clinicalFilterCarrier(search);
+const contextParams = new URLSearchParams(assignmentListQuery(coordinates));
+for (const [key, value] of Object.entries(clinicalCarrier)) contextParams.set(key, value);
+const contextHref = `/my-patients/${encodeURIComponent(assignmentId)}?${contextParams}`;
 // Keep the validated assignment-list coordinates on the form post, separate from clinical context.
-const actionContext = { assignment_id: assignmentId, ...listCarrier };
+const actionContext = { assignment_id: assignmentId, ...listCarrier, ...clinicalCarrier };
 const saveHref = actionHrefWithContext(actions.updateOralSurgeryDraft.toString(), actionContext, Astro.url.href);
 const declareHref = actionHrefWithContext(actions.declareOralSurgeryConsent.toString(), actionContext, Astro.url.href);
 ---

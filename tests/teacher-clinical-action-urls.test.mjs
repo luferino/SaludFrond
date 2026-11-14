@@ -44,7 +44,9 @@ async function realHelpers() {
   const { importModule } = await loadRegisteredActions(async () => Response.json({}));
   const kinesiology = await importModule('src/pods/kinesiology-evaluation/api.ts');
   const coordinates = await importModule('src/pods/patient-assignment/list-coordinates.ts');
+  const listing = await importModule('src/pods/kinesiology-evolution/listing.ts');
   return {
+    clinicalFilterCarrier: listing.clinicalFilterCarrier,
     actionHrefWithContext: kinesiology.actionHrefWithContext,
     parseAssignmentListCoordinates: coordinates.parseAssignmentListCoordinates,
     assignmentListCarrier: coordinates.assignmentListCarrier,
@@ -53,11 +55,11 @@ async function realHelpers() {
 }
 
 /** Execute a transformed teacher page with synthetic data; only the page under test is compiled. */
-async function renderTeacherPage(path, { url, mocks: pageMocks }) {
+async function renderTeacherPage(path, { url, mocks: pageMocks, results = {} }) {
   const pageUrl = new URL(url);
   const Astro = {
     params: { id }, url: pageUrl, cookies: {}, request: new Request(pageUrl), response: { headers: new Headers() },
-    getActionResult: () => undefined, redirect: (location) => `REDIRECT:${location}`,
+    getActionResult: (action) => results[Object.keys(actions).find((name) => actions[name] === action)], redirect: (location) => `REDIRECT:${location}`,
   };
   const mocks = {
     ...await realHelpers(), actions, isInputError: () => false,
@@ -97,9 +99,9 @@ test('teacher-clinical detail forms post back to the rendered detail route, not 
   });
   const route = `/teacher-clinical/${id}`;
   assert.deepEqual(formActions(page.html), [
-    `${route}?_action=recordTeacherConsent&${context}&${listContext}`,
-    `${route}?_action=validateTeacherSubmission&${context}&${listContext}`,
-    `${route}?_action=requestTeacherCorrection&${context}&${listContext}`,
+    `${route}?_action=recordTeacherConsent&${context}&${listContext}&assignment_id=17`,
+    `${route}?_action=validateTeacherSubmission&${context}&${listContext}&assignment_id=17`,
+    `${route}?_action=requestTeacherCorrection&${context}&${listContext}&assignment_id=17`,
   ]);
 });
 
@@ -115,4 +117,54 @@ test('teacher oral surgery authorization form posts back to the rendered draft r
   assert.deepEqual(formActions(page.html), [
     `/teacher-clinical/oral-surgery/${id}?_action=authorizeOralSurgeryDraft&${context}&${listContext}`,
   ]);
+});
+
+// Clinical filter return (T1): origin detail keeps filters in «Volver» and action URLs, and redirects keep them with assignment_id.
+const clinicalFilters = 'status=draft&date_from=2026-01-01&date_to=2026-02-01&evaluation_id=7';
+const originMocks = {
+  getTeacherEvaluation: async () => evaluation,
+  getConsent: async () => ({ evaluation_id: id, status: 'pending', evidence: null }),
+  listTeacherSubmissions: async () => ({ evaluation_id: id, items: [submission] }),
+  listTeacherCorrections: async () => ({ evaluation_id: id, items: [] }),
+};
+const backHref = (html) => new URL(html.match(/href="(\/teacher-clinical\?[^"]*)"[^>]*>Volver/)[1].replaceAll('&amp;', '&'), origin).searchParams;
+
+test('RED (c) teacher origin «Volver» and action URLs carry clinical filters; form bodies gain no filter fields', async () => {
+  const page = await renderTeacherPage('src/pages/teacher-clinical/[id].astro', {
+    url: `${origin}/teacher-clinical/${id}?${context}&assignment_id=17&${listContext}&${clinicalFilters}`, mocks: originMocks,
+  });
+  const back = backHref(page.html);
+  assert.equal(back.get('status'), 'draft');
+  assert.equal(back.get('date_from'), '2026-01-01');
+  assert.equal(back.get('date_to'), '2026-02-01');
+  assert.equal(back.get('evaluation_id'), '7');
+  assert.equal(back.get('assignment_id'), '17');
+  assert.equal(back.get('limit'), '50');
+  for (const action of formActions(page.html)) assert.match(action, /status=draft&date_from=2026-01-01&date_to=2026-02-01&evaluation_id=7/);
+  // The POST URL is the only source the success redirect reads, so it must carry the assignment choice too.
+  for (const action of formActions(page.html)) assert.equal(new URL(action.replaceAll('&amp;', '&'), origin).searchParams.get('assignment_id'), '17');
+  assert.doesNotMatch(page.html, /name="(status|date_from|date_to|evaluation_id|assignment_id)"/);
+});
+
+test('RED (d) teacher origin consent and validation redirects keep clinical filters and a valid assignment_id', async () => {
+  const url = `${origin}/teacher-clinical/${id}?${context}&${listContext}&assignment_id=17&${clinicalFilters}`;
+  const consent = await renderTeacherPage('src/pages/teacher-clinical/[id].astro', { url, results: { recordTeacherConsent: { data: { success: true, id, patient_id: patient, subject_id: subject, academic_group_id: group, list_limit: '50', list_offset: '0' } } } });
+  assert.ok(consent.html.startsWith(`REDIRECT:/teacher-clinical/${id}?`), consent.html);
+  const consentParams = new URL(consent.html.slice('REDIRECT:'.length), origin).searchParams;
+  assert.equal(consentParams.get('assignment_id'), '17');
+  assert.equal(consentParams.get('status'), 'draft');
+  assert.equal(consentParams.get('evaluation_id'), '7');
+  assert.equal(consentParams.get('recorded'), '1');
+  const validated = await renderTeacherPage('src/pages/teacher-clinical/[id].astro', { url, results: { validateTeacherSubmission: { data: { success: true, id, outcome: 'validated', context: { patient_id: patient, subject_id: subject, academic_group_id: group }, list_limit: '50', list_offset: '0' } } } });
+  const validatedParams = new URL(validated.html.slice('REDIRECT:'.length), origin).searchParams;
+  assert.equal(validatedParams.get('assignment_id'), '17');
+  assert.equal(validatedParams.get('status'), 'draft');
+  assert.equal(validatedParams.get('reviewed'), 'validated');
+});
+
+test('no-filter teacher origin «Volver» and redirect keep their exact existing URLs', async () => {
+  const page = await renderTeacherPage('src/pages/teacher-clinical/[id].astro', { url: `${origin}/teacher-clinical/${id}?${context}&${listContext}`, mocks: originMocks });
+  assert.match(page.html, /href="\/teacher-clinical\?limit=50&amp;offset=0"[^>]*>Volver/);
+  const redirect = await renderTeacherPage('src/pages/teacher-clinical/[id].astro', { url: `${origin}/teacher-clinical/${id}?${context}&${listContext}`, results: { recordTeacherConsent: { data: { success: true, id, patient_id: patient, subject_id: subject, academic_group_id: group, list_limit: '50', list_offset: '0' } } } });
+  assert.equal(redirect.html, `REDIRECT:/teacher-clinical/${id}?patient_id=${patient}&subject_id=${subject}&academic_group_id=${group}&list_limit=50&list_offset=0&recorded=1`);
 });

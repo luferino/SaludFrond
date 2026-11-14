@@ -6,6 +6,7 @@ import { ApiError } from '../../../shared/apiClient';
 import { teacherGrant, parseClinicalContext } from '../../../pods/teacher-clinical/api';
 import { getTeacherCrossContextSnapshot, loadOriginNames } from '../../../pods/teacher-clinical/cross-context';
 import { assignmentListQuery, parseAssignmentListCoordinates } from '../../../pods/patient-assignment/list-coordinates';
+import { clinicalFilterCarrier } from '../../../pods/kinesiology-evolution/listing';
 Astro.response.headers.set('Cache-Control', 'no-store');
 const allowed = teacherGrant(Astro.cookies, 'patient-assignments:read') && teacherGrant(Astro.cookies, 'kinesiology-evaluations:read');
 let snapshot: Awaited<ReturnType<typeof getTeacherCrossContextSnapshot>> | null = null;
@@ -19,6 +20,7 @@ try {
   const params = new URLSearchParams(assignmentListQuery(coordinates));
   const choices = Astro.url.searchParams.getAll('assignment_id');
   if (choices.length === 1 && /^[1-9]\d{0,18}$/.test(choices[0])) params.set('assignment_id', choices[0]);
+  for (const [key, value] of Object.entries(clinicalFilterCarrier(Astro.url.searchParams))) params.set(key, value);
   returnHref = `/teacher-clinical?${params}`;
   snapshot = await getTeacherCrossContextSnapshot(Astro.params.id ?? '', context, Astro.cookies);
   originNames = await loadOriginNames([snapshot], Astro.cookies);

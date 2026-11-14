@@ -324,3 +324,101 @@ test('legacy no-filter HTML forms remain schema-valid and removing the required 
     assert.equal(fixture.requests.length, 0, `${name} schema rejection prevents handler/API calls`);
   }
 });
+
+// Clinical filter return (T1): plain filter names travel beside list_* coordinates on every student link, Volver, action URL and redirect.
+const submittedId = '9223372036854775700';
+const amendedId = '9223372036854775600';
+const filterQuery = 'status=draft&date_from=2026-01-01&date_to=2026-02-01&evaluation_id=9223372036854775700';
+const dateQuery = 'date_from=2026-01-01&date_to=2026-02-01';
+const listUrlWithFilters = `http://127.0.0.1:4321/my-patients/${assignmentId}?limit=7&offset=14&patient_id=${ids.patient}&${filterQuery}`;
+const pageUrlWithFilters = `/kinesiology-evaluations/${recordId}?${queryWithListState()}&${filterQuery}`;
+const oralUrlWithFilters = `/oral-surgery-drafts/${recordId}?${queryWithListState()}&${filterQuery}`;
+const filterExpectation = (params) => {
+  assert.equal(params.get('status'), 'draft');
+  assert.equal(params.get('date_from'), '2026-01-01');
+  assert.equal(params.get('date_to'), '2026-02-01');
+  assert.equal(params.get('evaluation_id'), '9223372036854775700');
+};
+
+/** Searches for the href of the first anchor whose target contains the fragment and returns its query. */
+function hrefParams(html, fragment) {
+  const href = [...html.matchAll(/href="([^"]*)"/g)].map(([, value]) => value.replaceAll('&amp;', '&')).find((value) => value.includes(fragment));
+  assert.ok(href, `missing link ${fragment}`);
+  return new URL(href, 'https://fixture.invalid').searchParams;
+}
+
+test('RED (b) student list links to evaluation, submitted record and oral surgery keep the applied clinical filters', async () => {
+  const kinesiology = await renderCompiledPage('src/pages/my-patients/[assignmentId].astro', { url: listUrlWithFilters, submitted: [{ ...evaluation('submitted'), id: submittedId }] });
+  for (const fragment of [`/kinesiology-evaluations/${recordId}?`, `/kinesiology-evaluations/${submittedId}?`]) {
+    const params = hrefParams(kinesiology.html, fragment);
+    filterExpectation(params);
+    assert.equal(params.get('list_limit'), '7');
+    assert.equal(params.get('list_offset'), '14');
+  }
+  const oral = await renderCompiledPage('src/pages/my-patients/[assignmentId].astro', { url: `http://127.0.0.1:4321/my-patients/${assignmentId}?limit=7&offset=14&patient_id=${ids.patient}&${dateQuery}`, oralEnabled: true, oralDrafts: [{ ...oralDraft('1'), id: recordId }] });
+  const params = hrefParams(oral.html, `/oral-surgery-drafts/${recordId}?`);
+  assert.equal(params.get('date_from'), '2026-01-01');
+  assert.equal(params.get('date_to'), '2026-02-01');
+  assert.equal(params.get('list_limit'), '7');
+});
+
+test('RED (c) student detail «Volver» restores clinical filters beside list coordinates and assignment_id', async () => {
+  const evaluationPage = await renderCompiledPage('src/pages/kinesiology-evaluations/[id].astro', { url: pageUrlWithFilters });
+  const back = hrefParams(evaluationPage.html, `/my-patients/${assignmentId}?`);
+  filterExpectation(back);
+  assert.equal(back.get('limit'), '7');
+  assert.equal(back.get('offset'), '14');
+  const oralPage = await renderCompiledPage('src/pages/oral-surgery-drafts/[id].astro', { url: oralUrlWithFilters });
+  filterExpectation(hrefParams(oralPage.html, `/my-patients/${assignmentId}?`));
+});
+
+test('RED (d) student action URLs carry the filters while form bodies stay identical to the no-filter form', async () => {
+  for (const [path, url, formId] of [
+    ['src/pages/kinesiology-evaluations/[id].astro', pageUrlWithFilters, 'evaluation-form'],
+    ['src/pages/oral-surgery-drafts/[id].astro', oralUrlWithFilters, 'draft-form'],
+  ]) {
+    const withFilters = formDataFromHtml((await renderCompiledPage(path, { url })).html, formId);
+    const plain = formDataFromHtml((await renderCompiledPage(path, { url: url.split('&status=')[0] })).html, formId);
+    filterExpectation(new URL(withFilters.action, 'https://fixture.invalid').searchParams);
+    assert.deepEqual([...withFilters.data.entries()], [...plain.data.entries()], formId);
+    assert.doesNotMatch(plain.action, /status=|date_from=|evaluation_id=/);
+  }
+});
+
+test('RED (d) student create, save, submit, amend and declare redirects keep the clinical filters', async () => {
+  const cases = [
+    ['src/pages/my-patients/[assignmentId].astro', listUrlWithFilters, { createKinesiologyEvaluation: { data: { success: true, evaluation: { id: recordId } } } }, `/kinesiology-evaluations/${recordId}?`],
+    ['src/pages/kinesiology-evaluations/[id].astro', pageUrlWithFilters, { updateKinesiologyEvaluation: { data: { success: true, evaluation: { id: recordId }, assignment_id: assignmentId, list_limit: '7', list_offset: '14' } } }, `/kinesiology-evaluations/${recordId}?`],
+    ['src/pages/kinesiology-evaluations/[id].astro', pageUrlWithFilters, { submitKinesiologyEvaluation: { data: { success: true, id: recordId, assignment_id: assignmentId, list_limit: '7', list_offset: '14' } } }, `/kinesiology-evaluations/${recordId}?`],
+    ['src/pages/kinesiology-evaluations/[id].astro', pageUrlWithFilters, { createKinesiologyAmendment: { data: { success: true, id: amendedId, assignment_id: assignmentId, list_limit: '7', list_offset: '14' } } }, `/kinesiology-evaluations/${amendedId}?`],
+    ['src/pages/oral-surgery-drafts/[id].astro', oralUrlWithFilters, { updateOralSurgeryDraft: { data: { success: true, id: recordId, assignment_id: assignmentId, limit: '7', offset: '14' } } }, `/oral-surgery-drafts/${recordId}?`],
+    ['src/pages/oral-surgery-drafts/[id].astro', oralUrlWithFilters, { declareOralSurgeryConsent: { data: { success: true, id: recordId, assignment_id: assignmentId, limit: '7', offset: '14' } } }, `/oral-surgery-drafts/${recordId}?`],
+  ];
+  for (const [path, url, actionResults, prefix] of cases) {
+    const page = await renderCompiledPage(path, { url, actionResults });
+    assert.ok(page.html.startsWith(`REDIRECT:${prefix}`), page.html);
+    filterExpectation(new URL(page.html.slice('REDIRECT:'.length), 'https://fixture.invalid').searchParams);
+  }
+});
+
+test('RED (e) student amendment-of link keeps the clinical filters beside assignment and list coordinates', async () => {
+  const page = await renderCompiledPage('src/pages/kinesiology-evaluations/[id].astro', { url: pageUrlWithFilters, amendmentOf: amendedId });
+  const params = hrefParams(page.html, `/kinesiology-evaluations/${amendedId}?`);
+  filterExpectation(params);
+  assert.equal(params.get('assignment_id'), assignmentId);
+  assert.equal(params.get('list_limit'), '7');
+});
+
+test('no-filter student «Volver» keeps the exact list-coordinate URL', async () => {
+  const page = await renderCompiledPage('src/pages/kinesiology-evaluations/[id].astro', { url: `/kinesiology-evaluations/${recordId}?${queryWithListState()}` });
+  assert.ok(page.html.includes(`href="/my-patients/${assignmentId}?limit=7&amp;offset=14&amp;patient_id=${ids.patient}"`));
+});
+
+test('RED (b) student create-draft form actions carry the clinical filters while the hidden body keeps only list coordinates', async () => {
+  const page = await renderCompiledPage('src/pages/my-patients/[assignmentId].astro', { url: listUrlWithFilters });
+  const form = formDataFromHtml(page.html, 'new-draft');
+  filterExpectation(new URL(form.action, 'https://fixture.invalid').searchParams);
+  assert.deepEqual([...form.data.keys()].filter((name) => /^(status|date_from|date_to|evaluation_id)$/.test(name)), []);
+  const oral = await renderCompiledPage('src/pages/my-patients/[assignmentId].astro', { url: `http://127.0.0.1:4321/my-patients/${assignmentId}?${dateQuery}`, oralEnabled: true });
+  assert.equal(new URL(formDataFromHtml(oral.html, 'new-draft').action, 'https://fixture.invalid').searchParams.get('date_from'), '2026-01-01');
+});

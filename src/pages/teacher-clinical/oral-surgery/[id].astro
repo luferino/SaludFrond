@@ -9,6 +9,7 @@ import { parseClinicalContext, teacherGrant, type ClinicalContext } from '../../
 import { getAuthorizationHistory, getConsentHistory, getOralSurgeryDraft, type AuthorizationHistory, type ConsentHistory, type OralSurgeryDraft } from '../../../pods/oral-surgery-draft/api';
 import { oralSurgeryTimestampLabel } from '../../../pods/oral-surgery-draft/labels';
 import { assignmentListCarrier, assignmentListQuery, parseAssignmentListCoordinates } from '../../../pods/patient-assignment/list-coordinates';
+import { clinicalFilterCarrier } from '../../../pods/kinesiology-evolution/listing';
 
 Astro.response.headers.set('Cache-Control', 'no-store');
 const UNAVAILABLE = 'El borrador no está disponible en este contexto de origen.';
@@ -27,7 +28,7 @@ if (resultData?.success === false && /sesión venció/i.test(resultData.error)) 
 if (resultData?.success) {
  const coordinates = parseAssignmentListCoordinates(Astro.url.searchParams, true);
  const carriesListState = [...Astro.url.searchParams.keys()].some((key) => key.startsWith('list_'));
- const returnParams = new URLSearchParams({ patient_id: resultData.patient_id, subject_id: resultData.subject_id, academic_group_id: resultData.academic_group_id, ...(carriesListState ? assignmentListCarrier(coordinates) : {}), authorized: '1' });
+ const returnParams = new URLSearchParams({ patient_id: resultData.patient_id, subject_id: resultData.subject_id, academic_group_id: resultData.academic_group_id, ...(carriesListState ? assignmentListCarrier(coordinates) : {}), ...clinicalFilterCarrier(Astro.url.searchParams), authorized: '1' });
  return Astro.redirect(`/teacher-clinical/oral-surgery/${resultData.id}?${returnParams}`);
 }
 const allowed = teacherGrant(Astro.cookies, 'oral-surgery-drafts:read');
@@ -75,10 +76,12 @@ const authorizedForVersion = !!draft && authorizations?.authorizations.find((ite
 const declarationId = consent?.current_declaration_id ?? null;
 const canShowForm = canAuthorize && !!draft && versionsMatch && declarationId !== null && !authorizedForVersion && !uncertain;
 const listCarrier = assignmentListCarrier(listCoordinates);
-const cleanParams = draft ? new URLSearchParams({ patient_id: draft.patient_id, subject_id: draft.origin_subject_id, academic_group_id: draft.origin_group_id, ...listCarrier }) : new URLSearchParams(listCarrier);
+const clinicalCarrier = clinicalFilterCarrier(Astro.url.searchParams);
+const cleanParams = draft ? new URLSearchParams({ patient_id: draft.patient_id, subject_id: draft.origin_subject_id, academic_group_id: draft.origin_group_id, ...listCarrier, ...clinicalCarrier }) : new URLSearchParams(listCarrier);
 const returnParams = new URLSearchParams(assignmentListQuery(listCoordinates));
 const assignmentChoices = Astro.url.searchParams.getAll('assignment_id');
 if (assignmentChoices.length === 1 && /^[1-9]\d{0,18}$/.test(assignmentChoices[0])) returnParams.set('assignment_id', assignmentChoices[0]);
+for (const [key, value] of Object.entries(clinicalCarrier)) returnParams.set(key, value);
 const returnToList = `/teacher-clinical?${returnParams}`;
 const actionHref = actionHrefWithContext(actions.authorizeOralSurgeryDraft.toString(), Object.fromEntries(cleanParams), Astro.url.href);
 ---

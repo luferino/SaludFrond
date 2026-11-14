@@ -8,6 +8,7 @@ import { ApiError } from '../../shared/apiClient';
 import { getConsent, getTeacherEvaluation, listTeacherCorrections, listTeacherSubmissions, parseClinicalContext, teacherGrant, type ConsentState } from '../../pods/teacher-clinical/api';
 import { type CorrectionEvent, type Evaluation, type Submission, actionHrefWithContext } from '../../pods/kinesiology-evaluation/api';
 import { assignmentListCarrier, assignmentListQuery, parseAssignmentListCoordinates } from '../../pods/patient-assignment/list-coordinates';
+import { clinicalFilterCarrier } from '../../pods/kinesiology-evolution/listing';
 Astro.response.headers.set('Cache-Control', 'no-store');
 let evaluation: Evaluation | null = null;
 let error = '';
@@ -27,13 +28,18 @@ const actionError = result?.error ? (isInputError(result.error) ? 'Revisá los c
 const reviewError = reviewResult?.error ? (isInputError(reviewResult.error) ? 'Revisá los campos de la revisión.' : 'No se pudo confirmar la revisión. Actualizá el estado antes de volver a decidir.') : reviewData?.success === false ? reviewData.error : '';
 const correctionError = correctionResult?.error ? (isInputError(correctionResult.error) ? 'Revisá los campos de la corrección.' : 'No se pudo confirmar la solicitud. Actualizá el estado antes de volver a decidir.') : correctionData?.success === false ? correctionData.error : '';
 if (resultData?.success === false && /sesión venció/i.test(resultData.error) || reviewData?.success === false && /sesión venció/i.test(reviewData.error) || correctionData?.success === false && /sesión venció/i.test(correctionData.error)) return Astro.redirect('/auth/login?returnTo=%2Fteacher-clinical');
+// Origin redirects and the back link keep the valid assignment choice and clinical filters the action URL carried.
+const assignmentChoice = Astro.url.searchParams.getAll('assignment_id');
+const validAssignment = assignmentChoice.length === 1 && /^[1-9]\d{0,18}$/.test(assignmentChoice[0]) ? assignmentChoice[0] : '';
+const clinicalCarrier = clinicalFilterCarrier(Astro.url.searchParams);
+const originCarrier = { ...(validAssignment ? { assignment_id: validAssignment } : {}), ...clinicalCarrier };
 if (resultData?.success) {
- const returnParams = new URLSearchParams({ patient_id: resultData.patient_id, subject_id: resultData.subject_id, academic_group_id: resultData.academic_group_id, ...Object.fromEntries(Object.entries(resultData).filter(([key]) => key.startsWith('list_')).map(([key,value]) => [key,String(value)])) });
+ const returnParams = new URLSearchParams({ patient_id: resultData.patient_id, subject_id: resultData.subject_id, academic_group_id: resultData.academic_group_id, ...originCarrier, ...Object.fromEntries(Object.entries(resultData).filter(([key]) => key.startsWith('list_')).map(([key,value]) => [key,String(value)])) });
  return Astro.redirect(`/teacher-clinical/${resultData.id}?${returnParams}&recorded=1`);
 }
 const confirmedReview = reviewData?.success ? reviewData : correctionData?.success ? correctionData : null;
 if (confirmedReview) {
- const returnParams = new URLSearchParams({ patient_id: confirmedReview.context.patient_id, subject_id: confirmedReview.context.subject_id, academic_group_id: confirmedReview.context.academic_group_id, ...Object.fromEntries(Object.entries(confirmedReview).filter(([key]) => key.startsWith('list_')).map(([key,value]) => [key,String(value)])) });
+ const returnParams = new URLSearchParams({ patient_id: confirmedReview.context.patient_id, subject_id: confirmedReview.context.subject_id, academic_group_id: confirmedReview.context.academic_group_id, ...originCarrier, ...Object.fromEntries(Object.entries(confirmedReview).filter(([key]) => key.startsWith('list_')).map(([key,value]) => [key,String(value)])) });
  return Astro.redirect(`/teacher-clinical/${confirmedReview.id}?${returnParams}&reviewed=${confirmedReview.outcome}`);
 }
 const allowed = teacherGrant(Astro.cookies, 'kinesiology-evaluations:read');
@@ -66,11 +72,11 @@ try {
  error = failure instanceof ApiError && failure.status === 403 ? 'No tenés permiso vigente para consultar esta ficha.' : 'No se pudo cargar la ficha en este contexto de origen.';
 }
 const listCarrier = assignmentListCarrier(listCoordinates);
-const cleanParams = evaluation ? new URLSearchParams({ patient_id: evaluation.patient_id, subject_id: evaluation.origin_subject_id, academic_group_id: evaluation.origin_group_id, ...listCarrier }) : new URLSearchParams(listCarrier);
+const cleanParams = evaluation ? new URLSearchParams({ patient_id: evaluation.patient_id, subject_id: evaluation.origin_subject_id, academic_group_id: evaluation.origin_group_id, ...listCarrier, ...originCarrier }) : new URLSearchParams(listCarrier);
 const stateHref = `/teacher-clinical/${Astro.params.id}?${cleanParams}`;
 const returnParams = new URLSearchParams(assignmentListQuery(listCoordinates));
-const assignmentChoice = Astro.url.searchParams.getAll('assignment_id');
-if (assignmentChoice.length === 1 && /^[1-9]\d{0,18}$/.test(assignmentChoice[0])) returnParams.set('assignment_id', assignmentChoice[0]);
+if (validAssignment) returnParams.set('assignment_id', validAssignment);
+for (const [key, value] of Object.entries(clinicalCarrier)) returnParams.set(key, value);
 const listReturnHref = `/teacher-clinical?${returnParams}`;
 const actionHref = actionHrefWithContext(actions.recordTeacherConsent.toString(), Object.fromEntries(cleanParams), Astro.url.href);
 const validateHref = actionHrefWithContext(actions.validateTeacherSubmission.toString(), Object.fromEntries(cleanParams), Astro.url.href);

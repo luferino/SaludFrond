@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import { createRequire } from 'node:module';
 import { z } from 'astro/zod';
+import { realListingModule } from './helpers/clinical-form-submit.mjs';
 
 const root = new URL('../', import.meta.url);
 const require = createRequire(import.meta.resolve('astro/package.json'));
@@ -53,6 +54,8 @@ const submission = (overrides = {}) => ({
 });
 const submitInput = () => ({ id: largeId, assignment_id: '17', limit: '50', offset: '0' });
 const assignmentPage = { status: 200, body: { items: [assignment()], limit: 50, offset: 0 } };
+
+const listing = await realListingModule();
 
 async function evaluate(path, options = {}) {
  const requests = [], writes = [];
@@ -159,6 +162,7 @@ async function evaluatePageFrontmatter(path, options = {}) {
   ApiError: FakeApiError,
   listAssignedPatients: options.listAssignedPatients ?? (async () => ({ items: [assignment()], limit: 50, offset: 0 })),
   parseAssignmentPagination: (params) => ({ limit: Number(params.get('limit') ?? 50), offset: Number(params.get('offset') ?? 0) }),
+  clinicalFilterCarrier: listing.clinicalFilterCarrier,
   parseEvolutionListFilters: (params) => Object.fromEntries(['status','date_from','date_to','evaluation_id'].filter((key) => params.has(key) && params.get(key)).map((key) => [key, params.get(key)])),
   parseAssignmentListCoordinates: options.actualParser ? await actualListCoordinatesParser() : (params, namespaced = false) => ({ filters: Object.fromEntries(['patient_id','student_id','subject_id','academic_group_id'].flatMap((key) => { const k = `${namespaced ? 'list_' : ''}${key}`; const values = params.getAll(k); if (values.length > 1 || [...params.keys()].some((name) => name.startsWith(`${k}[`) || name.startsWith(`${k}.`))) throw Error('invalid'); return values.length && values[0] ? [[key, values[0]]] : []; })), limit: Number(params.get(namespaced ? 'list_limit' : 'limit') ?? 50), offset: Number(params.get(namespaced ? 'list_offset' : 'offset') ?? 0) }),
   assignmentListCarrier: (coordinates) => Object.fromEntries([['list_limit',String(coordinates.limit)],['list_offset',String(coordinates.offset)], ...Object.entries(coordinates.filters).map(([key,value]) => [`list_${key}`,value])]),

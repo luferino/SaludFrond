@@ -6,6 +6,7 @@ import SubmissionSnapshot from '../../components/clinical/SubmissionSnapshot.ast
 import { ApiError } from '../../shared/apiClient';
 import { listAssignedPatients } from '../../pods/patient-assignment/api';
 import { assignmentListCarrier, assignmentListQuery, parseAssignmentListCoordinates } from '../../pods/patient-assignment/list-coordinates';
+import { clinicalFilterCarrier } from '../../pods/kinesiology-evolution/listing';
 import { actionHrefWithContext, antecedentOptionState, EVALUATION_STATUS_LABELS, getEvaluation, listCorrections, listSubmissions, type CorrectionEvent, type Evaluation, type EvaluationContent, type Submission } from '../../pods/kinesiology-evaluation/api';
 import { rawEvaluationContentFromForm } from '../../pods/kinesiology-evaluation/actions/evaluations';
 import { decodeJwt } from '../../shared/jwt';
@@ -57,6 +58,7 @@ if (submitData?.success) {
 		returnParams.set('limit', submitData.limit);
 		returnParams.set('offset', submitData.offset);
 	}
+	for (const [key, value] of Object.entries(clinicalFilterCarrier(search))) returnParams.set(key, value);
 	returnParams.set('submitted', '1');
 	return Astro.redirect(`/kinesiology-evaluations/${encodeURIComponent(submitData.id)}?${returnParams}`);
 }
@@ -77,6 +79,7 @@ if (amendData?.success) {
 		returnParams.set('limit', amendData.limit);
 		returnParams.set('offset', amendData.offset);
 	}
+	for (const [key, value] of Object.entries(clinicalFilterCarrier(search))) returnParams.set(key, value);
 	returnParams.set('amended', '1');
 	return Astro.redirect(`/kinesiology-evaluations/${encodeURIComponent(amendData.id)}?${returnParams}`);
 }
@@ -163,26 +166,31 @@ if (result?.data?.success && evaluation) {
 		returnParams.set('limit', savedData.limit);
 		returnParams.set('offset', savedData.offset);
 	}
+	for (const [key, value] of Object.entries(clinicalFilterCarrier(search))) returnParams.set(key, value);
 	returnParams.set('saved', '1');
 	return Astro.redirect(`/kinesiology-evaluations/${encodeURIComponent(savedData.evaluation.id)}?${returnParams}`);
 }
 coordinates = { limit, offset, filters: listFilters };
 const listCarrier = assignmentListCarrier(coordinates);
-const contextHref = `/my-patients/${encodeURIComponent(assignmentId)}?${assignmentListQuery(coordinates)}`;
+const clinicalCarrier = clinicalFilterCarrier(search);
+const contextParams = new URLSearchParams(assignmentListQuery(coordinates));
+for (const [key, value] of Object.entries(clinicalCarrier)) contextParams.set(key, value);
+const contextHref = `/my-patients/${encodeURIComponent(assignmentId)}?${contextParams}`;
 const actionHref = actionHrefWithContext(actions.updateKinesiologyEvaluation.toString(), {
 	assignment_id: assignmentId,
 	...listCarrier,
+	...clinicalCarrier,
 }, Astro.url.href);
-const submitHref = actionHrefWithContext(actions.submitKinesiologyEvaluation.toString(), { assignment_id: assignmentId, ...listCarrier }, Astro.url.href);
+const submitHref = actionHrefWithContext(actions.submitKinesiologyEvaluation.toString(), { assignment_id: assignmentId, ...listCarrier, ...clinicalCarrier }, Astro.url.href);
 const c = retainedContent ?? evaluation?.content ?? {};
 const antecedents = c.antecedents ?? {};
 const antecedentKeys = Object.keys(antecedents).join(',');
 const saved = search.getAll('saved').length === 1 && search.get('saved') === '1';
 const justSubmitted = search.getAll('submitted').length === 1 && search.get('submitted') === '1';
 const justAmended = search.getAll('amended').length === 1 && search.get('amended') === '1';
-const amendHref = actionHrefWithContext(actions.createKinesiologyAmendment.toString(), { assignment_id: assignmentId, ...listCarrier }, Astro.url.href);
+const amendHref = actionHrefWithContext(actions.createKinesiologyAmendment.toString(), { assignment_id: assignmentId, ...listCarrier, ...clinicalCarrier }, Astro.url.href);
 const amendmentOfHref = evaluation?.amendment_of_evaluation_id
-	? `/kinesiology-evaluations/${encodeURIComponent(evaluation.amendment_of_evaluation_id)}?assignment_id=${encodeURIComponent(assignmentId)}&${new URLSearchParams(listCarrier)}`
+	? `/kinesiology-evaluations/${encodeURIComponent(evaluation.amendment_of_evaluation_id)}?assignment_id=${encodeURIComponent(assignmentId)}&${new URLSearchParams({ ...listCarrier, ...clinicalCarrier })}`
 	: '';
 const textFields = [
 	['admission_status', 'Estado al ingreso'], ['occupation', 'Ocupación'],

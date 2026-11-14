@@ -4,6 +4,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
 import { createRequire } from 'node:module';
+import { realListingModule } from './helpers/clinical-form-submit.mjs';
 
 const require = createRequire(import.meta.resolve('astro/package.json'));
 const { transform } = require('@astrojs/compiler');
@@ -142,6 +143,8 @@ const oralDraft = (overrides = {}) => ({
 });
 
 /** Render the real student assignment page; each collaborator is an isolated, recorded mock. */
+const listing = await realListingModule();
+
 async function renderAssignment(options = {}) {
  const requests = [];
  const oralListings = [];
@@ -162,6 +165,7 @@ async function renderAssignment(options = {}) {
    if (params.has('evaluation_id') && !/^[1-9]\d*$/.test(params.get('evaluation_id'))) throw new Error('El filtro de evaluación no es válido.');
    return Object.fromEntries(['status','date_from','date_to','evaluation_id'].filter((key) => params.has(key) && params.get(key)).map((key) => [key, params.get(key)]));
   },
+  clinicalFilterCarrier: listing.clinicalFilterCarrier,
   parseAssignmentListCoordinates: (params) => ({ filters: Object.fromEntries(['patient_id','student_id','subject_id','academic_group_id'].flatMap((key) => { const values = params.getAll(key); if (values.length > 1 || [...params.keys()].some((name) => name.startsWith(`${key}[`) || name.startsWith(`${key}.`))) throw Error('invalid'); return values.length ? [[key,values[0]]] : []; })), limit: Number(params.get('limit') ?? 50), offset: Number(params.get('offset') ?? 0) }),
   assignmentListCarrier: (coordinates) => Object.fromEntries([['list_limit',String(coordinates.limit)],['list_offset',String(coordinates.offset)], ...Object.entries(coordinates.filters).map(([key,value])=>[`list_${key}`,value])]),
   assignmentListQuery: (coordinates) => new URLSearchParams({limit:String(coordinates.limit),offset:String(coordinates.offset),...coordinates.filters}).toString(),

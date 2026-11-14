@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import test from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
+import { realListingModule } from './helpers/clinical-form-submit.mjs';
 
 const require = createRequire(import.meta.resolve('astro/package.json'));
 const { transform } = require('@astrojs/compiler');
@@ -119,6 +120,7 @@ async function loadCjs(path) {
 }
 const labels = await loadCjs('src/pods/oral-surgery-draft/labels.ts');
 const listCoordinates = await loadCjs('src/pods/patient-assignment/list-coordinates.ts');
+const listing = await realListingModule();
 
 async function html(value) {
  value = await value;
@@ -169,6 +171,7 @@ async function renderPage(options = {}) {
  const mocks = {
   ...helpers,
   ...listCoordinates,
+  clinicalFilterCarrier: listing.clinicalFilterCarrier,
   oralSurgeryTimestampLabel: labels.oralSurgeryTimestampLabel,
   Layout: null, Fragment: null, OralSurgeryReadOnly: readOnlyComponent, ApiError: FixtureApiError,
   actions: { authorizeOralSurgeryDraft: 'authorize' },
@@ -462,4 +465,31 @@ test('D9 browser handler disables the authorize submit on the first click and bl
  assert.equal(button.disabled, true);
  handler({ preventDefault() { prevented++; } });
  assert.equal(prevented, 1);
+});
+
+// Clinical filter return (T1): the teacher oral detail keeps date filters in «Volver» and in the authorization redirect.
+const oralDateQuery = 'date_from=2026-01-01&date_to=2026-02-01';
+
+test('RED (c) teacher oral surgery «Volver» restores date filters beside list coordinates and assignment_id', async () => {
+ const result = await renderPage({ query: `${query}&assignment_id=17&list_limit=7&list_offset=14&${oralDateQuery}` });
+ const back = new URL(result.html.match(/href="(\/teacher-clinical\?[^"]*)"[^>]*>Volver/)[1].replaceAll('&amp;', '&'), 'https://fixture.invalid').searchParams;
+ assert.equal(back.get('date_from'), '2026-01-01');
+ assert.equal(back.get('date_to'), '2026-02-01');
+ assert.equal(back.get('assignment_id'), '17');
+ assert.equal(back.get('limit'), '7');
+ assert.equal(back.get('offset'), '14');
+});
+
+test('RED (d) teacher oral surgery authorization redirect keeps the date filters', async () => {
+ const result = await renderPage({ query: `${query}&${oralDateQuery}`, results: { authorize: { data: { success: true, id: draftId, ...context } } } });
+ assert.ok(result.html.startsWith(`REDIRECT:/teacher-clinical/oral-surgery/${draftId}?`), result.html);
+ const params = new URL(result.html.slice('REDIRECT:'.length), 'https://fixture.invalid').searchParams;
+ assert.equal(params.get('date_from'), '2026-01-01');
+ assert.equal(params.get('date_to'), '2026-02-01');
+ assert.equal(params.get('authorized'), '1');
+});
+
+test('no-filter teacher oral surgery «Volver» keeps the exact list URL', async () => {
+ const result = await renderPage({ query });
+ assert.match(result.html, /href="\/teacher-clinical\?limit=50&amp;offset=0"[^>]*>Volver|href="\/teacher-clinical\?limit=50&offset=0"[^>]*>Volver/);
 });
