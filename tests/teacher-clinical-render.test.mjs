@@ -354,6 +354,8 @@ test('teacher discovery with an enabled pair lists Oral Surgery drafts instead o
  assert.deepEqual(result.oralListings, [{ context: { patient_id: patient, subject_id: subject, academic_group_id: group }, page: { limit: 50, offset: 0 } }]);
  assert.match(result.html, /Abrir borrador de Cirugía Oral I · versión 4/);
  assert.match(result.html, /\/teacher-clinical\/oral-surgery\/9007199254741070\?patient_id=/);
+ const oralHref = result.html.match(/href="(\/teacher-clinical\/oral-surgery\/[^"]*)"/)?.[1];
+ assert.equal(new URL(oralHref.replaceAll('&amp;', '&'), 'https://fixture.invalid').searchParams.get('assignment_id'), id);
  assert.match(result.html, new RegExp(`subject_id=${subject}`));
  assert.match(result.html, new RegExp(`academic_group_id=${group}`));
  assert.doesNotMatch(result.html, /Abrir ficha|\/teacher-clinical\/9007199254741061\?|Fichas de/);

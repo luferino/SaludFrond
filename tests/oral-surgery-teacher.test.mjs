@@ -489,6 +489,14 @@ test('RED (d) teacher oral surgery authorization redirect keeps the date filters
  assert.equal(params.get('authorized'), '1');
 });
 
+test('teacher oral surgery authorization redirect keeps a valid assignment_id and drops an invalid one', async () => {
+ const authorize = { authorize: { data: { success: true, id: draftId, ...context } } };
+ const kept = await renderPage({ query: `${query}&assignment_id=17`, results: authorize });
+ assert.equal(new URL(kept.html.slice('REDIRECT:'.length), 'https://fixture.invalid').searchParams.get('assignment_id'), '17');
+ const invalid = await renderPage({ query: `${query}&assignment_id=0`, results: authorize });
+ assert.equal(invalid.html, `REDIRECT:/teacher-clinical/oral-surgery/${draftId}?${query}&authorized=1`);
+});
+
 test('no-filter teacher oral surgery «Volver» keeps the exact list URL', async () => {
  const result = await renderPage({ query });
  assert.match(result.html, /href="\/teacher-clinical\?limit=50&amp;offset=0"[^>]*>Volver|href="\/teacher-clinical\?limit=50&offset=0"[^>]*>Volver/);
