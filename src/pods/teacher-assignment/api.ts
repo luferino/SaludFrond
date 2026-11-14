@@ -53,7 +53,7 @@ export function parseTeacherAssignmentFilters(params: URLSearchParams): { q: str
 export async function listAvailablePatients(query: {subject_id:string;academic_group_id:string;limit:number;offset:number}, cookies: AstroCookies): Promise<Page<AvailablePatient>> {
  assertPagination(query);
  if (!uuid(query.subject_id) || !uuid(query.academic_group_id)) throw new Error('Seleccioná un contexto docente válido.');
- const params = new URLSearchParams({subject_id:query.subject_id,academic_group_id:query.academic_group_id,limit:String(query.limit),offset:String(query.offset)});
+ const params = new URLSearchParams({subject_id:query.subject_id,academic_group_id:query.academic_group_id,limit:String(query.limit),offset:String(query.offset),assignable:'true'});
  const result = await apiFetch<unknown>(`/patient-availabilities?${params}`, { cookies });
  return validatePage(result, query, (v) => { if (!record(v)||!uuid(v.patient_id)||!text(v.nombres)||!text(v.apellidos)) throw new Error('La respuesta de pacientes disponibles no es válida.'); return {patient_id:v.patient_id,nombres:v.nombres,apellidos:v.apellidos}; });
 }

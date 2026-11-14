@@ -84,7 +84,7 @@ test('named paginated context and dependent selectors use bounded exact query pa
  assert.deepEqual(plain(await api.listTeacherContexts({ limit: 7, offset: 14 }, f.cookies)).items[0], { subject_id: ids.subject, subject_name: 'Anatomía', academic_group_id: ids.group, academic_group_name: 'Grupo A', academic_year: 2026, curriculum_semester: 1 });
  await api.listTeacherStudents({ subject_id: ids.subject, academic_group_id: ids.group, limit: 7, offset: 14 }, f.cookies);
  await api.listAvailablePatients({ subject_id: ids.subject, academic_group_id: ids.group, limit: 7, offset: 14 }, f.cookies);
- assert.deepEqual(f.requests.map((r) => new URL(r.url).search), [`?limit=7&offset=14`, `?subject_id=${ids.subject}&academic_group_id=${ids.group}&limit=7&offset=14`, `?subject_id=${ids.subject}&academic_group_id=${ids.group}&limit=7&offset=14`]);
+ assert.deepEqual(f.requests.map((r) => new URL(r.url).search), [`?limit=7&offset=14`, `?subject_id=${ids.subject}&academic_group_id=${ids.group}&limit=7&offset=14`, `?subject_id=${ids.subject}&academic_group_id=${ids.group}&limit=7&offset=14&assignable=true`]);
  assert.ok(f.requests.every((r) => r.method === 'GET' && r.headers.Authorization === 'Bearer session-token'));
  for (const params of [new URLSearchParams('limit=0'), new URLSearchParams('limit=101'), new URLSearchParams('offset=10001'), new URLSearchParams('limit=2&limit=3')]) assert.throws(() => api.parseTeacherAssignmentPagination(params));
  assert.deepEqual(plain(api.parseTeacherAssignmentPagination(new URLSearchParams())), { limit: 50, offset: 0 });

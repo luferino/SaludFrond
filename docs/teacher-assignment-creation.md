@@ -1,6 +1,6 @@
 # Teacher assignment creation
 
-The authenticated `/teacher-assignments` page creates a direct patient assignment for a currently active teacher context. The context list is sourced only from `GET /patient-assignment-options/contexts`; selecting a context enables the named, paginated student-habilitation and available-patient selectors. Empty and denied selector responses are shown explicitly; the page does not substitute global catalogs.
+The authenticated `/teacher-assignments` page creates a direct patient assignment for a currently active teacher context. The context list is sourced only from `GET /patient-assignment-options/contexts`; selecting a context enables the named, paginated student-habilitation and available-patient selectors. The available-patient selector requests `GET /patient-availabilities` with `assignable=true`, so the backend omits patients that already have an active assignment in the selected subject (any group). Empty and denied selector responses are shown explicitly; the page does not substitute global catalogs.
 
 The native POST action submits exactly `patient_id`, `student_habilitation_id`, `subject_id`, and `academic_group_id`. The student selector value is the habilitation UUID, not the student's profile UUID. Backend authorization remains authoritative. A destination-availability conflict and an existing active subject-assignment conflict have separate messages; neither is retried automatically. Reassignment, assignment lists, and clinical operations are outside this page's scope.
 
