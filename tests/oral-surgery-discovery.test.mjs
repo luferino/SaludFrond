@@ -371,7 +371,9 @@ test('student no-filter page keeps the default lists, default status option and 
  assert.deepEqual(result.requests, ['assignments', 'kinesiology-drafts', 'kinesiology-submitted', 'evolutions']);
  assert.deepEqual(result.clinicalCalls.map((call) => call.kind), ['drafts', 'submitted', 'evolutions']);
  assert.match(result.html, /Abrir borrador de ficha · actualizado /);
- assert.match(result.html, /No hay evoluciones visibles para este paciente y contexto\./);
+ // Student evolution reads are patient-only (they include authorized other contexts), so the copy names only the patient.
+ assert.match(result.html, /No hay evoluciones visibles para este paciente\./);
+ assert.doesNotMatch(result.html, /evoluciones visibles para este paciente y contexto/);
  assert.doesNotMatch(result.html, /role="alert"/);
  const select = result.html.match(/<select id="clinical-status"[\s\S]*?<\/select>/)?.[0];
  assert.ok(select);
