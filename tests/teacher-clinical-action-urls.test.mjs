@@ -115,7 +115,7 @@ test('teacher oral surgery authorization form posts back to the rendered draft r
     },
   });
   assert.deepEqual(formActions(page.html), [
-    `/teacher-clinical/oral-surgery/${id}?_action=authorizeOralSurgeryDraft&${context}&${listContext}`,
+    `/teacher-clinical/oral-surgery/${id}?_action=authorizeOralSurgeryDraft&${context}&${listContext}&assignment_id=17`,
   ]);
 });
 

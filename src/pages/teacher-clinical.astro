@@ -162,7 +162,7 @@ const clinicalCarrier = clinicalFilterCarrier(searchParams);
     <h2 id="oral-records-title">Borradores de Cirugía Oral I de {selected.apellidos}, {selected.nombres}</h2>
     <p>Asignatura: {selected.subject_id}<br />Grupo: {selected.academic_group_id}</p>
     {oralSurgeryDrafts.length ? <ul>{oralSurgeryDrafts.map((draft) => <li>
-     <a href={`/teacher-clinical/oral-surgery/${draft.id}?${new URLSearchParams({ patient_id: selected!.patient_id, subject_id: selected!.subject_id, academic_group_id: selected!.academic_group_id, ...listCarrier, ...clinicalCarrier })}`}>Abrir borrador de Cirugía Oral I · versión {draft.version}</a>
+     <a href={`/teacher-clinical/oral-surgery/${draft.id}?${new URLSearchParams({ patient_id: selected!.patient_id, subject_id: selected!.subject_id, academic_group_id: selected!.academic_group_id, assignment_id: selected!.id, ...listCarrier, ...clinicalCarrier })}`}>Abrir borrador de Cirugía Oral I · versión {draft.version}</a>
     </li>)}</ul> : <p>No hay borradores de Cirugía Oral I para este paciente y contexto de origen.</p>}
     {oralSurgeryDrafts.length === 50 && <p>Se muestran los 50 borradores más recientes.</p>}
    </section>}
