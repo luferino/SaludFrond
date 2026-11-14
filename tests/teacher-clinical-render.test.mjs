@@ -4,6 +4,7 @@ import test from 'node:test';
 import ts from 'typescript';
 import { createRequire } from 'node:module';
 import vm from 'node:vm';
+import { realListingModule } from './helpers/clinical-form-submit.mjs';
 const require = createRequire(import.meta.resolve('astro/package.json'));
 const { transform } = require('@astrojs/compiler');
 const root = new URL('../', import.meta.url);
@@ -26,6 +27,7 @@ async function html(value) {
  return String(value);
 }
 async function render(path, options = {}) {
+ const listing = await realListingModule();
  const requests = [];
  const oralListings = [];
  const clinicalCalls = [];
@@ -43,6 +45,7 @@ async function render(path, options = {}) {
    if (params.has('evaluation_id') && !/^[1-9]\d*$/.test(params.get('evaluation_id'))) throw new Error('El filtro de evaluación no es válido.');
    return Object.fromEntries(['status','date_from','date_to','evaluation_id'].filter((key) => params.has(key) && params.get(key)).map((key) => [key,params.get(key)]));
   },
+  clinicalFilterCarrier: listing.clinicalFilterCarrier,
   parseClinicalContext: (params) => {
    if (options.rejectQuery || !params?.has('patient_id') || !params?.has('subject_id') || !params?.has('academic_group_id')) throw new Error('invalid query context');
    return Object.fromEntries(['patient_id', 'subject_id', 'academic_group_id'].map((key) => [key, params.get(key)]));
@@ -471,4 +474,50 @@ test('RED (c) teacher: an invalid clinical filter shows one filter alert, keeps 
  assert.match(result.html, /name="date_from" value="2026-02-01"/);
  assert.match(result.html, /name="date_to" value="2026-01-01"/);
  assert.doesNotMatch(result.html, /No se pudo cargar el acceso clínico/);
+});
+
+// Clinical filter return (T1): teacher list links and «Volver» from other-context detail carry the applied clinical filters.
+const clinicalFilters = 'status=validated&date_from=2026-01-01&date_to=2026-02-01&evaluation_id=7';
+function hrefParams(html, fragment) {
+ const href = [...html.matchAll(/href="([^"]*)"/g)].map(([, value]) => value.replaceAll('&amp;', '&')).find((value) => value.includes(fragment));
+ assert.ok(href, `missing link ${fragment}`);
+ return new URL(href, 'https://fixture.invalid').searchParams;
+}
+
+test('RED (b) teacher origin and other-context links carry the applied clinical filters beside list coordinates', async () => {
+ const result = await render('src/pages/teacher-clinical.astro', { query: `${selectedContext}&limit=7&offset=14&${clinicalFilters}`, crossEvaluations: [{ ...evaluation, origin_group_id: otherGroup, status: 'validated' }] });
+ for (const fragment of [`/teacher-clinical/${id}?`, `/teacher-clinical/other-contexts/${id}?`]) {
+  const params = hrefParams(result.html, fragment);
+  assert.equal(params.get('status'), 'validated', fragment);
+  assert.equal(params.get('date_from'), '2026-01-01', fragment);
+  assert.equal(params.get('date_to'), '2026-02-01', fragment);
+  assert.equal(params.get('evaluation_id'), '7', fragment);
+  assert.equal(params.get('list_limit'), '7', fragment);
+  assert.equal(params.get('list_offset'), '14', fragment);
+ }
+});
+
+test('RED (b) teacher oral surgery links carry the applied date filters', async () => {
+ const result = await render('src/pages/teacher-clinical.astro', { query: `${selectedContext}&date_from=2026-01-01&date_to=2026-02-01`, oralSurgeryRead: true, contexts: [{ subject_id: subject, academic_group_id: group }], oralDrafts: [oralDraft()] });
+ const params = hrefParams(result.html, `/teacher-clinical/oral-surgery/${oralDraft().id}?`);
+ assert.equal(params.get('date_from'), '2026-01-01');
+ assert.equal(params.get('date_to'), '2026-02-01');
+ assert.equal(params.get('list_limit'), '50');
+});
+
+test('RED (c) teacher other-context «Volver» restores clinical filters beside list coordinates and assignment_id', async () => {
+ const result = await render('src/pages/teacher-clinical/other-contexts/[id].astro', { query: `${selectedContext}&list_limit=7&list_offset=14&${clinicalFilters}` });
+ const back = hrefParams(result.html, '/teacher-clinical?');
+ assert.equal(back.get('status'), 'validated');
+ assert.equal(back.get('date_from'), '2026-01-01');
+ assert.equal(back.get('date_to'), '2026-02-01');
+ assert.equal(back.get('evaluation_id'), '7');
+ assert.equal(back.get('limit'), '7');
+ assert.equal(back.get('offset'), '14');
+ assert.equal(back.get('assignment_id'), id);
+});
+
+test('no-filter teacher other-context «Volver» keeps the exact list URL', async () => {
+ const result = await render('src/pages/teacher-clinical/other-contexts/[id].astro', { query: `${selectedContext}&list_limit=7&list_offset=14` });
+ assert.ok(result.html.includes(`href="/teacher-clinical?limit=7&offset=14&assignment_id=${id}"`));
 });

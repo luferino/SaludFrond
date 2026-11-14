@@ -7,7 +7,7 @@ import { listTeacherCrossContextEvaluations, otherContext, loadOriginNames } fro
 import { assignmentListCarrier } from '../pods/patient-assignment/list-coordinates';
 import type { Evaluation } from '../pods/kinesiology-evaluation/api';
 import type { ClinicalListFilters } from '../pods/kinesiology-evaluation/list-filters';
-import { listKinesiologyEvolutions, parseEvolutionListFilters, type EvolutionFilters, type KinesiologyEvolutionListItem } from '../pods/kinesiology-evolution/listing';
+import { clinicalFilterCarrier, listKinesiologyEvolutions, parseEvolutionListFilters, type EvolutionFilters, type KinesiologyEvolutionListItem } from '../pods/kinesiology-evolution/listing';
 import { listOralSurgeryDrafts, type OralSurgeryDraft } from '../pods/oral-surgery-draft/api';
 import { isOralSurgeryContext, listOralSurgeryContexts } from '../pods/oral-surgery-draft/discovery';
 Astro.response.headers.set('Cache-Control', 'no-store');
@@ -116,6 +116,7 @@ const link = (offset: number) => { const params = new URLSearchParams({limit:Str
 const previous = pagination.offset > 0 ? Math.max(0, pagination.offset - pagination.limit) : null;
 const next = patients.length === pagination.limit && pagination.offset + pagination.limit <= 10000 ? pagination.offset + pagination.limit : null;
 const listCarrier = assignmentListCarrier({ ...pagination, filters });
+const clinicalCarrier = clinicalFilterCarrier(searchParams);
 ---
 <Layout>
  <main>
@@ -161,7 +162,7 @@ const listCarrier = assignmentListCarrier({ ...pagination, filters });
     <h2 id="oral-records-title">Borradores de Cirugía Oral I de {selected.apellidos}, {selected.nombres}</h2>
     <p>Asignatura: {selected.subject_id}<br />Grupo: {selected.academic_group_id}</p>
     {oralSurgeryDrafts.length ? <ul>{oralSurgeryDrafts.map((draft) => <li>
-     <a href={`/teacher-clinical/oral-surgery/${draft.id}?${new URLSearchParams({ patient_id: selected!.patient_id, subject_id: selected!.subject_id, academic_group_id: selected!.academic_group_id, ...listCarrier })}`}>Abrir borrador de Cirugía Oral I · versión {draft.version}</a>
+     <a href={`/teacher-clinical/oral-surgery/${draft.id}?${new URLSearchParams({ patient_id: selected!.patient_id, subject_id: selected!.subject_id, academic_group_id: selected!.academic_group_id, ...listCarrier, ...clinicalCarrier })}`}>Abrir borrador de Cirugía Oral I · versión {draft.version}</a>
     </li>)}</ul> : <p>No hay borradores de Cirugía Oral I para este paciente y contexto de origen.</p>}
     {oralSurgeryDrafts.length === 50 && <p>Se muestran los 50 borradores más recientes.</p>}
    </section>}
@@ -170,7 +171,7 @@ const listCarrier = assignmentListCarrier({ ...pagination, filters });
     <p>Asignatura: {selected.subject_id}<br />Grupo: {selected.academic_group_id}</p>
     {oralSurgeryForbidden && <p role="status">No tenés permiso para consultar si este contexto usa Cirugía Oral I. No se muestran acciones de Cirugía Oral.</p>}
     {evaluations.length ? <ul>{evaluations.map((evaluation) => <li>
-     <a href={`/teacher-clinical/${evaluation.id}?${new URLSearchParams({ patient_id: selected!.patient_id, subject_id: selected!.subject_id, academic_group_id: selected!.academic_group_id, assignment_id: selected!.id, ...listCarrier })}`}>Abrir ficha · {evaluation.status === 'draft' ? 'Borrador' : evaluation.status === 'submitted' ? 'Enviada' : 'Validada'}</a>
+     <a href={`/teacher-clinical/${evaluation.id}?${new URLSearchParams({ patient_id: selected!.patient_id, subject_id: selected!.subject_id, academic_group_id: selected!.academic_group_id, assignment_id: selected!.id, ...listCarrier, ...clinicalCarrier })}`}>Abrir ficha · {evaluation.status === 'draft' ? 'Borrador' : evaluation.status === 'submitted' ? 'Enviada' : 'Validada'}</a>
     </li>)}</ul> : <p>No hay fichas para este paciente y contexto de origen.</p>}
     {teacherGrant(Astro.cookies, 'kinesiology-evolutions:read') && <section aria-labelledby="teacher-evolutions-title"><h3 id="teacher-evolutions-title">Evoluciones kinésicas</h3>{evolutionError ? <p role="alert">No se pudieron cargar las evoluciones kinésicas. Las fichas de este contexto siguen disponibles.</p> : evolutions.length ? <ul>{evolutions.map((item) => <li><span>Evaluación {item.evaluation_id} · {item.status === 'draft' ? 'Borrador' : item.status === 'submitted' ? 'Enviada' : 'Validada'} · {new Date(item.created_at).toLocaleDateString('es')}</span></li>)}</ul> : <p>No hay evoluciones visibles para este paciente y contexto de origen.</p>}</section>}
    </section>}
@@ -179,7 +180,7 @@ const listCarrier = assignmentListCarrier({ ...pagination, filters });
     <p>Últimas versiones enviadas o validadas · solo lectura.</p>
     {crossError ? <p role="alert">No se pudieron cargar las fichas de otros contextos.</p> : crossEvaluations.length ? <ul>{crossEvaluations.map((item) => <li>
      <p>Asignatura de origen: {originNames.subjects[item.origin_subject_id] ?? item.origin_subject_id} · Grupo de origen: {originNames.groups[item.origin_group_id] ?? item.origin_group_id}</p>
-     <a href={`/teacher-clinical/other-contexts/${item.id}?${new URLSearchParams({ patient_id: selected!.patient_id, subject_id: selected!.subject_id, academic_group_id: selected!.academic_group_id, assignment_id: selected!.id, ...listCarrier })}`}>Ver ficha · {item.status === 'validated' ? 'Validada' : 'Enviada'} · {new Date(item.created_at).toLocaleDateString('es')}</a>
+     <a href={`/teacher-clinical/other-contexts/${item.id}?${new URLSearchParams({ patient_id: selected!.patient_id, subject_id: selected!.subject_id, academic_group_id: selected!.academic_group_id, assignment_id: selected!.id, ...listCarrier, ...clinicalCarrier })}`}>Ver ficha · {item.status === 'validated' ? 'Validada' : 'Enviada'} · {new Date(item.created_at).toLocaleDateString('es')}</a>
     </li>)}</ul> : <p>No hay fichas visibles de otros contextos.</p>}
     {teacherGrant(Astro.cookies, 'kinesiology-evolutions:read') && <section aria-labelledby="other-evolutions-title">
      <h3 id="other-evolutions-title">Evoluciones de otros contextos</h3>

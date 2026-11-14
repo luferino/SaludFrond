@@ -26,6 +26,7 @@ async function renderAssignmentDetail(query, rows, records = []) {
   const evolution = await (await loadRegisteredActions(async () => Response.json({}))).importModule('src/pods/kinesiology-evolution/listing.ts');
   const mocks = {
     parseEvolutionListFilters: evolution.parseEvolutionListFilters,
+    clinicalFilterCarrier: evolution.clinicalFilterCarrier,
     listKinesiologyEvolutions: async () => [],
     Layout: {}, Fragment: (props) => props.children, actions, ApiError: class extends Error {}, decodeJwt: () => null,
     listAssignedPatients: async (pagination, _cookies, filters) => { requests.push({ pagination, filters }); return { items: rows ?? [row], ...pagination }; },

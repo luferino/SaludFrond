@@ -9,7 +9,7 @@ import { assignmentListCarrier, assignmentListQuery, parseAssignmentListCoordina
 import { actionHrefWithContext, EVALUATION_STATUS_LABELS, listEvaluations, listSubmittedEvaluations, type Evaluation } from '../../pods/kinesiology-evaluation/api';
 import { listOralSurgeryDrafts, type OralSurgeryDraft } from '../../pods/oral-surgery-draft/api';
 import type { ClinicalListFilters } from '../../pods/kinesiology-evaluation/list-filters';
-import { listKinesiologyEvolutions, parseEvolutionListFilters, type EvolutionFilters, type KinesiologyEvolutionListItem } from '../../pods/kinesiology-evolution/listing';
+import { clinicalFilterCarrier, listKinesiologyEvolutions, parseEvolutionListFilters, type EvolutionFilters, type KinesiologyEvolutionListItem } from '../../pods/kinesiology-evolution/listing';
 import { isOralSurgeryContext, listOralSurgeryContexts } from '../../pods/oral-surgery-draft/discovery';
 
 const assignmentId = Astro.params.assignmentId ?? '';
@@ -109,15 +109,16 @@ if (oralSurgeryResult?.data?.success === false && /sesión venció/i.test(oralSu
 	return Astro.redirect(`/auth/login?returnTo=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`);
 }
 if (result?.data?.success && assignment && decimalId) {
-	return Astro.redirect(`/kinesiology-evaluations/${result.data.evaluation.id}?${new URLSearchParams({ assignment_id: assignment.id, ...assignmentListCarrier({ ...pagination, filters: listFilters }) })}`);
+	return Astro.redirect(`/kinesiology-evaluations/${result.data.evaluation.id}?${new URLSearchParams({ assignment_id: assignment.id, ...assignmentListCarrier({ ...pagination, filters: listFilters }), ...clinicalFilterCarrier(query) })}`);
 }
 if (oralSurgeryResult?.data?.success && oralSurgeryEnabled && assignment && decimalId) {
-	return Astro.redirect(`/oral-surgery-drafts/${oralSurgeryResult.data.draft.id}?${new URLSearchParams({ assignment_id: assignment.id, ...assignmentListCarrier({ ...pagination, filters: listFilters }) })}`);
+	return Astro.redirect(`/oral-surgery-drafts/${oralSurgeryResult.data.draft.id}?${new URLSearchParams({ assignment_id: assignment.id, ...assignmentListCarrier({ ...pagination, filters: listFilters }), ...clinicalFilterCarrier(query) })}`);
 }
 const coordinates = { ...pagination, filters: listFilters };
 const listCarrier = assignmentListCarrier(coordinates);
 const listQuery = assignmentListQuery(coordinates);
-const actionListContext = Object.fromEntries(new URLSearchParams(listQuery));
+const clinicalCarrier = clinicalFilterCarrier(query);
+const actionListContext = { ...Object.fromEntries(new URLSearchParams(listQuery)), ...clinicalCarrier };
 const createHref = actionHrefWithContext(actions.createKinesiologyEvaluation.toString(), {
 	assignment_id: assignmentId,
 	...actionListContext,
@@ -192,7 +193,7 @@ const createOralSurgeryHref = oralSurgeryEnabled ? actionHrefWithContext(actions
 			{oralSurgeryEnabled && !filterError ? <section aria-labelledby="oral-drafts-title">
 				<h2 id="oral-drafts-title">Borradores de Cirugía Oral I</h2>
 				{oralSurgeryDrafts.length ? <ul class="draft-list">{oralSurgeryDrafts.map((draft) => <li>
-					<a href={`/oral-surgery-drafts/${draft.id}?${new URLSearchParams({ assignment_id: assignment.id, ...assignmentListCarrier(coordinates) })}`}>
+					<a href={`/oral-surgery-drafts/${draft.id}?${new URLSearchParams({ assignment_id: assignment.id, ...assignmentListCarrier(coordinates), ...clinicalCarrier })}`}>
 						Abrir borrador · versión {draft.version} · actualizado {new Date(draft.updated_at).toLocaleDateString('es')}
 					</a>
 				</li>)}</ul> : <p>Todavía no hay borradores de Cirugía Oral I para esta asignación.</p>}
@@ -203,7 +204,7 @@ const createOralSurgeryHref = oralSurgeryEnabled ? actionHrefWithContext(actions
 				<section aria-labelledby="drafts-title">
 					<h2 id="drafts-title">Borradores de ficha inicial</h2>
 					{drafts.length ? <ul class="draft-list">{drafts.map((draft) => <li>
-						<a href={`/kinesiology-evaluations/${draft.id}?${new URLSearchParams({ assignment_id: assignment.id, ...assignmentListCarrier(coordinates) })}`}>
+						<a href={`/kinesiology-evaluations/${draft.id}?${new URLSearchParams({ assignment_id: assignment.id, ...assignmentListCarrier(coordinates), ...clinicalCarrier })}`}>
 							Abrir borrador de ficha · actualizado {new Date(draft.updated_at).toLocaleDateString('es')}
 						</a>
 					</li>)}</ul> : <p>Todavía no hay borradores para esta asignación.</p>}
@@ -211,7 +212,7 @@ const createOralSurgeryHref = oralSurgeryEnabled ? actionHrefWithContext(actions
 				<section aria-labelledby="submitted-title">
 					<h2 id="submitted-title">Fichas enviadas</h2>
 					{submitted.length ? <ul class="draft-list">{submitted.map((record) => <li>
-						<a href={`/kinesiology-evaluations/${record.id}?${new URLSearchParams({ assignment_id: assignment.id, ...assignmentListCarrier(coordinates) })}`}>
+						<a href={`/kinesiology-evaluations/${record.id}?${new URLSearchParams({ assignment_id: assignment.id, ...assignmentListCarrier(coordinates), ...clinicalCarrier })}`}>
 							Ver ficha enviada · {EVALUATION_STATUS_LABELS[record.status]} · actualizada {new Date(record.updated_at).toLocaleDateString('es')}
 						</a>
 					</li>)}</ul> : <p>Todavía no hay fichas enviadas para esta asignación.</p>}

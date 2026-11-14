@@ -21,6 +21,17 @@ export function parseEvolutionListFilters(params: URLSearchParams): EvolutionFil
  }
  return result;
 }
+/** Plain filter names (status, date_from, date_to, evaluation_id) carried by detail links, back links and redirects; invalid input carries nothing. */
+export function clinicalFilterCarrier(params: URLSearchParams): Record<string, string> {
+ let filters: EvolutionFilters;
+ try { filters = parseEvolutionListFilters(params); } catch { return {}; }
+ const carrier: Record<string, string> = {};
+ for (const key of ['status', 'date_from', 'date_to', 'evaluation_id'] as const) {
+  const value = filters[key];
+  if (value !== undefined) carrier[key] = value;
+ }
+ return carrier;
+}
 const MAX_BIGINT = 9223372036854775807n;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function id(value: unknown): value is string { return typeof value === 'string' && /^[1-9]\d*$/.test(value) && BigInt(value) <= MAX_BIGINT; }

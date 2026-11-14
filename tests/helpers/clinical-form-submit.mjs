@@ -106,8 +106,20 @@ async function html(value) {
 }
 const escapeHtml = (value) => String(value).replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 
+/** Real listing.ts exports (clinical filter carrier and parsers) for harnesses that compile pages with explicit mocks; no vm registry needed. */
+export async function realListingModule() {
+  const load = async (file, modules = {}) => {
+    const output = ts.transpileModule(await readFile(new URL(file, root), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+    const exports = {};
+    new Function('exports', 'require', output)(exports, (name) => modules[name] ?? {});
+    return exports;
+  };
+  const clinical = await load('src/pods/kinesiology-evaluation/list-filters.ts');
+  return load('src/pods/kinesiology-evolution/listing.ts', { '../kinesiology-evaluation/list-filters': clinical });
+}
+
 /** Execute a transformed Astro page component with synthetic data and return its rendered HTML. */
-export async function renderCompiledPage(path, { url, oralEnabled = false, status = 'draft', actionResults = {} } = {}) {
+export async function renderCompiledPage(path, { url, oralEnabled = false, status = 'draft', actionResults = {}, submitted = [], oralDrafts = [], amendmentOf } = {}) {
   const pageUrl = new URL(url, 'https://fixture.invalid');
   const nativeAssignment = {
     id: assignmentId, patient_id: ids.patient, student_habilitation_id: ids.habilitation,
@@ -152,6 +164,7 @@ export async function renderCompiledPage(path, { url, oralEnabled = false, statu
   const listCoordinates = await actionModules.importModule('src/pods/patient-assignment/list-coordinates.ts');
   const mocks = {
     parseEvolutionListFilters: evolution.parseEvolutionListFilters,
+    clinicalFilterCarrier: evolution.clinicalFilterCarrier,
     listKinesiologyEvolutions: async () => [],
     actions, Fragment: null, Layout: null, SubmissionSnapshot: null, OralSurgeryReadOnly: null,
     ApiError: class ApiError extends Error { constructor(status) { super(`API ${status}`); this.status = status; } },
@@ -164,11 +177,11 @@ export async function renderCompiledPage(path, { url, oralEnabled = false, statu
     actionHrefWithContext: kinesiology.actionHrefWithContext,
     EVALUATION_STATUS_LABELS: { draft: 'Borrador', submitted: 'Enviada', validated: 'Validada' },
     antecedentOptionState: (value, present) => ({ unrecorded: !present, unknown: present && value === null, yes: value === true, no: value === false }),
-    listEvaluations: async () => [clinicalRecord], listSubmittedEvaluations: async () => [],
-    listOralSurgeryDrafts: async () => [],
+    listEvaluations: async () => [clinicalRecord], listSubmittedEvaluations: async () => submitted,
+    listOralSurgeryDrafts: async () => oralDrafts,
     listOralSurgeryContexts: async () => ({ status: 'ok', items: oralEnabled ? [{ subject_id: ids.subject, academic_group_id: ids.group }] : [] }),
     isOralSurgeryContext: (contexts, subjectId, groupId) => contexts.some((item) => item.subject_id === subjectId && item.academic_group_id === groupId),
-    getEvaluation: async () => clinicalRecord,
+    getEvaluation: async () => (amendmentOf ? { ...clinicalRecord, amendment_of_evaluation_id: amendmentOf } : clinicalRecord),
     listCorrections: async () => ({ evaluation_id: recordId, items: [] }),
     listSubmissions: async () => ({ evaluation_id: recordId, items: [] }),
     rawEvaluationContentFromForm: () => clinicalContent,

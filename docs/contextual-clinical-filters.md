@@ -8,4 +8,6 @@ Student initial-evaluation drafts remain origin-scoped. Submitted/validated snap
 
 Oral Surgery lists accept only date bounds and always use the selected patient/context in these screens. Discovery, forbidden, and failure behavior remains unchanged. Omitted filters preserve the previous adapter requests and ordering.
 
+Applied clinical filters carry through detail pages. Teacher and student list-to-detail links, the «Volver» links of the five detail pages, detail action URLs and their success redirects keep `status`, `date_from`, `date_to` and `evaluation_id` under those plain names, beside the existing `list_*` coordinates and `assignment_id`. Filters never enter form bodies or action schemas. `clinicalFilterCarrier` in `src/pods/kinesiology-evolution/listing.ts` applies the `parseEvolutionListFilters` rules: if any filter is invalid, duplicated or reversed, the whole set is dropped, so the URL carries nothing and no detail page fails. Without filters every URL is unchanged, except that the teacher origin redirect now keeps a valid `assignment_id`.
+
 Validation is local synthetic frontend evidence only. It does not establish live backend, database, or production behavior.
