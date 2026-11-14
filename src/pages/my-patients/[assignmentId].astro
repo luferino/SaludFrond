@@ -219,7 +219,7 @@ const createOralSurgeryHref = oralSurgeryEnabled ? actionHrefWithContext(actions
 				</section>
 				{Array.isArray(permissions) && permissions.includes('kinesiology-evolutions:read') && <section aria-labelledby="evolutions-title">
 					<h2 id="evolutions-title">Evoluciones kinésicas</h2>
-					{evolutionError ? <p class="error" role="alert">No se pudieron cargar las evoluciones kinésicas. Las fichas de esta asignación siguen disponibles.</p> : evolutions.length ? <ul class="draft-list">{evolutions.map((evolution) => <li><span>Evaluación {evolution.evaluation_id} · {evolution.status === 'draft' ? 'Borrador' : evolution.status === 'submitted' ? 'Enviada' : 'Validada'} · {new Date(evolution.created_at).toLocaleDateString('es')}</span></li>)}</ul> : <p>No hay evoluciones visibles para este paciente y contexto.</p>}
+					{evolutionError ? <p class="error" role="alert">No se pudieron cargar las evoluciones kinésicas. Las fichas de esta asignación siguen disponibles.</p> : evolutions.length ? <ul class="draft-list">{evolutions.map((evolution) => <li><span>Evaluación {evolution.evaluation_id} · {evolution.status === 'draft' ? 'Borrador' : evolution.status === 'submitted' ? 'Enviada' : 'Validada'} · {new Date(evolution.created_at).toLocaleDateString('es')}</span></li>)}</ul> : <p>No hay evoluciones visibles para este paciente.</p>}
 				</section>}
 			</> : null}
 		</> : filterError ? <form method="GET" class="clinical-filters" aria-label="Filtrar listas clínicas">
