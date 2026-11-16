@@ -82,48 +82,51 @@ const academicLinks = isLoggedIn && !isReception ? [
 				</a>
 				{isLoggedIn ? (
 					<>
-						<p class="nav-label">Tu espacio de trabajo</p>
-						<nav class="module-nav" aria-label="Principal">
-							<a href="/" aria-current={currentPath === '/' ? 'page' : undefined}>Inicio <span aria-hidden="true">↗</span></a>
-						</nav>
-						{peopleLinks.length > 0 && <>
-							<p class="nav-label">Personas</p>
-							<nav class="module-nav" aria-label="Personas">
-								{peopleLinks.map((link) => (
-									<a href={link.href} aria-current={currentPath === link.href ? 'page' : undefined}>{link.label} <span aria-hidden="true">↗</span></a>
-								))}
+						<button type="button" class="menu-toggle" aria-expanded="false" aria-controls="sidebar-menu" hidden>Menú</button>
+						<div id="sidebar-menu" class="sidebar-menu">
+							<p class="nav-label">Tu espacio de trabajo</p>
+							<nav class="module-nav" aria-label="Principal">
+								<a href="/" aria-current={currentPath === '/' ? 'page' : undefined}>Inicio <span aria-hidden="true">↗</span></a>
 							</nav>
-						</>}
-						{receptionLinks.length > 0 && <>
-							<p class="nav-label">Recepción</p>
-							<nav class="module-nav" aria-label="Recepción">
-								{receptionLinks.map((link) => (
-									<a href={link.href} aria-current={currentPath === link.href ? 'page' : undefined}>{link.label} <span aria-hidden="true">↗</span></a>
-								))}
+							{peopleLinks.length > 0 && <>
+								<p class="nav-label">Personas</p>
+								<nav class="module-nav" aria-label="Personas">
+									{peopleLinks.map((link) => (
+										<a href={link.href} aria-current={currentPath === link.href ? 'page' : undefined}>{link.label} <span aria-hidden="true">↗</span></a>
+									))}
+								</nav>
+							</>}
+							{receptionLinks.length > 0 && <>
+								<p class="nav-label">Recepción</p>
+								<nav class="module-nav" aria-label="Recepción">
+									{receptionLinks.map((link) => (
+										<a href={link.href} aria-current={currentPath === link.href ? 'page' : undefined}>{link.label} <span aria-hidden="true">↗</span></a>
+									))}
+								</nav>
+							</>}
+							{clinicalLinks.length > 0 && <>
+								<p class="nav-label">Atención clínica</p>
+								<nav class="module-nav" aria-label="Atención clínica">
+									{clinicalLinks.map((link) => (
+										<a href={link.href} aria-current={currentPath.startsWith(link.href) ? 'page' : undefined}>{link.label} <span aria-hidden="true">↗</span></a>
+									))}
+								</nav>
+							</>}
+							{academicLinks.length > 0 && <>
+								<p class="nav-label">Académico</p>
+								<nav class="module-nav" aria-label="Académico">
+									{academicLinks.map((link) => (
+										<a href={link.href} aria-current={currentPath === link.href ? 'page' : undefined}>{link.label} <span aria-hidden="true">↗</span></a>
+									))}
+								</nav>
+							</>}
+							<p class="nav-label" id="account-title">Cuenta</p>
+							<nav class="account-nav" aria-labelledby="account-title">
+								{canRegister && <a href="/auth/register">Registrar usuario</a>}
+								<a href="/logout">Salir <span aria-hidden="true">↗</span></a>
 							</nav>
-						</>}
-						{clinicalLinks.length > 0 && <>
-							<p class="nav-label">Atención clínica</p>
-							<nav class="module-nav" aria-label="Atención clínica">
-								{clinicalLinks.map((link) => (
-									<a href={link.href} aria-current={currentPath.startsWith(link.href) ? 'page' : undefined}>{link.label} <span aria-hidden="true">↗</span></a>
-								))}
-							</nav>
-						</>}
-						{academicLinks.length > 0 && <>
-							<p class="nav-label">Académico</p>
-							<nav class="module-nav" aria-label="Académico">
-								{academicLinks.map((link) => (
-									<a href={link.href} aria-current={currentPath === link.href ? 'page' : undefined}>{link.label} <span aria-hidden="true">↗</span></a>
-								))}
-							</nav>
-						</>}
-						<p class="nav-label" id="account-title">Cuenta</p>
-						<nav class="account-nav" aria-labelledby="account-title">
-							{canRegister && <a href="/auth/register">Registrar usuario</a>}
-							<a href="/logout">Salir <span aria-hidden="true">↗</span></a>
-						</nav>
-						<p class="sidebar-note">Un espacio para acompañar<br />y cuidar a las personas.</p>
+							<p class="sidebar-note">Un espacio para acompañar<br />y cuidar a las personas.</p>
+						</div>
 					</>
 				) : currentPath !== '/auth/login' && (
 					<nav class="account-nav" aria-label="Acceso">
@@ -149,6 +152,28 @@ const academicLinks = isLoggedIn && !isReception ? [
 		</div>
 	</body>
 </html>
+
+<script>
+	// Without JavaScript the menu stays expanded; the script opts narrow screens into collapsing it.
+	const sidebar = document.querySelector<HTMLElement>('.sidebar');
+	const toggle = document.querySelector<HTMLButtonElement>('.menu-toggle');
+	const menu = document.getElementById('sidebar-menu');
+	if (sidebar && toggle && menu) {
+		const setOpen = (open: boolean) => {
+			toggle.setAttribute('aria-expanded', String(open));
+			menu.classList.toggle('is-open', open);
+		};
+		toggle.addEventListener('click', () => setOpen(toggle.getAttribute('aria-expanded') !== 'true'));
+		sidebar.addEventListener('keydown', (event) => {
+			if (event.key === 'Escape' && toggle.getAttribute('aria-expanded') === 'true') {
+				setOpen(false);
+				toggle.focus();
+			}
+		});
+		toggle.hidden = false;
+		sidebar.classList.add('js-menu');
+	}
+</script>
 
 <style>
 	:global(:root) {
@@ -236,6 +261,8 @@ const academicLinks = isLoggedIn && !isReception ? [
 	.account-nav { display: grid; gap: 0.25rem; padding: 1rem 1.5rem; border-top: 1px solid #53584e; }
 	.account-nav a { padding: 0.5rem 0; text-decoration: underline; text-underline-offset: 4px; }
 	.sidebar-note { margin: auto 1.5rem 0; padding: 2rem 0; color: #d3cdbe; font: italic 1rem/1.6 var(--serif); }
+	.sidebar-menu { display: flex; flex: 1; flex-direction: column; }
+	.menu-toggle { display: none; }
 	.workspace { min-width: 0; }
 	.workspace-header {
 		display: flex;
@@ -255,6 +282,31 @@ const academicLinks = isLoggedIn && !isReception ? [
 	@media (max-width: 760px) {
 		.is-authenticated { grid-template-columns: minmax(0, 1fr); }
 		.brand { padding: 1rem 1.25rem; }
+		.js-menu { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
+		.js-menu .sidebar-menu { grid-column: 1 / -1; }
+		.js-menu .menu-toggle { display: inline-flex; }
+		.js-menu .sidebar-menu:not(.is-open) { display: none; }
+		.menu-toggle {
+			align-items: center;
+			gap: 0.6rem;
+			padding: 0 1.25rem;
+			border: 0;
+			border-bottom: 1px solid var(--line);
+			background: var(--paper);
+			color: var(--ink);
+			font: inherit;
+			font-weight: 600;
+			cursor: pointer;
+		}
+		.menu-toggle::before {
+			content: '';
+			width: 1.1rem;
+			height: 2px;
+			background: currentColor;
+			box-shadow: 0 -6px currentColor, 0 6px currentColor;
+		}
+		.menu-toggle[aria-expanded='true']::before { background: var(--rust); box-shadow: 0 -6px var(--rust), 0 6px var(--rust); }
+		.sidebar .menu-toggle:focus-visible { outline-color: var(--rust); outline-offset: -5px; }
 		.nav-label { margin: 1rem 1.25rem; }
 		.module-nav { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.5rem 0.75rem; padding-bottom: 1rem; }
 		.module-nav a { padding: 0.8rem; font-size: 0.875rem; }
