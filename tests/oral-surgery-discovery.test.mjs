@@ -355,6 +355,15 @@ test('RED R3-002: student evolution read failure keeps the evaluation lists rend
  assert.doesNotMatch(result.html, /No hay evoluciones visibles/);
 });
 
+test('student evolution list marks a draft returned for correction with its reason', async () => {
+ const evolution = { id: '41', evaluation_id: '5', status: 'draft', created_at: iso };
+ const result = await renderAssignment({ permissions: ['kinesiology-evolutions:read'], evolutions: [{ ...evolution, pending_correction: { reason: 'Falta la escala de dolor', requested_at: iso, reviewed_by: subject } }, { ...evolution, id: '42', evaluation_id: '6' }] });
+ const items = [...result.html.matchAll(/<li[^>]*>[\s\S]*?<\/li>/g)].map((match) => match[0]).filter((item) => /Evaluación [56] ·/.test(item));
+ assert.equal(items.length, 2);
+ assert.match(items[0], /Corrección solicitada: Falta la escala de dolor/);
+ assert.doesNotMatch(items[1], /Corrección solicitada/);
+});
+
 test('student evolution 401 still redirects to login with the current list state', async () => {
  const result = await renderAssignment({ permissions: ['kinesiology-evolutions:read'], evolutionsStatus: 401 });
  assert.equal(result.html, 'REDIRECT:/auth/login?returnTo=%2Fmy-patients%2F17%3Flimit%3D50%26offset%3D0');

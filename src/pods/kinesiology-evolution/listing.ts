@@ -8,6 +8,8 @@ export interface KinesiologyEvolutionListItem {
  content: Record<string, unknown>; status: 'draft' | 'submitted' | 'validated'; created_at: string; updated_at: string;
  amendment_of_evolution_id?: string; validation_status?: 'pending_validation' | 'validated';
  submission_id?: string; submitted_by?: string; submitted_at?: string; reviewed_by?: string; reviewed_at?: string;
+ /** Present only for origin readers of a draft returned for correction; the backend omits the key otherwise. */
+ pending_correction?: { reason: string; requested_at: string; reviewed_by: string };
 }
 export type EvolutionFilters = ClinicalListFilters & { evaluation_id?: string };
 export function parseEvolutionListFilters(params: URLSearchParams): EvolutionFilters {
@@ -38,6 +40,13 @@ function id(value: unknown): value is string { return typeof value === 'string' 
 function scalar(value: unknown, name: string) {
  if (typeof value !== 'string' || !value) throw new Error(`El filtro ${name} no es válido.`);
 }
+function pendingCorrection(value: unknown): boolean {
+ if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+ const correction = value as Record<string, unknown>;
+ return typeof correction.reason === 'string' && correction.reason.trim() !== ''
+  && typeof correction.requested_at === 'string' && Number.isFinite(Date.parse(correction.requested_at))
+  && typeof correction.reviewed_by === 'string' && UUID.test(correction.reviewed_by);
+}
 function validateItem(value: unknown): KinesiologyEvolutionListItem {
  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('La respuesta de evoluciones no es válida.');
  const row = value as Record<string, unknown>;
@@ -45,7 +54,8 @@ function validateItem(value: unknown): KinesiologyEvolutionListItem {
   || !['patient_id', 'author_id', 'origin_student_habilitation_id', 'origin_subject_id', 'origin_group_id'].every((key) => typeof row[key] === 'string' && UUID.test(row[key] as string))
   || !['draft', 'submitted', 'validated'].includes(String(row.status)) || typeof row.content !== 'object' || row.content === null || Array.isArray(row.content)
   || typeof row.created_at !== 'string' || !Number.isFinite(Date.parse(row.created_at))
-  || typeof row.updated_at !== 'string' || !Number.isFinite(Date.parse(row.updated_at))) throw new Error('La respuesta de evoluciones no es válida.');
+  || typeof row.updated_at !== 'string' || !Number.isFinite(Date.parse(row.updated_at))
+  || ('pending_correction' in row && !pendingCorrection(row.pending_correction))) throw new Error('La respuesta de evoluciones no es válida.');
  return row as unknown as KinesiologyEvolutionListItem;
 }
 export async function listKinesiologyEvolutions(context: { patient_id: string; subject_id?: string; academic_group_id?: string }, cookies: AstroCookies, filters: EvolutionFilters = {}): Promise<KinesiologyEvolutionListItem[]> {
