@@ -1,5 +1,6 @@
 ---
 import { actions } from 'astro:actions';
+import PasswordToggle from '../../../components/PasswordToggle.astro';
 
 const result = Astro.getActionResult(actions.createStudent);
 ---
@@ -31,7 +32,10 @@ const result = Astro.getActionResult(actions.createStudent);
 			</div>
 			<div class="field">
 				<label for="password">Contraseña</label>
-				<input type="password" id="password" name="password" required minlength={10} autocomplete="new-password" aria-describedby="password-hint" />
+				<div class="password-control">
+					<input type="password" id="password" name="password" required minlength={10} autocomplete="new-password" aria-describedby="password-hint" />
+					<PasswordToggle for="password" />
+				</div>
 				<p class="hint" id="password-hint">Mínimo 10 caracteres, al menos una letra y un dígito</p>
 			</div>
 		</div>
