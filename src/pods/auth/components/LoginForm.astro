@@ -1,5 +1,6 @@
 ---
 import { actions } from 'astro:actions';
+import PasswordToggle from '../../../components/PasswordToggle.astro';
 
 const result = Astro.getActionResult(actions.login);
 const returnTo = Astro.url.searchParams.get('returnTo') ?? '/';
@@ -25,7 +26,10 @@ const returnTo = Astro.url.searchParams.get('returnTo') ?? '/';
 		</div>
 		<div class="field">
 			<label for="password">Contraseña</label>
-			<input type="password" id="password" name="password" required autocomplete="current-password" />
+			<div class="password-control">
+				<input type="password" id="password" name="password" required autocomplete="current-password" />
+				<PasswordToggle for="password" />
+			</div>
 		</div>
 	</fieldset>
 

@@ -2,6 +2,7 @@
 export const prerender = false;
 
 import { actions } from 'astro:actions';
+import PasswordToggle from '../components/PasswordToggle.astro';
 import Layout from '../layouts/Layout.astro';
 import { receptionActionUrl } from '../pods/reception/action-url';
 import '../styles/academic-panels.css';
@@ -180,7 +181,10 @@ const roleCopy = {
 				</div>
 				<div class="field">
 					<label for="account-password">Contraseña</label>
-					<input id="account-password" name="password" type="password" required autocomplete="new-password" />
+					<div class="password-control">
+						<input id="account-password" name="password" type="password" required autocomplete="new-password" />
+						<PasswordToggle for="account-password" />
+					</div>
 				</div>
 				<button type="submit">Crear cuenta</button>
 			</form>
