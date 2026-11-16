@@ -27,6 +27,7 @@ import { handleRecordTeacherConsent } from '../pods/teacher-clinical/actions/con
 import { handleRequestTeacherCorrection, handleValidateTeacherSubmission } from '../pods/teacher-clinical/actions/reviews';
 import { ORAL_SURGERY_FORM_FIELDS, handleCreateOralSurgeryDraft, handleDeclareOralSurgeryConsent, handleUpdateOralSurgeryDraft } from '../pods/oral-surgery-draft/actions/drafts';
 import { handleAuthorizeOralSurgeryDraft } from '../pods/oral-surgery-draft/actions/authorizations';
+import { OPERATIVE_REPORT_FORM_FIELDS, handleCloseOperativeReport, handleSaveOperativeReport } from '../pods/oral-surgery-draft/actions/operative-report';
 
 const UUID_INPUT = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
 const ID_INPUT = z.string().regex(/^[1-9]\d{0,18}$/);
@@ -244,6 +245,24 @@ export const server = {
 			paper_consent_verified: z.literal('on'),
 		}).strict(),
 		handler: handleAuthorizeOralSurgeryDraft,
+	}),
+	saveOralSurgeryOperativeReport: defineAction({
+		accept: 'form',
+		input: z.object({
+			id: z.string(), expected_draft_version: z.string(), expected_version: z.string().optional(),
+			assignment_id: z.string(), limit: z.string(), offset: z.string(), ...LIST_COORDINATE_INPUTS,
+			...Object.fromEntries(OPERATIVE_REPORT_FORM_FIELDS.map((name) => [name, z.string().optional()])),
+		}).strict(),
+		handler: handleSaveOperativeReport,
+	}),
+	closeOralSurgeryOperativeReport: defineAction({
+		accept: 'form',
+		input: z.object({
+			id: ID_INPUT, patient_id: UUID_INPUT, subject_id: UUID_INPUT, academic_group_id: UUID_INPUT,
+			expected_version: ID_INPUT, expected_draft_version: ID_INPUT,
+			ready_confirmed: z.literal('on'),
+		}).strict(),
+		handler: handleCloseOperativeReport,
 	}),
 	createPatient: defineAction({
 		accept: 'form',

@@ -52,6 +52,7 @@ const stubbedModules = {
   '../pods/teacher-assignment/actions': ['createTeacherAssignment'], '../pods/teacher-clinical/actions/consent': ['handleRecordTeacherConsent'],
   '../pods/teacher-clinical/actions/reviews': ['handleValidateTeacherSubmission','handleRequestTeacherCorrection'],
   '../pods/oral-surgery-draft/actions/authorizations': ['handleAuthorizeOralSurgeryDraft'],
+  '../pods/oral-surgery-draft/actions/operative-report': ['OPERATIVE_REPORT_FORM_FIELDS','handleCloseOperativeReport','handleSaveOperativeReport'],
 };
 
 export async function loadRegisteredActions(fetchImpl) {
@@ -73,7 +74,7 @@ export async function loadRegisteredActions(fetchImpl) {
       if (specifier === './session') return new vm.SyntheticModule(['getSession','clearSession'], function () { this.setExport('getSession', (jar) => jar.get('session')?.value ?? null); this.setExport('clearSession', () => {}); }, { context: sandbox });
       if (parent.identifier.endsWith(registryPath) && stubbedModules[specifier]) {
         const names = stubbedModules[specifier];
-        return new vm.SyntheticModule(names, function () { for (const name of names) this.setExport(name, () => undefined); }, { context: sandbox });
+        return new vm.SyntheticModule(names, function () { for (const name of names) this.setExport(name, name === 'OPERATIVE_REPORT_FORM_FIELDS' ? [] : () => undefined); }, { context: sandbox });
       }
       const target = new URL(specifier.endsWith('.ts') ? specifier : `${specifier}.ts`, parent.identifier);
       return compile(await readFile(target, 'utf8'), target.href);

@@ -1,5 +1,5 @@
 import type { AstroCookies } from 'astro';
-import { apiFetch } from '../../shared/apiClient';
+import { apiFetch, ApiError } from '../../shared/apiClient';
 import { realClinicalDate } from '../kinesiology-evaluation/list-filters';
 
 /** Yes/No and free-text fields of each Oral Surgery I section, in form order (backend contract). */
@@ -97,6 +97,36 @@ export interface AuthorizationHistory {
 	authorizations: Authorization[];
 }
 
+/** Operative report content in form order (backend contract): `fields: null` is a top-level text, otherwise a section of texts. */
+export const OPERATIVE_REPORT_LAYOUT = [
+	{ key: 'narrative', fields: null },
+	{ key: 'asepsis', fields: ['extraoral', 'intraoral'] },
+	{ key: 'anesthesia', fields: ['technique', 'drug', 'dose'] },
+	{ key: 'extraction', fields: ['teeth', 'technique', 'suture'] },
+	{ key: 'prescription', fields: ['medications', 'commercial_name', 'route', 'dose', 'frequency', 'duration'] },
+	{ key: 'postoperative_instructions', fields: null },
+	{ key: 'operative_incident', fields: null },
+] as const satisfies readonly { key: string; fields: readonly string[] | null }[];
+
+export type OperativeReportSection = Record<string, string | null>;
+/** Absent keys stay absent; the server neither fills nor scores them. */
+export type OperativeReportContent = Record<string, string | null | OperativeReportSection>;
+
+export interface OperativeReport {
+	draft_id: string;
+	draft_version: string;
+	authorization_id: string;
+	content: OperativeReportContent;
+	version: string;
+	status: 'draft' | 'closed';
+	created_by: string;
+	created_at: string;
+	updated_at: string;
+	closed_by: string | null;
+	closed_at: string | null;
+	teacher_habilitation_id: string | null;
+}
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_ID = 9223372036854775807n;
 const MAX_TEXT = 4000;
@@ -108,6 +138,10 @@ const DRAFT_KEYS = [
 const DECLARATION_KEYS = ['id', 'draft_id', 'draft_version', 'plan_revision', 'treatment_plan', 'declared_by', 'declared_at'];
 const AUTHORIZATION_KEYS = [
 	'id', 'draft_id', 'draft_version', 'consent_declaration_id', 'reviewed_content', 'authorized_by', 'teacher_habilitation_id', 'authorized_at',
+];
+const REPORT_KEYS = [
+	'draft_id', 'draft_version', 'authorization_id', 'content', 'version', 'status', 'created_by', 'created_at', 'updated_at',
+	'closed_by', 'closed_at', 'teacher_habilitation_id',
 ];
 const CONFIRMATION_ERROR = 'El resultado no se pudo confirmar. Consultá el estado antes de volver a intentarlo.';
 
@@ -134,6 +168,12 @@ function calendarDate(value: unknown): value is string {
 	return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }
 
+function validText(key: string, answer: unknown) {
+	if (answer !== null && typeof answer !== 'string') throw new Error(`El campo ${key} debe ser texto o vacío.`);
+	if (typeof answer === 'string' && answer.includes('\u0000')) throw new Error(`El campo ${key} contiene caracteres no permitidos.`);
+	if (typeof answer === 'string' && [...answer].length > MAX_TEXT) throw new Error(`El campo ${key} supera los ${MAX_TEXT} caracteres.`);
+}
+
 function validateSection(name: OralSurgerySectionName, value: unknown): OralSurgerySection {
 	if (!record(value)) throw new Error(`La sección ${name} no es válida.`);
 	const { booleans, texts } = ORAL_SURGERY_SECTIONS[name] as { booleans: readonly string[]; texts: readonly string[] };
@@ -142,9 +182,7 @@ function validateSection(name: OralSurgerySectionName, value: unknown): OralSurg
 		if (booleans.includes(key)) {
 			if (answer !== null && typeof answer !== 'boolean') throw new Error(`La respuesta ${key} debe ser Sí, No o sin responder.`);
 		} else if (texts.includes(key)) {
-			if (answer !== null && typeof answer !== 'string') throw new Error(`El campo ${key} debe ser texto o vacío.`);
-			if (typeof answer === 'string' && answer.includes('\u0000')) throw new Error(`El campo ${key} contiene caracteres no permitidos.`);
-			if (typeof answer === 'string' && [...answer].length > MAX_TEXT) throw new Error(`El campo ${key} supera los ${MAX_TEXT} caracteres.`);
+			validText(key, answer);
 		} else {
 			throw new Error(`Campo clínico desconocido: ${name}.${key}`);
 		}
@@ -172,6 +210,44 @@ export function validateOralSurgeryContent(value: unknown): OralSurgeryContent {
 
 function validContent(value: unknown): boolean {
 	try { validateOralSurgeryContent(value); return true; } catch { return false; }
+}
+
+/** Validate operative report content: every leaf is text or null, sections may be empty or partial. */
+export function validateOperativeReportContent(value: unknown): OperativeReportContent {
+	if (!record(value)) throw new Error('El contenido del parte quirúrgico debe ser un objeto.');
+	const output: OperativeReportContent = {};
+	for (const [key, field] of Object.entries(value)) {
+		const entry = OPERATIVE_REPORT_LAYOUT.find((item) => item.key === key);
+		if (!entry) throw new Error(`Campo del parte quirúrgico desconocido: ${key}`);
+		if (entry.fields === null) {
+			validText(key, field);
+			output[key] = field as string | null;
+			continue;
+		}
+		if (!record(field)) throw new Error(`La sección ${key} del parte quirúrgico no es válida.`);
+		const section: OperativeReportSection = {};
+		for (const [name, answer] of Object.entries(field)) {
+			if (!(entry.fields as readonly string[]).includes(name)) throw new Error(`Campo del parte quirúrgico desconocido: ${key}.${name}`);
+			validText(`${key}.${name}`, answer);
+			section[name] = answer as string | null;
+		}
+		output[key] = section;
+	}
+	return output;
+}
+
+function validReportContent(value: unknown): boolean {
+	try { validateOperativeReportContent(value); return true; } catch { return false; }
+}
+
+/** Exactly the 12 contract keys; the three closure fields are all null while open and all set once closed. */
+export function isOperativeReport(value: unknown, draftId: string): value is OperativeReport {
+	if (!record(value) || !exactKeys(value, REPORT_KEYS)) return false;
+	const open = value.status === 'draft' && value.closed_by === null && value.closed_at === null && value.teacher_habilitation_id === null;
+	const closed = value.status === 'closed' && uuid(value.closed_by) && iso(value.closed_at) && uuid(value.teacher_habilitation_id);
+	return value.draft_id === draftId && validId(value.draft_version) && validId(value.authorization_id) && validId(value.version)
+		&& validReportContent(value.content) && uuid(value.created_by) && iso(value.created_at) && iso(value.updated_at)
+		&& (open || closed);
 }
 
 export function isOralSurgeryDraft(value: unknown): value is OralSurgeryDraft {
@@ -226,6 +302,31 @@ export async function listOralSurgeryDrafts(
 		throw new Error('La respuesta de borradores no es válida.');
 	}
 	return response.items.map((item) => draftResponse(item, { context }));
+}
+
+/** Administrator consultation: one page of every visible draft, newest id first, with no origin context. */
+export async function listAllOralSurgeryDrafts(
+	cookies: AstroCookies,
+	page: { limit: number; offset: number },
+	filters?: { date_from?: string; date_to?: string },
+): Promise<OralSurgeryDraft[]> {
+	if (!Number.isSafeInteger(page.limit) || page.limit < 1 || page.limit > 100
+		|| !Number.isSafeInteger(page.offset) || page.offset < 0 || page.offset > 2147483647) {
+		throw new Error('La paginación no es válida.');
+	}
+	const query = new URLSearchParams({ limit: String(page.limit), offset: String(page.offset) });
+	for (const key of ['date_from', 'date_to'] as const) {
+		const value = filters?.[key];
+		if (value === undefined) continue;
+		if (!realClinicalDate(value)) throw new Error('El rango de fechas no es válido.');
+		query.set(key, value);
+	}
+	if (filters?.date_from && filters.date_to && filters.date_from > filters.date_to) throw new Error('El rango de fechas no es válido.');
+	const response = await apiFetch<unknown>(`/oral-surgery-drafts?${query}`, { cookies });
+	if (!record(response) || !exactKeys(response, ['items']) || !Array.isArray(response.items)) {
+		throw new Error('La respuesta de borradores no es válida.');
+	}
+	return response.items.map((item) => draftResponse(item, {}));
 }
 
 export async function getOralSurgeryDraft(id: string, cookies: AstroCookies): Promise<OralSurgeryDraft> {
@@ -322,6 +423,70 @@ export async function authorizeOralSurgeryDraft(
 		cookies,
 	});
 	if (!isAuthorization(value, id) || value.draft_version !== expectedVersion || value.consent_declaration_id !== consentDeclarationId) {
+		throw new Error(CONFIRMATION_ERROR);
+	}
+	return value;
+}
+
+/** The encounter's operative report, or null when none was saved yet. Callers load the draft first, so 404 means "no report". */
+export async function getOperativeReport(id: string, cookies: AstroCookies): Promise<OperativeReport | null> {
+	if (!validId(id)) throw new Error('El identificador de borrador no es válido.');
+	let value: unknown;
+	try {
+		value = await apiFetch<unknown>(`/oral-surgery-drafts/${id}/operative-report`, { cookies });
+	} catch (error) {
+		if (error instanceof ApiError && error.status === 404) return null;
+		throw error;
+	}
+	if (!isOperativeReport(value, id)) throw new Error('La respuesta del parte quirúrgico no es válida.');
+	return value;
+}
+
+/** First save of the report, bound to the clinical version the student loaded. Never retried: a second create is a 409. */
+export async function createOperativeReport(
+	id: string,
+	expectedDraftVersion: string,
+	content: unknown,
+	cookies: AstroCookies,
+): Promise<OperativeReport> {
+	if (!validId(id) || !validId(expectedDraftVersion)) throw new Error('El borrador o su versión no es válido.');
+	const body = { expected_draft_version: expectedDraftVersion, content: validateOperativeReportContent(content) };
+	const value = await apiFetch<unknown>(`/oral-surgery-drafts/${id}/operative-report`, { method: 'POST', body, cookies });
+	if (!isOperativeReport(value, id) || value.status !== 'draft' || value.draft_version !== expectedDraftVersion) throw new Error(CONFIRMATION_ERROR);
+	return value;
+}
+
+/** Replace the whole report content; both versions must still be current or the backend answers 409 and stores nothing. */
+export async function updateOperativeReport(
+	id: string,
+	expectedVersion: string,
+	expectedDraftVersion: string,
+	content: unknown,
+	cookies: AstroCookies,
+): Promise<OperativeReport> {
+	if (!validId(id) || !validId(expectedVersion) || !validId(expectedDraftVersion)) throw new Error('El parte o sus versiones no son válidos.');
+	const body = { expected_version: expectedVersion, expected_draft_version: expectedDraftVersion, content: validateOperativeReportContent(content) };
+	const value = await apiFetch<unknown>(`/oral-surgery-drafts/${id}/operative-report`, { method: 'PATCH', body, cookies });
+	if (!isOperativeReport(value, id) || value.status !== 'draft' || value.draft_version !== expectedDraftVersion
+		|| BigInt(value.version) <= BigInt(expectedVersion)) {
+		throw new Error(CONFIRMATION_ERROR);
+	}
+	return value;
+}
+
+/** Teacher closure of the exact report and clinical versions reviewed. Irreversible through the API. */
+export async function closeOperativeReport(
+	id: string,
+	expectedVersion: string,
+	expectedDraftVersion: string,
+	cookies: AstroCookies,
+): Promise<OperativeReport> {
+	if (!validId(id) || !validId(expectedVersion) || !validId(expectedDraftVersion)) throw new Error('El parte o sus versiones no son válidos.');
+	const value = await apiFetch<unknown>(`/oral-surgery-drafts/${id}/operative-report/close`, {
+		method: 'POST', body: { expected_version: expectedVersion, expected_draft_version: expectedDraftVersion }, cookies,
+	});
+	if (!isOperativeReport(value, id) || value.status !== 'closed' || value.draft_version !== expectedDraftVersion
+		|| BigInt(value.version) <= BigInt(expectedVersion)) {
 		throw new Error(CONFIRMATION_ERROR);
 	}
 	return value;

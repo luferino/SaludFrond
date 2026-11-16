@@ -77,10 +77,11 @@ async function evaluate(path, options = {}) {
 					'../pods/teacher-clinical/actions/reviews': ['handleValidateTeacherSubmission', 'handleRequestTeacherCorrection'],
 					'../pods/oral-surgery-draft/actions/drafts': ['ORAL_SURGERY_FORM_FIELDS', 'handleCreateOralSurgeryDraft', 'handleDeclareOralSurgeryConsent', 'handleUpdateOralSurgeryDraft'],
 					'../pods/oral-surgery-draft/actions/authorizations': ['handleAuthorizeOralSurgeryDraft'],
+					'../pods/oral-surgery-draft/actions/operative-report': ['OPERATIVE_REPORT_FORM_FIELDS', 'handleCloseOperativeReport', 'handleSaveOperativeReport'],
 					'../pods/kinesiology-evaluation/actions/evaluations': ['handleCreateKinesiologyEvaluation', 'handleUpdateKinesiologyEvaluation', 'handleSubmitKinesiologyEvaluation', 'handleCreateKinesiologyAmendment'],
 				};
 				return new vm.SyntheticModule(exports[specifier], function () {
-					for (const name of exports[specifier]) this.setExport(name, name === 'ORAL_SURGERY_FORM_FIELDS' ? [] : () => undefined);
+					for (const name of exports[specifier]) this.setExport(name, ['ORAL_SURGERY_FORM_FIELDS', 'OPERATIVE_REPORT_FORM_FIELDS'].includes(name) ? [] : () => undefined);
 				}, { context: sandbox });
 			}
 			if (specifier === 'astro') return new vm.SyntheticModule([], function () {}, { context: sandbox });
