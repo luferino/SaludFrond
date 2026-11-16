@@ -425,6 +425,16 @@ test('teacher invalid evolution filter is rejected before any clinical or evolut
  assert.match(result.html, /role="alert"[^>]*>El filtro de evaluación no es válido\./);
 });
 
+test('teacher origin evolution list marks a draft returned for correction with its reason', async () => {
+ const own = { ...evaluation, id: '77', evaluation_id: '55', status: 'draft', created_at: '2026-01-02T00:00:00Z' };
+ const result = await render('src/pages/teacher-clinical.astro', { evolutions: true, query: selectedContext, evolutionItems: [{ ...own, pending_correction: { reason: 'Revisar objetivos', requested_at: '2026-01-03T00:00:00Z', reviewed_by: patient } }, { ...own, id: '78', evaluation_id: '56' }] });
+ const block = result.html.split('id="teacher-evolutions-title"')[1].split('id="other-')[0];
+ const items = [...block.matchAll(/<li[^>]*>[\s\S]*?<\/li>/g)].map((match) => match[0]);
+ assert.equal(items.length, 2);
+ assert.match(items[0], /Evaluación 55 · Borrador[\s\S]*Corrección solicitada: Revisar objetivos/);
+ assert.doesNotMatch(items[1], /Corrección solicitada/);
+});
+
 test('teacher no-filter page keeps the default evaluation list and evolutions without an error', async () => {
  const result = await render('src/pages/teacher-clinical.astro', { evolutions: true, query: selectedContext });
  assert.deepEqual(result.requests, ['assignments', 'list', 'evolutions', 'evolutions']);

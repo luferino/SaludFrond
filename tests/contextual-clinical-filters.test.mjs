@@ -89,6 +89,23 @@ test('evolution filters preserve BIGINT decimal precision and reject invalid IDs
  assert.equal(requests.length, 1);
 });
 
+const evolutionRow = (overrides = {}) => ({ id: '9', clinical_record_id: '8', evaluation_id: '7', patient_id: patient, author_id: patient, origin_student_habilitation_id: patient, origin_subject_id: subject, origin_group_id: group, content: {}, status: 'draft', created_at: '2026-11-06T12:00:00Z', updated_at: '2026-11-06T12:00:00Z', ...overrides });
+const pendingCorrection = { reason: 'Completar la escala de dolor', requested_at: '2026-11-07T10:00:00Z', reviewed_by: subject };
+
+test('evolution adapter keeps a well-formed pending_correction and leaves rows without it unchanged', async () => {
+ const { api } = await load('src/pods/kinesiology-evolution/listing.ts', [{ items: [evolutionRow({ pending_correction: pendingCorrection }), evolutionRow({ id: '10' })] }]);
+ const items = JSON.parse(JSON.stringify(await api.listKinesiologyEvolutions({ patient_id: patient }, cookies)));
+ assert.deepEqual(items[0].pending_correction, pendingCorrection);
+ assert.equal('pending_correction' in items[1], false);
+});
+
+test('evolution adapter rejects a malformed pending_correction like any other malformed row', async () => {
+ for (const pending_correction of [null, 'motivo', [], {}, { ...pendingCorrection, reason: '' }, { ...pendingCorrection, reason: 3 }, { ...pendingCorrection, requested_at: 'ayer' }, { ...pendingCorrection, requested_at: undefined }, { ...pendingCorrection, reviewed_by: 'not-a-uuid' }]) {
+  const { api } = await load('src/pods/kinesiology-evolution/listing.ts', [{ items: [evolutionRow({ pending_correction })] }]);
+  await assert.rejects(() => api.listKinesiologyEvolutions({ patient_id: patient }, cookies), /La respuesta de evoluciones no es válida\./);
+ }
+});
+
 test('Oral Surgery date filters are optional and malformed inputs fail before clinical reads', async () => {
  const { api, requests } = await load('src/pods/oral-surgery-draft/api.ts', [{ items: [] }, { items: [] }]);
  const context = { patient_id: patient, subject_id: subject, academic_group_id: group };
