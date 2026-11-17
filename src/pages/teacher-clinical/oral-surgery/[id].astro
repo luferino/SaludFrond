@@ -4,11 +4,12 @@ import { actions, isInputError } from 'astro:actions';
 import Layout from '../../../layouts/Layout.astro';
 import OralSurgeryReadOnly from '../../../components/clinical/OralSurgeryReadOnly.astro';
 import OperativeReportReadOnly from '../../../components/clinical/OperativeReportReadOnly.astro';
+import PracticalEvaluationReadOnly from '../../../components/clinical/PracticalEvaluationReadOnly.astro';
 import { ApiError } from '../../../shared/apiClient';
 import { actionHrefWithContext } from '../../../pods/kinesiology-evaluation/api';
 import { parseClinicalContext, teacherGrant, type ClinicalContext } from '../../../pods/teacher-clinical/api';
-import { getAuthorizationHistory, getConsentHistory, getOperativeReport, getOralSurgeryDraft, type AuthorizationHistory, type ConsentHistory, type OperativeReport, type OralSurgeryDraft } from '../../../pods/oral-surgery-draft/api';
-import { oralSurgeryTimestampLabel } from '../../../pods/oral-surgery-draft/labels';
+import { getAuthorizationHistory, getConsentHistory, getOperativeReport, getOralSurgeryDraft, getPracticalEvaluation, PRACTICAL_RUBRIC, type AuthorizationHistory, type ConsentHistory, type OperativeReport, type OralSurgeryDraft, type PracticalInstructorView } from '../../../pods/oral-surgery-draft/api';
+import { oralSurgeryTimestampLabel, PRACTICAL_LABELS } from '../../../pods/oral-surgery-draft/labels';
 import { assignmentListCarrier, assignmentListQuery, parseAssignmentListCoordinates } from '../../../pods/patient-assignment/list-coordinates';
 import { clinicalFilterCarrier } from '../../../pods/kinesiology-evolution/listing';
 
@@ -23,6 +24,8 @@ let authorizations: AuthorizationHistory | null = null;
 let authorizationError = '';
 let report: OperativeReport | null = null;
 let reportError = '';
+let practical: PracticalInstructorView | null = null;
+let practicalError = '';
 const result = Astro.getActionResult(actions.authorizeOralSurgeryDraft);
 const resultData = result?.data;
 const actionError = result?.error ? (isInputError(result.error) ? 'Revisá los campos del formulario.' : 'No se pudo procesar la autorización. Consultá el estado antes de volver a intentarlo.') : resultData?.success === false ? resultData.error : '';
@@ -33,12 +36,25 @@ const closeData = closeResult?.data;
 const closeActionError = closeResult?.error ? (isInputError(closeResult.error) ? 'Revisá los campos del formulario.' : 'No se pudo confirmar el cierre del parte quirúrgico.') : closeData?.success === false ? closeData.error : '';
 const closeUncertain = (closeData?.success === false && closeData.uncertain) || (!!closeResult?.error && !isInputError(closeResult.error));
 if (closeData?.success === false && /sesión venció/i.test(closeData.error)) return loginRedirect();
+// Practical grade and correction: same session and copy rules as the close action. Submitted scores return only for non-conflict failures; a conflict shows the stored state.
+const gradeResult = Astro.getActionResult(actions.gradeOralSurgeryPracticalEvaluation);
+const gradeData = gradeResult?.data;
+const gradeUncertain = (gradeData?.success === false && gradeData.uncertain) || (!!gradeResult?.error && !isInputError(gradeResult.error));
+const gradeActionError = gradeResult?.error ? (isInputError(gradeResult.error) ? 'Revisá los campos del formulario.' : 'No se pudo confirmar la evaluación práctica. Recargá la página antes de volver a intentarlo.') : gradeData?.success === false ? gradeData.error : '';
+const gradeValues = gradeData?.success === false && !gradeData.conflict && !gradeUncertain ? gradeData.values : null;
+if (gradeData?.success === false && /sesión venció/i.test(gradeData.error)) return loginRedirect();
+const correctResult = Astro.getActionResult(actions.correctOralSurgeryPracticalEvaluation);
+const correctData = correctResult?.data;
+const correctUncertain = (correctData?.success === false && correctData.uncertain) || (!!correctResult?.error && !isInputError(correctResult.error));
+const correctActionError = correctResult?.error ? (isInputError(correctResult.error) ? 'Revisá los campos del formulario.' : 'No se pudo confirmar la corrección. Recargá la página antes de volver a intentarlo.') : correctData?.success === false ? correctData.error : '';
+const correctValues = correctData?.success === false && !correctData.conflict && !correctUncertain ? correctData.values : null;
+if (correctData?.success === false && /sesión venció/i.test(correctData.error)) return loginRedirect();
 // The action URL carries the assignment choice so the redirect and «Volver» keep the selected assignment.
 const assignmentChoices = Astro.url.searchParams.getAll('assignment_id');
 const validAssignment = assignmentChoices.length === 1 && /^[1-9]\d{0,18}$/.test(assignmentChoices[0]) ? assignmentChoices[0] : '';
 const assignmentCarrier: Record<string, string> = validAssignment ? { assignment_id: validAssignment } : {};
 // Success returns to the detail with the same origin context, list state and filters; the outcome flag names the action that finished.
-const redirectAfterAction = (data: ClinicalContext & { id: string }, outcome: 'authorized' | 'closed') => {
+const redirectAfterAction = (data: ClinicalContext & { id: string }, outcome: 'authorized' | 'closed' | 'graded' | 'corrected') => {
  const coordinates = parseAssignmentListCoordinates(Astro.url.searchParams, true);
  const carriesListState = [...Astro.url.searchParams.keys()].some((key) => key.startsWith('list_'));
  const returnParams = new URLSearchParams({ patient_id: data.patient_id, subject_id: data.subject_id, academic_group_id: data.academic_group_id, ...(carriesListState ? assignmentListCarrier(coordinates) : {}), ...assignmentCarrier, ...clinicalFilterCarrier(Astro.url.searchParams), [outcome]: '1' });
@@ -46,6 +62,8 @@ const redirectAfterAction = (data: ClinicalContext & { id: string }, outcome: 'a
 };
 if (resultData?.success) return redirectAfterAction(resultData, 'authorized');
 if (closeData?.success) return redirectAfterAction(closeData, 'closed');
+if (gradeData?.success) return redirectAfterAction(gradeData, 'graded');
+if (correctData?.success) return redirectAfterAction(correctData, 'corrected');
 const allowed = teacherGrant(Astro.cookies, 'oral-surgery-drafts:read');
 const canAuthorize = teacherGrant(Astro.cookies, 'oral-surgery-drafts:authorize');
 const canClose = teacherGrant(Astro.cookies, 'oral-surgery-drafts:close');
@@ -88,6 +106,15 @@ if (draft) {
   if (failure instanceof ApiError && failure.status === 401) return loginRedirect();
   reportError = 'No se pudo consultar el parte quirúrgico. No se habilita la autorización ni el cierre.';
  }
+ try {
+  const view = await getPracticalEvaluation(draft.id, Astro.cookies);
+  // The teacher view always carries the history; any other shape is an unreadable evaluation for this page.
+  if (view && !('history' in view)) throw new Error('unexpected practical evaluation view');
+  practical = view;
+ } catch (failure) {
+  if (failure instanceof ApiError && failure.status === 401) return loginRedirect();
+  practicalError = 'No se pudo consultar la evaluación práctica. No se habilita la calificación ni la corrección.';
+ }
 }
 // Both histories must describe the exact version rendered; an edit between reads blocks authorization.
 const versionsMatch = !!draft && consent?.draft_version === draft.version && authorizations?.draft_version === draft.version;
@@ -110,6 +137,15 @@ for (const [key, value] of Object.entries(clinicalCarrier)) returnParams.set(key
 const returnToList = `/teacher-clinical?${returnParams}`;
 const actionHref = actionHrefWithContext(actions.authorizeOralSurgeryDraft.toString(), Object.fromEntries(cleanParams), Astro.url.href);
 const closeHref = actionHrefWithContext(actions.closeOralSurgeryOperativeReport.toString(), Object.fromEntries(cleanParams), Astro.url.href);
+const gradeHref = actionHrefWithContext(actions.gradeOralSurgeryPracticalEvaluation.toString(), Object.fromEntries(cleanParams), Astro.url.href);
+const correctHref = actionHrefWithContext(actions.correctOralSurgeryPracticalEvaluation.toString(), Object.fromEntries(cleanParams), Astro.url.href);
+// The grade form needs a closed report, a read that succeeded with no grade yet and no uncertain grade; the correction form needs the grade and no uncertain correction.
+const canGrade = teacherGrant(Astro.cookies, 'oral-surgery-drafts:grade');
+const showGradeForm = canGrade && !!draft && reportClosed && practicalError === '' && practical === null && !gradeUncertain;
+const correctable = canGrade && !!draft && reportClosed && practicalError === '' && !correctUncertain && practical ? practical.current : null;
+const gradeSelections: Record<string, string> = gradeValues ?? {};
+const correctSelections: Record<string, string> = correctValues ?? (correctable ? Object.fromEntries(PRACTICAL_RUBRIC.map(({ key }) => [key, String(correctable.items[key])])) : {});
+const correctionReason = correctValues?.reason ?? '';
 ---
 <Layout>
  <main>
@@ -180,6 +216,51 @@ const closeHref = actionHrefWithContext(actions.closeOralSurgeryOperativeReport.
      </form>}
     </> : <p>El alumno todavía no guardó el parte quirúrgico.</p>}
    </section>
+   <section aria-labelledby="practical-title">
+    <h2 id="practical-title">Evaluación práctica</h2>
+    {practicalError ? <p role="alert">{practicalError}</p> : <>
+     {Astro.url.searchParams.get('graded') === '1' && <p role="status">Evaluación práctica registrada.</p>}
+     {Astro.url.searchParams.get('corrected') === '1' && <p role="status">Corrección registrada.</p>}
+     {gradeActionError && <p role="alert">{gradeActionError}</p>}
+     {gradeUncertain && <p role="status">Consultá el estado antes de volver a calificar.</p>}
+     {correctActionError && <p role="alert">{correctActionError}</p>}
+     {correctUncertain && <p role="status">Consultá el estado antes de volver a calificar.</p>}
+     {practical && <PracticalEvaluationReadOnly current={practical.current} history={practical.history} />}
+     {!canGrade && <p>Esta consulta no otorga permiso para calificar.</p>}
+     {canGrade && !practical && reportError === '' && !reportClosed && <p>La evaluación práctica se habilita cuando el parte quirúrgico está cerrado.</p>}
+     {showGradeForm && <form method="POST" action={gradeHref} id="grade-form">
+      <input type="hidden" name="id" value={draft.id} />
+      <input type="hidden" name="patient_id" value={draft.patient_id} />
+      <input type="hidden" name="subject_id" value={draft.origin_subject_id} />
+      <input type="hidden" name="academic_group_id" value={draft.origin_group_id} />
+      {PRACTICAL_RUBRIC.map(({ key, max }) => <label>{PRACTICAL_LABELS[key]}
+       <select name={key} data-max={max} required>
+        <option value="" selected={!gradeSelections[key]}>Elegí un puntaje</option>
+        {Array.from({ length: max + 1 }, (_, score) => <option value={score} selected={gradeSelections[key] === String(score)}>{score}/{max}</option>)}
+       </select>
+      </label>)}
+      <p id="grade-preview" aria-live="polite"></p>
+      <button type="submit">Registrar evaluación práctica</button>
+     </form>}
+     {correctable && <form method="POST" action={correctHref} id="correct-form">
+      <input type="hidden" name="id" value={draft.id} />
+      <input type="hidden" name="patient_id" value={draft.patient_id} />
+      <input type="hidden" name="subject_id" value={draft.origin_subject_id} />
+      <input type="hidden" name="academic_group_id" value={draft.origin_group_id} />
+      <input type="hidden" name="expected_revision" value={correctable.revision} />
+      <p>La corrección crea una revisión nueva; la calificación anterior queda en el historial.</p>
+      {PRACTICAL_RUBRIC.map(({ key, max }) => <label>{PRACTICAL_LABELS[key]}
+       <select name={key} data-max={max} required>
+        <option value="" selected={!correctSelections[key]}>Elegí un puntaje</option>
+        {Array.from({ length: max + 1 }, (_, score) => <option value={score} selected={correctSelections[key] === String(score)}>{score}/{max}</option>)}
+       </select>
+      </label>)}
+      <p id="correction-preview" aria-live="polite"></p>
+      <label>Motivo de la corrección <textarea name="reason" maxlength="4000" required>{correctionReason}</textarea></label>
+      <button type="submit">Registrar corrección</button>
+     </form>}
+    </>}
+   </section>
   </>}
  </main>
  <script>
@@ -193,6 +274,29 @@ const closeHref = actionHrefWithContext(actions.closeOralSurgeryOperativeReport.
   if (authorizeForm) protectSubmit(authorizeForm, 'Autorizando…');
   const closeForm = document.querySelector<HTMLFormElement>('#close-form');
   if (closeForm) protectSubmit(closeForm, 'Cerrando…');
+  // Live preview only: the server recomputes the total and outcome on save. PASSING_TOTAL mirrors PRACTICAL_PASSING_TOTAL in the API module.
+  const PASSING_TOTAL = 15;
+  const previewPractical = (form: HTMLFormElement, preview: HTMLElement) => {
+   const selects = [...form.querySelectorAll<HTMLSelectElement>('select[data-max]')];
+   const update = () => {
+    const maximum = selects.reduce((sum, select) => sum + Number(select.dataset.max), 0);
+    const answered = selects.filter((select) => select.value !== '');
+    const total = answered.reduce((sum, select) => sum + Number(select.value), 0);
+    preview.textContent = answered.length < selects.length
+     ? `Total parcial: ${total}/${maximum} · faltan ítems por calificar`
+     : `Total: ${total}/${maximum} · ${total >= PASSING_TOTAL ? 'Aprobado' : 'Anulado'}. Vista previa: el servidor confirma el total al guardar.`;
+   };
+   form.addEventListener('change', update);
+   update();
+  };
+  const gradeForm = document.querySelector<HTMLFormElement>('#grade-form');
+  if (gradeForm) protectSubmit(gradeForm, 'Registrando…');
+  const gradePreview = document.querySelector<HTMLElement>('#grade-preview');
+  if (gradeForm && gradePreview) previewPractical(gradeForm, gradePreview);
+  const correctForm = document.querySelector<HTMLFormElement>('#correct-form');
+  if (correctForm) protectSubmit(correctForm, 'Registrando corrección…');
+  const correctionPreview = document.querySelector<HTMLElement>('#correction-preview');
+  if (correctForm && correctionPreview) previewPractical(correctForm, correctionPreview);
  </script>
 </Layout>
 <style>

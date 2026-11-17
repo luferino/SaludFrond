@@ -174,7 +174,10 @@ async function renderPage(options = {}) {
   clinicalFilterCarrier: listing.clinicalFilterCarrier,
   oralSurgeryTimestampLabel: labels.oralSurgeryTimestampLabel,
   Layout: null, Fragment: null, OralSurgeryReadOnly: readOnlyComponent, OperativeReportReadOnly: () => '', ApiError: FixtureApiError,
-  actions: { authorizeOralSurgeryDraft: 'authorize', closeOralSurgeryOperativeReport: 'close' },
+  actions: {
+   authorizeOralSurgeryDraft: 'authorize', closeOralSurgeryOperativeReport: 'close',
+   gradeOralSurgeryPracticalEvaluation: 'grade', correctOralSurgeryPracticalEvaluation: 'correct',
+  },
   isInputError: (error) => error?.input === true,
   actionHrefWithContext: (action) => action,
   teacherGrant: (_cookies, permission) => grants[permission] ?? false,
@@ -191,6 +194,8 @@ async function renderPage(options = {}) {
   getAuthorizationHistory: async (id) => { requests.push(['authorizations', id]); if (options.authorizationError) throw options.authorizationError; return options.authorizations ?? historyFixture(); },
   // Report reads are not recorded here: these suites assert the draft and history reads exactly; report behavior lives in oral-surgery-teacher-report.test.mjs.
   getOperativeReport: async () => null,
+  // Practical reads and grade forms are covered in oral-surgery-teacher-report.test.mjs; this suite never renders a closed report.
+  getPracticalEvaluation: async () => null,
   $$renderComponent: async (_result, _name, component, props, slots) => typeof component === 'function' ? component({ createAstro: () => ({ ...Astro, props }) }, props, slots) : slots?.default?.() ?? '',
  };
  const page = await compileAstro(pagePath, mocks);
@@ -461,7 +466,7 @@ test('D9 browser handler disables the authorize submit on the first click and bl
  const button = { disabled: false, textContent: '' };
  const form = { dataset: {}, addEventListener: (_name, callback) => { handler = callback; }, querySelector: () => button };
  const code = ts.transpileModule(script, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
- vm.runInNewContext(code, { document: { querySelector: () => form, querySelectorAll: () => [] } });
+ vm.runInNewContext(code, { document: { querySelector: (selector) => (selector === '#authorize-form' ? form : null), querySelectorAll: () => [] } });
  let prevented = 0;
  handler({ preventDefault() { prevented++; } });
  assert.equal(button.disabled, true);

@@ -20,7 +20,7 @@ const context = `patient_id=${patient}&subject_id=${subject}&academic_group_id=$
 const listContext = 'list_limit=50&list_offset=0';
 
 // Realistic Astro action stubs: toString() yields only the query, never a path.
-const actions = Object.fromEntries(['recordTeacherConsent', 'validateTeacherSubmission', 'requestTeacherCorrection', 'authorizeOralSurgeryDraft', 'closeOralSurgeryOperativeReport']
+const actions = Object.fromEntries(['recordTeacherConsent', 'validateTeacherSubmission', 'requestTeacherCorrection', 'authorizeOralSurgeryDraft', 'closeOralSurgeryOperativeReport', 'gradeOralSurgeryPracticalEvaluation', 'correctOralSurgeryPracticalEvaluation']
   .map((name) => [name, Object.assign(() => undefined, { toString: () => `?_action=${name}` })]));
 const evaluation = {
   id, clinical_record_id: '9007199254741060', patient_id: patient, author_id: actorId, origin_student_habilitation_id: actorId,
@@ -113,6 +113,7 @@ test('teacher oral surgery authorization form posts back to the rendered draft r
       getConsentHistory: async () => ({ draft_version: '3', plan_revision: '2', current_declaration_id: '7', declarations: [] }),
       getAuthorizationHistory: async () => ({ draft_version: '3', current_authorization_id: null, authorizations: [] }),
       getOperativeReport: async () => null,
+      getPracticalEvaluation: async () => null,
     },
   });
   assert.deepEqual(formActions(page.html), [
