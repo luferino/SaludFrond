@@ -1,4 +1,4 @@
-# Oral Surgery I drafts, paper consent and teacher authorization
+# Oral Surgery I drafts, paper consent, teacher authorization and operative report
 
 Oral Surgery I is an Odontology form with its own backend API (`/oral-surgery-drafts`). It does not reuse the Kinesiology evaluation API or its lifecycle (there is no submission or validation step).
 
@@ -38,6 +38,35 @@ Any change to the stored treatment plan, including going back to an earlier plan
 
 The **Autorizar esta versión** form appears only with the `oral-surgery-drafts:authorize` grant, a current consent declaration, and no authorization for the current version. It requires the checkbox *Verifiqué el consentimiento firmado en papel* and sends one POST binding the exact version and declaration. Every student save, even of identical content, makes a new authorization necessary; the page states when the current version is not authorized. If the draft changes while the page loads, the form is hidden until the teacher reloads. Administrators never authorize.
 
+## Operative report (student)
+
+Each encounter has at most one operative report, written by the draft's author on the student editor page (`/oral-surgery-drafts/[id]`). It records what was done: procedure narrative, asepsis (extraoral, intraoral), anesthesia (technique, drug, dose), extraction (teeth, technique, suture), prescription (medications, commercial name, route, dose, frequency, duration), postoperative instructions and operative incidents. Every field is free text of up to 4000 characters, and **incomplete reports can be saved**: the frontend applies no completeness rule and no grade.
+
+- **Prerequisite**: saving needs a current teacher authorization for the exact clinical version shown. Without one, the page says so and offers no save button; the backend rejects the save anyway.
+- **Create and edit**: the first save sends one POST bound to the clinical version (`expected_draft_version`); later saves send one PATCH with both the report version (`expected_version`) and the clinical version. Each save replaces the whole report. Empty controls keep the stored representation (absent stays absent, `null` stays `null`, `''` stays `''`); clearing an answer stores `null`.
+- **Clinical version changes**: saving the clinical draft creates a new version. The report then has to be saved again against the new version (after a new authorization) before the teacher can close it; the page shows a notice while the versions differ.
+- **Conflicts**: if the clinical draft or the report changed, a report already exists, or the report was closed, nothing is stored. The page shows the current report and lists the unsaved values separately for copying. A missing authorization keeps the typed values in the form.
+- **Unknown outcome**: a network failure or server error after the write is reported as unconfirmed, never as saved, and is never retried automatically.
+
+## Teacher closure
+
+The teacher page (`/teacher-clinical/oral-surgery/[id]`) shows the report read-only. The **Cerrar parte quirúrgico** form appears only with the `oral-surgery-drafts:close` grant, an open report saved against the current clinical version, and the checkbox *Revisé el parte quirúrgico y confirmo que está listo para cerrarse. El cierre es irreversible.* It sends one POST with both exact versions. The teacher, not an automatic check, decides that the report is ready.
+
+If the report was saved against an older clinical version, the page asks the student to save it again and offers no close form. Rejections (stale versions, a report that no longer matches the clinical version, missing context or wrong role) are shown with their own message; an unconfirmed outcome asks the teacher to check the state before trying again.
+
+## Closed encounters
+
+Closure is irreversible. Once the report is closed:
+
+- The student sees the clinical draft and the report read-only, without save or consent-declaration forms.
+- The teacher sees no authorization or close form; consent and authorization histories stay visible.
+- Both pages show who closed the report and when.
+- If a page was opened before the closure, the backend rejects the late save, declaration or authorization (`closed oral surgery encounter is immutable`) and the page asks to reload.
+
+## Administrator consultation
+
+Administrators with `oral-surgery-drafts:read` reach **Cirugía Oral I** from the navigation (`/oral-surgery-admin`). The list shows the most recent encounters across every context, with optional date filters and previous/next pages (no totals). Each encounter opens a read-only detail (`/oral-surgery-admin/[id]`) with the clinical content, consent declarations, authorizations and the operative report with its closure. The list itself does not show whether a report is closed; the detail does. Administrators never edit, authorize or close.
+
 ## Not included
 
-Operative reports, grading, attachments, patient electronic signatures and the administrative screen to enable subjects. Verification uses isolated synthetic fixtures; it does not prove a running backend or real data.
+Grading, attachments, patient electronic signatures and the administrative screen to enable subjects. Verification uses isolated synthetic fixtures; it does not prove a running backend or real data.
