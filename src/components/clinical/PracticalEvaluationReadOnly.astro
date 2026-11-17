@@ -1,0 +1,47 @@
+---
+import { PRACTICAL_MAX_TOTAL, PRACTICAL_RUBRIC, type PracticalCurrent, type PracticalRevision } from '../../pods/oral-surgery-draft/api';
+import { PRACTICAL_LABELS, oralSurgeryTimestampLabel, practicalSummaryLabel } from '../../pods/oral-surgery-draft/labels';
+
+interface Props { current: PracticalCurrent; history?: PracticalRevision[] }
+const { current, history } = Astro.props;
+---
+<div class="practical-evaluation-readonly">
+	<p class="summary">{practicalSummaryLabel(current.total, current.outcome, PRACTICAL_MAX_TOTAL)}</p>
+	<p>Calificado el <time datetime={current.graded_at}>{oralSurgeryTimestampLabel(current.graded_at)}</time></p>
+	{current.outcome === 'annulled' && <p class="annulled-note" role="note">Práctico anulado: el registro clínico no cambia y el alumno repite el práctico en otro encuentro.</p>}
+	<table>
+		<thead>
+			<tr><th scope="col">Ítem</th><th scope="col">Puntaje</th></tr>
+		</thead>
+		<tbody>
+			{PRACTICAL_RUBRIC.map(({ key, max }) => <tr>
+				<th scope="row">{PRACTICAL_LABELS[key]}</th>
+				<td>{current.items[key]}/{max}</td>
+			</tr>)}
+		</tbody>
+	</table>
+	{history && <section>
+		<h3>Historial</h3>
+		<ol>
+			{history.map((entry) => <li>
+				<dl>
+					<div><dt>Revisión</dt><dd>{entry.revision}</dd></div>
+					<div><dt>Resultado</dt><dd>{practicalSummaryLabel(entry.total, entry.outcome, PRACTICAL_MAX_TOTAL)}</dd></div>
+					{entry.reason !== null && <div><dt>Motivo</dt><dd class="reason">{entry.reason}</dd></div>}
+					<div><dt>Docente</dt><dd class="identifier">{entry.graded_by}</dd></div>
+					<div><dt>Calificado el</dt><dd><time datetime={entry.graded_at}>{oralSurgeryTimestampLabel(entry.graded_at)}</time></dd></div>
+				</dl>
+			</li>)}
+		</ol>
+	</section>}
+</div>
+<style>
+	.practical-evaluation-readonly section { margin: 1rem 0; }
+	.practical-evaluation-readonly table { border-collapse: collapse; margin: 0.5rem 0; }
+	.practical-evaluation-readonly th, .practical-evaluation-readonly td { padding: 0.25rem 0.75rem; text-align: left; vertical-align: top; }
+	.practical-evaluation-readonly ol { padding-left: 1.25rem; }
+	.practical-evaluation-readonly dl { display: grid; grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); gap: 0.5rem 1.5rem; }
+	.practical-evaluation-readonly dt { font-weight: 700; }
+	.practical-evaluation-readonly dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+	.practical-evaluation-readonly .summary { font-weight: 700; }
+</style>

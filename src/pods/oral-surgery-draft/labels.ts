@@ -1,4 +1,4 @@
-import type { OralSurgerySectionName } from './api';
+import type { OralSurgerySectionName, PracticalKey, PracticalOutcome } from './api';
 
 /** Spanish UI copy for each Oral Surgery I section and field; keys follow the backend contract. */
 export const ORAL_SURGERY_SECTION_LABELS: Record<OralSurgerySectionName, string> = {
@@ -136,4 +136,29 @@ export const OPERATIVE_REPORT_LABELS: Record<string, string> = {
 /** Status line of an operative report; closure is irreversible. */
 export function operativeReportStatusLabel(status: 'draft' | 'closed'): string {
 	return status === 'closed' ? 'Cerrado por el docente' : 'Abierto: pendiente de cierre docente';
+}
+
+/** Spanish copy for each practical rubric item, in the paper form's wording; the first three items are grouped under Bioseguridad. */
+export const PRACTICAL_LABELS: Record<PracticalKey, string> = {
+	hand_washing: 'Bioseguridad: lavado de manos',
+	barrier_elements: 'Bioseguridad: elementos de barrera',
+	waste_disposal: 'Bioseguridad: desecho de elementos',
+	clinical_table_setup: 'Mesa clínica montada adecuadamente e instrumental completo',
+	asepsis: 'Aplica la asepsia',
+	anamnesis_questionnaire: 'Responde el cuestionario al instructor y realiza la anamnesis adecuadamente',
+	anesthetic_technique: 'Conoce y realiza la técnica anestésica en forma adecuada',
+	sindesmotomy_elevators: 'Sindesmotomía y uso correcto de elevadores',
+	surgical_procedure: 'Procedimiento quirúrgico secuencial; realiza la exodoncia sin intervención del docente',
+	curettage_suture: 'Realiza el curetaje y la sutura correctamente',
+	record_and_equipment: 'Registra el procedimiento y deja en condiciones el equipo y el instrumental',
+	relationship: 'Relacionamiento adecuado con el docente, el paciente y el personal',
+};
+
+export function practicalOutcomeLabel(outcome: PracticalOutcome): string {
+	return outcome === 'approved' ? 'Aprobado' : 'Anulado';
+}
+
+/** Total over the rubric maximum with the outcome, e.g. `Total: 16/20 · Aprobado`. The maximum is passed in so this module stays free of runtime imports. */
+export function practicalSummaryLabel(total: number, outcome: PracticalOutcome, maximum: number): string {
+	return `Total: ${total}/${maximum} · ${practicalOutcomeLabel(outcome)}`;
 }

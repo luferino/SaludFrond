@@ -491,3 +491,178 @@ export async function closeOperativeReport(
 	}
 	return value;
 }
+
+/** Practical rubric in S2 order: 12 integer items whose maxima total 20. The server computes the total and outcome. */
+export const PRACTICAL_RUBRIC = [
+	{ key: 'hand_washing', max: 1 },
+	{ key: 'barrier_elements', max: 1 },
+	{ key: 'waste_disposal', max: 1 },
+	{ key: 'clinical_table_setup', max: 2 },
+	{ key: 'asepsis', max: 1 },
+	{ key: 'anamnesis_questionnaire', max: 3 },
+	{ key: 'anesthetic_technique', max: 2 },
+	{ key: 'sindesmotomy_elevators', max: 2 },
+	{ key: 'surgical_procedure', max: 3 },
+	{ key: 'curettage_suture', max: 2 },
+	{ key: 'record_and_equipment', max: 1 },
+	{ key: 'relationship', max: 1 },
+] as const;
+
+export type PracticalKey = (typeof PRACTICAL_RUBRIC)[number]['key'];
+export type PracticalItems = Record<PracticalKey, number>;
+export type PracticalOutcome = 'approved' | 'annulled';
+
+/** Totals at or above this value are approved; below it the practical is annulled. */
+export const PRACTICAL_PASSING_TOTAL = 15;
+export const PRACTICAL_MAX_TOTAL = PRACTICAL_RUBRIC.reduce((sum, item) => sum + item.max, 0);
+
+export function practicalTotal(items: PracticalItems): number {
+	return PRACTICAL_RUBRIC.reduce((sum, { key }) => sum + items[key], 0);
+}
+
+export function practicalOutcome(total: number): PracticalOutcome {
+	return total >= PRACTICAL_PASSING_TOTAL ? 'approved' : 'annulled';
+}
+
+/** One grade of the encounter. `reason` is null only on revision 1; later revisions carry the audited reason for the change. */
+export interface PracticalRevision {
+	revision: string;
+	items: PracticalItems;
+	total: number;
+	outcome: PracticalOutcome;
+	reason: string | null;
+	graded_by: string;
+	teacher_habilitation_id: string;
+	graded_at: string;
+}
+
+/** What the student sees: the current grade only, with no history or reasons. */
+export type PracticalCurrent = Pick<PracticalRevision, 'items' | 'total' | 'outcome' | 'graded_at'>;
+export interface PracticalStudentView { current: PracticalCurrent }
+export interface PracticalInstructorView { current: PracticalRevision; history: PracticalRevision[] }
+
+const PRACTICAL_KEYS: string[] = PRACTICAL_RUBRIC.map(({ key }) => key);
+const PRACTICAL_REVISION_KEYS = ['revision', 'items', 'total', 'outcome', 'reason', 'graded_by', 'teacher_habilitation_id', 'graded_at'];
+const PRACTICAL_CURRENT_KEYS = ['items', 'total', 'outcome', 'graded_at'];
+const MAX_PRACTICAL_REASON = 4000;
+const PRACTICAL_ITEMS_ERROR = 'Los puntajes de la evaluación práctica no son válidos.';
+const PRACTICAL_REASON_ERROR = 'El motivo debe tener entre 1 y 4000 caracteres, sin caracteres nulos.';
+const PRACTICAL_VIEW_ERROR = 'La respuesta de la evaluación práctica no es válida.';
+
+function validScore(score: unknown, max: number): boolean {
+	return typeof score === 'number' && Number.isInteger(score) && score >= 0 && score <= max;
+}
+
+/** Exactly the 12 rubric keys, each an integer from 0 to its maximum. */
+function validItems(value: unknown): value is PracticalItems {
+	return record(value) && exactKeys(value, PRACTICAL_KEYS)
+		&& PRACTICAL_RUBRIC.every(({ key, max }) => validScore(value[key], max));
+}
+
+/** Items must be valid, the total must be their sum, and the outcome must follow the threshold. */
+function consistentScore(items: unknown, total: unknown, outcome: unknown): boolean {
+	if (!validItems(items) || typeof total !== 'number') return false;
+	return total === practicalTotal(items) && outcome === practicalOutcome(total);
+}
+
+/** Items in rubric order, ready to send; anything else is refused before a request. */
+function practicalItems(value: unknown): PracticalItems {
+	if (!validItems(value)) throw new Error(PRACTICAL_ITEMS_ERROR);
+	const items = {} as PracticalItems;
+	for (const { key } of PRACTICAL_RUBRIC) items[key] = value[key];
+	return items;
+}
+
+function sameItems(a: PracticalItems, b: PracticalItems): boolean {
+	return PRACTICAL_RUBRIC.every(({ key }) => a[key] === b[key]);
+}
+
+/** Reason as sent: trimmed, non-empty, at most 4000 code points, and no NUL. */
+export function practicalReason(value: unknown): string {
+	if (typeof value !== 'string' || value.includes('\u0000')) throw new Error(PRACTICAL_REASON_ERROR);
+	const text = value.trim();
+	if (text === '' || [...text].length > MAX_PRACTICAL_REASON) throw new Error(PRACTICAL_REASON_ERROR);
+	return text;
+}
+
+function validReason(value: unknown): boolean {
+	try { practicalReason(value); return true; } catch { return false; }
+}
+
+function isPracticalRevision(value: unknown): value is PracticalRevision {
+	if (!record(value) || !exactKeys(value, PRACTICAL_REVISION_KEYS)) return false;
+	return validId(value.revision) && consistentScore(value.items, value.total, value.outcome)
+		&& (value.revision === '1' ? value.reason === null : validReason(value.reason))
+		&& uuid(value.graded_by) && uuid(value.teacher_habilitation_id) && iso(value.graded_at);
+}
+
+function sameRevision(a: PracticalRevision, b: PracticalRevision): boolean {
+	return a.revision === b.revision && a.total === b.total && a.outcome === b.outcome && a.reason === b.reason
+		&& a.graded_by === b.graded_by && a.teacher_habilitation_id === b.teacher_habilitation_id && a.graded_at === b.graded_at
+		&& sameItems(a.items, b.items);
+}
+
+function isPracticalStudentView(value: unknown): value is PracticalStudentView {
+	if (!record(value) || !exactKeys(value, ['current'])) return false;
+	const current = value.current;
+	if (!record(current) || !exactKeys(current, PRACTICAL_CURRENT_KEYS)) return false;
+	return consistentScore(current.items, current.total, current.outcome) && iso(current.graded_at);
+}
+
+/** Revisions ascend consecutively from '1' and the current revision is exactly the last history entry. */
+function isPracticalInstructorView(value: unknown): value is PracticalInstructorView {
+	if (!record(value) || !exactKeys(value, ['current', 'history']) || !Array.isArray(value.history)) return false;
+	const history: unknown[] = value.history;
+	if (history.length === 0 || !history.every(isPracticalRevision)) return false;
+	const revisions = history as PracticalRevision[];
+	const current = value.current;
+	return revisions.every((item, index) => item.revision === String(index + 1))
+		&& isPracticalRevision(current) && sameRevision(current, revisions[revisions.length - 1]);
+}
+
+/** The caller's view of the encounter's practical grade; null means no grade exists yet. Other 404s are rethrown. */
+export async function getPracticalEvaluation(
+	id: string,
+	cookies: AstroCookies,
+): Promise<PracticalStudentView | PracticalInstructorView | null> {
+	if (!validId(id)) throw new Error('El identificador de borrador no es válido.');
+	let value: unknown;
+	try {
+		value = await apiFetch<unknown>(`/oral-surgery-drafts/${id}/practical-evaluation`, { cookies });
+	} catch (error) {
+		if (error instanceof ApiError && error.status === 404 && error.message === 'oral surgery practical evaluation was not found') return null;
+		throw error;
+	}
+	if (!isPracticalStudentView(value) && !isPracticalInstructorView(value)) throw new Error(PRACTICAL_VIEW_ERROR);
+	return value;
+}
+
+/** The first grade of the encounter: one POST of all 12 items. The response must be revision 1 with the same items. */
+export async function gradePracticalEvaluation(id: string, items: unknown, cookies: AstroCookies): Promise<PracticalRevision> {
+	if (!validId(id)) throw new Error('El identificador de borrador no es válido.');
+	const checked = practicalItems(items);
+	const value = await apiFetch<unknown>(`/oral-surgery-drafts/${id}/practical-evaluation`, { method: 'POST', body: { items: checked }, cookies });
+	if (!isPracticalRevision(value) || value.revision !== '1' || !sameItems(value.items, checked)) throw new Error(CONFIRMATION_ERROR);
+	return value;
+}
+
+/** Correction against the revision the teacher saw. The response must be the next revision with the same reason and items. */
+export async function correctPracticalEvaluation(
+	id: string,
+	expectedRevision: string,
+	reason: unknown,
+	items: unknown,
+	cookies: AstroCookies,
+): Promise<PracticalRevision> {
+	if (!validId(id) || !validId(expectedRevision)) throw new Error('El borrador o la revisión no son válidos.');
+	const text = practicalReason(reason);
+	const checked = practicalItems(items);
+	const next = (BigInt(expectedRevision) + 1n).toString();
+	const value = await apiFetch<unknown>(`/oral-surgery-drafts/${id}/practical-evaluation/corrections`, {
+		method: 'POST', body: { expected_revision: expectedRevision, reason: text, items: checked }, cookies,
+	});
+	if (!isPracticalRevision(value) || value.revision !== next || value.reason !== text || !sameItems(value.items, checked)) {
+		throw new Error(CONFIRMATION_ERROR);
+	}
+	return value;
+}
