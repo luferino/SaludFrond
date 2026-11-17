@@ -120,6 +120,7 @@ async function evaluateRegistry() {
 		'../pods/teacher-clinical/actions/reviews': ['handleValidateTeacherSubmission', 'handleRequestTeacherCorrection'],
 		'../pods/oral-surgery-draft/actions/drafts': ['ORAL_SURGERY_FORM_FIELDS', 'handleCreateOralSurgeryDraft', 'handleDeclareOralSurgeryConsent', 'handleUpdateOralSurgeryDraft'],
 		'../pods/oral-surgery-draft/actions/authorizations': ['handleAuthorizeOralSurgeryDraft'],
+		'../pods/oral-surgery-draft/actions/operative-report': ['OPERATIVE_REPORT_FORM_FIELDS', 'handleCloseOperativeReport', 'handleSaveOperativeReport'],
 		'../pods/kinesiology-evaluation/actions/evaluations': ['handleCreateKinesiologyEvaluation', 'handleUpdateKinesiologyEvaluation', 'handleSubmitKinesiologyEvaluation', 'handleCreateKinesiologyAmendment'],
 	};
 	const sandbox = vm.createContext({});
@@ -127,7 +128,7 @@ async function evaluateRegistry() {
 	const output = ts.transpileModule(code, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
 	const module = new vm.SourceTextModule(output, { context: sandbox, identifier: new URL(registryPath, root).href });
 	await module.link(async (specifier) => new vm.SyntheticModule(names[specifier], function () {
-		for (const name of names[specifier]) this.setExport(name, name === 'z' ? z : name === 'defineAction' ? (definition) => definition : name === 'ORAL_SURGERY_FORM_FIELDS' ? [] : () => undefined);
+		for (const name of names[specifier]) this.setExport(name, name === 'z' ? z : name === 'defineAction' ? (definition) => definition : ['ORAL_SURGERY_FORM_FIELDS', 'OPERATIVE_REPORT_FORM_FIELDS'].includes(name) ? [] : () => undefined);
 	}, { context: sandbox }));
 	await module.evaluate();
 	return module.namespace.server.createGroup;

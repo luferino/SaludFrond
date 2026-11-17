@@ -173,8 +173,8 @@ async function renderPage(options = {}) {
   ...listCoordinates,
   clinicalFilterCarrier: listing.clinicalFilterCarrier,
   oralSurgeryTimestampLabel: labels.oralSurgeryTimestampLabel,
-  Layout: null, Fragment: null, OralSurgeryReadOnly: readOnlyComponent, ApiError: FixtureApiError,
-  actions: { authorizeOralSurgeryDraft: 'authorize' },
+  Layout: null, Fragment: null, OralSurgeryReadOnly: readOnlyComponent, OperativeReportReadOnly: () => '', ApiError: FixtureApiError,
+  actions: { authorizeOralSurgeryDraft: 'authorize', closeOralSurgeryOperativeReport: 'close' },
   isInputError: (error) => error?.input === true,
   actionHrefWithContext: (action) => action,
   teacherGrant: (_cookies, permission) => grants[permission] ?? false,
@@ -189,6 +189,8 @@ async function renderPage(options = {}) {
   getOralSurgeryDraft: async (id) => { requests.push(['draft', id]); if (options.draftError) throw options.draftError; return options.draft ?? draftFixture(); },
   getConsentHistory: async (id) => { requests.push(['consent', id]); if (options.consentError) throw options.consentError; return options.consent ?? consentFixture(); },
   getAuthorizationHistory: async (id) => { requests.push(['authorizations', id]); if (options.authorizationError) throw options.authorizationError; return options.authorizations ?? historyFixture(); },
+  // Report reads are not recorded here: these suites assert the draft and history reads exactly; report behavior lives in oral-surgery-teacher-report.test.mjs.
+  getOperativeReport: async () => null,
   $$renderComponent: async (_result, _name, component, props, slots) => typeof component === 'function' ? component({ createAstro: () => ({ ...Astro, props }) }, props, slots) : slots?.default?.() ?? '',
  };
  const page = await compileAstro(pagePath, mocks);

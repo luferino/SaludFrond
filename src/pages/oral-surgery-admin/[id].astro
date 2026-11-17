@@ -1,0 +1,112 @@
+---
+export const prerender = false;
+import Layout from '../../layouts/Layout.astro';
+import OralSurgeryReadOnly from '../../components/clinical/OralSurgeryReadOnly.astro';
+import OperativeReportReadOnly from '../../components/clinical/OperativeReportReadOnly.astro';
+import type { AuthorizationHistory, ConsentHistory, OperativeReport, OralSurgeryDraft } from '../../pods/oral-surgery-draft/api';
+import { ApiError } from '../../shared/apiClient';
+import { getAuthorizationHistory, getConsentHistory, getOperativeReport, getOralSurgeryDraft, validId } from '../../pods/oral-surgery-draft/api';
+import { oralSurgeryAdminGrant, oralSurgeryAdminQuery, parseOralSurgeryAdminListing } from '../../pods/oral-surgery-draft/admin';
+import { oralSurgeryTimestampLabel } from '../../pods/oral-surgery-draft/labels';
+
+Astro.response.headers.set('Cache-Control', 'no-store');
+const loginRedirect = () => Astro.redirect(`/auth/login?returnTo=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`);
+// Presentation hint: the backend re-checks the administrator grant on every read. Nothing on this page writes.
+const allowed = oralSurgeryAdminGrant(Astro.cookies);
+const id = Astro.params.id ?? '';
+let backHref = '/oral-surgery-admin';
+try {
+	backHref = `/oral-surgery-admin?${oralSurgeryAdminQuery(parseOralSurgeryAdminListing(Astro.url.searchParams))}`;
+} catch {
+	// An invalid list query falls back to the first page.
+}
+let draft: OralSurgeryDraft | null = null;
+let unavailable = false;
+let forbidden = false;
+let loadError = '';
+let consent: ConsentHistory | null = null;
+let consentError = '';
+let authorizationHistory: AuthorizationHistory | null = null;
+let authorizationError = '';
+let report: OperativeReport | null = null;
+let reportError = '';
+if (allowed) {
+	if (!validId(id)) {
+		unavailable = true;
+	} else {
+		try {
+			draft = await getOralSurgeryDraft(id, Astro.cookies);
+		} catch (failure) {
+			if (failure instanceof ApiError && failure.status === 401) return loginRedirect();
+			if (failure instanceof ApiError && failure.status === 404) unavailable = true;
+			else if (failure instanceof ApiError && failure.status === 403) forbidden = true;
+			else loadError = 'No se pudo cargar el encuentro. Probá de nuevo más tarde.';
+		}
+	}
+}
+// Each history is read on its own: one failure never hides the others or the draft.
+if (draft) {
+	try { consent = await getConsentHistory(draft.id, Astro.cookies); }
+	catch (failure) {
+		if (failure instanceof ApiError && failure.status === 401) return loginRedirect();
+		consentError = 'No se pudo consultar el consentimiento de este encuentro.';
+	}
+	try { authorizationHistory = await getAuthorizationHistory(draft.id, Astro.cookies); }
+	catch (failure) {
+		if (failure instanceof ApiError && failure.status === 401) return loginRedirect();
+		authorizationError = 'No se pudo consultar el historial de autorizaciones.';
+	}
+	try { report = await getOperativeReport(draft.id, Astro.cookies); }
+	catch (failure) {
+		if (failure instanceof ApiError && failure.status === 401) return loginRedirect();
+		reportError = 'No se pudo consultar el parte quirúrgico.';
+	}
+}
+const currentAuthorizationId = authorizationHistory?.current_authorization_id ?? null;
+---
+<Layout>
+	<main aria-labelledby="title">
+		<a href={backHref}>Volver a los encuentros</a>
+		<h1 id="title">Cirugía Oral I · consulta de encuentro</h1>
+		{!allowed ? <p role="alert">No tenés permiso para consultar los encuentros de Cirugía Oral I.</p>
+		: unavailable ? <p role="alert">Encuentro no disponible.</p>
+		: forbidden ? <p role="alert">No tenés permiso vigente para consultar este encuentro.</p>
+		: loadError ? <p role="alert">{loadError}</p>
+		: draft && <>
+			<p>Consulta de solo lectura. Los administradores no editan, autorizan ni cierran encuentros.</p>
+			<p>Paciente: {draft.patient_id}<br />Asignatura de origen: {draft.origin_subject_id}<br />Grupo de origen: {draft.origin_group_id}</p>
+			<p>Versión clínica: {draft.version} · actualizada <time datetime={draft.updated_at}>{oralSurgeryTimestampLabel(draft.updated_at)}</time></p>
+			<section aria-labelledby="content-title">
+				<h2 id="content-title">Contenido clínico</h2>
+				<OralSurgeryReadOnly content={draft.content} />
+			</section>
+			<section aria-labelledby="consent-title">
+				<h2 id="consent-title">Consentimiento firmado en papel</h2>
+				{consentError ? <p role="alert">{consentError}</p> : consent && <>
+					{consent.current_declaration_id !== null ? <p>Declaración vigente: {consent.current_declaration_id}</p> : <p>No hay una declaración vigente para el plan de tratamiento guardado.</p>}
+					{consent.declarations.length ? <ol>{consent.declarations.map((declaration) => <li>
+						<p>Declaración {declaration.id} · versión del borrador {declaration.draft_version} · plan revisión {declaration.plan_revision} · declarada <time datetime={declaration.declared_at}>{oralSurgeryTimestampLabel(declaration.declared_at)}</time></p>
+						{declaration.treatment_plan ? <details><summary>Plan de tratamiento declarado</summary><OralSurgeryReadOnly content={{ treatment_plan: declaration.treatment_plan }} sections={['treatment_plan']} /></details> : <p>Sin plan de tratamiento registrado.</p>}
+					</li>)}</ol> : <p>No hay declaraciones registradas.</p>}
+				</>}
+			</section>
+			<section aria-labelledby="authorization-title">
+				<h2 id="authorization-title">Autorizaciones docentes</h2>
+				{authorizationError ? <p role="alert">{authorizationError}</p> : authorizationHistory && (authorizationHistory.authorizations.length ? <ol>{authorizationHistory.authorizations.map((authorization) => <li>
+					<p>Autorización {authorization.id} · versión {authorization.draft_version} · declaración {authorization.consent_declaration_id} · autorizada <time datetime={authorization.authorized_at}>{oralSurgeryTimestampLabel(authorization.authorized_at)}</time>{authorization.id === currentAuthorizationId ? ' · vigente' : ''}</p>
+					<details><summary>Contenido revisado</summary><OralSurgeryReadOnly content={authorization.reviewed_content} /></details>
+				</li>)}</ol> : <p>No hay autorizaciones registradas.</p>)}
+			</section>
+			<section aria-labelledby="report-title">
+				<h2 id="report-title">Parte quirúrgico</h2>
+				{reportError ? <p role="alert">{reportError}</p> : report ? <OperativeReportReadOnly report={report} /> : <p>Sin parte quirúrgico registrado.</p>}
+			</section>
+		</>}
+	</main>
+</Layout>
+<style>
+	main { max-width: 58rem; margin: auto; padding: 1.5rem 0 3rem; overflow-wrap: anywhere; color: var(--ink); }
+	section { margin: 1rem 0; padding: 1rem; background: var(--paper); border: 1px solid var(--line); border-radius: 0.65rem; }
+	a { color: var(--rust-deep); text-decoration: underline; }
+	[role="alert"] { border: 1px solid var(--rust-line); padding: 1rem; background: var(--rust-soft); border-radius: 0.65rem; }
+</style>

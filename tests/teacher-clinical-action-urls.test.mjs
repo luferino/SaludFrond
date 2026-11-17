@@ -20,7 +20,7 @@ const context = `patient_id=${patient}&subject_id=${subject}&academic_group_id=$
 const listContext = 'list_limit=50&list_offset=0';
 
 // Realistic Astro action stubs: toString() yields only the query, never a path.
-const actions = Object.fromEntries(['recordTeacherConsent', 'validateTeacherSubmission', 'requestTeacherCorrection', 'authorizeOralSurgeryDraft']
+const actions = Object.fromEntries(['recordTeacherConsent', 'validateTeacherSubmission', 'requestTeacherCorrection', 'authorizeOralSurgeryDraft', 'closeOralSurgeryOperativeReport']
   .map((name) => [name, Object.assign(() => undefined, { toString: () => `?_action=${name}` })]));
 const evaluation = {
   id, clinical_record_id: '9007199254741060', patient_id: patient, author_id: actorId, origin_student_habilitation_id: actorId,
@@ -63,7 +63,7 @@ async function renderTeacherPage(path, { url, mocks: pageMocks, results = {} }) 
   };
   const mocks = {
     ...await realHelpers(), actions, isInputError: () => false,
-    Layout: null, Fragment: null, EvaluationReadOnly: null, SubmissionSnapshot: null, OralSurgeryReadOnly: null,
+    Layout: null, Fragment: null, EvaluationReadOnly: null, SubmissionSnapshot: null, OralSurgeryReadOnly: null, OperativeReportReadOnly: null,
     ApiError: class ApiError extends Error { constructor(status) { super(`API ${status}`); this.status = status; } },
     teacherGrant: () => true,
     parseClinicalContext: (params) => ({ patient_id: params.get('patient_id'), subject_id: params.get('subject_id'), academic_group_id: params.get('academic_group_id') }),
@@ -112,6 +112,7 @@ test('teacher oral surgery authorization form posts back to the rendered draft r
       getOralSurgeryDraft: async () => ({ id, patient_id: patient, origin_subject_id: subject, origin_group_id: group, version: '3', status: 'draft', content: {} }),
       getConsentHistory: async () => ({ draft_version: '3', plan_revision: '2', current_declaration_id: '7', declarations: [] }),
       getAuthorizationHistory: async () => ({ draft_version: '3', current_authorization_id: null, authorizations: [] }),
+      getOperativeReport: async () => null,
     },
   });
   assert.deepEqual(formActions(page.html), [

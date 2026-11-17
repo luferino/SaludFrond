@@ -65,6 +65,7 @@ const baseRoutes = (overrides = {}) => ({
 	[`GET ${draftPath}`]: { body: draft() },
 	[`GET ${draftPath}/consent`]: { body: consentNone },
 	[`GET ${draftPath}/authorizations`]: { body: authNone },
+	[`GET ${draftPath}/operative-report`]: { status: 404, body: errorBody('NOT_FOUND', 'oral surgery operative report was not found') },
 	...overrides,
 });
 
@@ -126,7 +127,7 @@ async function environment(routes = {}) {
 		await evaluated.get(href);
 		return mod.namespace;
 	}
-	const actionStubs = Object.fromEntries(['updateOralSurgeryDraft', 'declareOralSurgeryConsent', 'createOralSurgeryDraft']
+	const actionStubs = Object.fromEntries(['updateOralSurgeryDraft', 'declareOralSurgeryConsent', 'createOralSurgeryDraft', 'saveOralSurgeryOperativeReport']
 		.map((name) => [name, Object.assign(() => undefined, { toString: () => `/_actions/${name}` })]));
 
 	async function renderPage(path, { url = `${draftPath}?assignment_id=17&limit=50&offset=0`, id = largeId, results = {}, actor = student() } = {}) {
@@ -223,7 +224,7 @@ test('D1 editable hint is shown only to the author with student role and write p
 	const editable = await env.renderPage(pagePath);
 	assert.equal(editable.eligible, true);
 	assert.match(editable.editHint, /Podés editar este borrador/);
-	assert.deepEqual(plain(env.requests), [GET_ASSIGNMENT, GET_DRAFT, { method: 'GET', url: `${draftUrl}/consent` }, { method: 'GET', url: `${draftUrl}/authorizations` }]);
+	assert.deepEqual(plain(env.requests), [GET_ASSIGNMENT, GET_DRAFT, { method: 'GET', url: `${draftUrl}/consent` }, { method: 'GET', url: `${draftUrl}/authorizations` }, { method: 'GET', url: `${draftUrl}/operative-report` }]);
 	const cases = [
 		{ actor: student({ role: 'teacher' }) },
 		{ actor: student({ permissions: ['oral-surgery-drafts:read'] }) },

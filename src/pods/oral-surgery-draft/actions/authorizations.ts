@@ -18,6 +18,7 @@ function knownRejection(error: unknown): string | null {
  if (error.status === 409) {
   if (error.message === 'current signed paper consent declaration is required') return 'Falta una declaración vigente de consentimiento en papel para el plan actual.';
   if (error.message === 'draft version changed; reload before saving') return VERSION_CHANGED;
+  if (error.message === 'closed oral surgery encounter is immutable') return 'El encuentro quirúrgico ya fue cerrado y no admite nuevas autorizaciones. Actualizá la ficha.';
   return 'El borrador ya no admite esta autorización. Actualizá la ficha antes de volver a intentarlo.';
  }
  return null;

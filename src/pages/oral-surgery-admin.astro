@@ -1,0 +1,84 @@
+---
+export const prerender = false;
+import Layout from '../layouts/Layout.astro';
+import type { OralSurgeryDraft } from '../pods/oral-surgery-draft/api';
+import type { OralSurgeryAdminListing } from '../pods/oral-surgery-draft/admin';
+import { ApiError } from '../shared/apiClient';
+import { listAllOralSurgeryDrafts } from '../pods/oral-surgery-draft/api';
+import { oralSurgeryAdminGrant, oralSurgeryAdminPagination, oralSurgeryAdminQuery, parseOralSurgeryAdminListing } from '../pods/oral-surgery-draft/admin';
+import { oralSurgeryTimestampLabel } from '../pods/oral-surgery-draft/labels';
+
+Astro.response.headers.set('Cache-Control', 'no-store');
+// Presentation hint: the backend re-checks the administrator grant on every read.
+const allowed = oralSurgeryAdminGrant(Astro.cookies);
+let listing: OralSurgeryAdminListing = { limit: 50, offset: 0, filters: {} };
+let items: OralSurgeryDraft[] = [];
+let error = '';
+let forbidden = false;
+let loaded = false;
+if (allowed) {
+	try {
+		listing = parseOralSurgeryAdminListing(Astro.url.searchParams);
+	} catch {
+		error = 'Los filtros o la paginación no son válidos.';
+	}
+	if (!error) {
+		try {
+			items = await listAllOralSurgeryDrafts(Astro.cookies, { limit: listing.limit, offset: listing.offset }, listing.filters);
+			loaded = true;
+		} catch (failure) {
+			if (failure instanceof ApiError && failure.status === 401) {
+				return Astro.redirect(`/auth/login?returnTo=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`);
+			}
+			if (failure instanceof ApiError && failure.status === 403) forbidden = true;
+			else error = 'No se pudieron cargar los encuentros de Cirugía Oral I. Probá de nuevo más tarde.';
+		}
+	}
+}
+const { previousOffset, nextOffset } = oralSurgeryAdminPagination(listing, loaded ? items.length : 0);
+const listQuery = oralSurgeryAdminQuery(listing);
+---
+<Layout>
+	<main aria-labelledby="title">
+		<header>
+			<p class="eyebrow">Atención clínica / Consulta</p>
+			<h1 id="title">Cirugía Oral I · encuentros</h1>
+			<p>Consulta de solo lectura de todos los encuentros, del más reciente al más antiguo. El estado del parte quirúrgico se ve en el detalle de cada encuentro.</p>
+		</header>
+		{!allowed ? <p role="alert">No tenés permiso para consultar los encuentros de Cirugía Oral I.</p> : <>
+			<form method="GET" action="/oral-surgery-admin" class="filters">
+				<input type="hidden" name="limit" value={listing.limit} />
+				<label>Desde <input type="date" name="date_from" value={listing.filters.date_from ?? ''} /></label>
+				<label>Hasta <input type="date" name="date_to" value={listing.filters.date_to ?? ''} /></label>
+				<button type="submit">Filtrar</button>
+			</form>
+			{forbidden && <p role="alert">No tenés permiso vigente para consultar los encuentros de Cirugía Oral I.</p>}
+			{error && <p role="alert">{error}</p>}
+			{loaded && (items.length === 0 ? <p>No hay encuentros de Cirugía Oral I para estos filtros.</p> : <ul class="encounters">
+				{items.map((item) => <li>
+					<p><strong>Encuentro {item.id}</strong> · versión clínica {item.version} · actualizado <time datetime={item.updated_at}>{oralSurgeryTimestampLabel(item.updated_at)}</time></p>
+					<p class="identifier">Paciente {item.patient_id}<br />Asignatura de origen {item.origin_subject_id}<br />Grupo de origen {item.origin_group_id}</p>
+					<a href={`/oral-surgery-admin/${encodeURIComponent(item.id)}?${listQuery}`}>Ver encuentro</a>
+				</li>)}
+			</ul>)}
+			{loaded && <nav class="pager" aria-label="Paginación de encuentros">
+				{previousOffset !== null && <a href={`?${oralSurgeryAdminQuery(listing, previousOffset)}`}>Anteriores</a>}
+				{nextOffset !== null && <a href={`?${oralSurgeryAdminQuery(listing, nextOffset)}`}>Siguientes</a>}
+			</nav>}
+		</>}
+	</main>
+</Layout>
+<style>
+	main { max-width: 58rem; margin: auto; padding: 1.5rem 0 3rem; overflow-wrap: anywhere; color: var(--ink); }
+	.eyebrow { color: var(--rust-deep); font-weight: 700; }
+	.filters { display: flex; flex-wrap: wrap; gap: 1rem; align-items: end; margin: 1rem 0; }
+	label { display: grid; gap: 0.35rem; font-weight: 600; }
+	input { padding: 0.6rem; border: 1px solid var(--field-line); border-radius: 0.35rem; background: var(--field); color: var(--ink); font: inherit; }
+	button { padding: 0.65rem 0.95rem; background: var(--rust); color: white; border: 1px solid var(--rust-deep); border-radius: 0.4rem; font: inherit; font-weight: 700; cursor: pointer; }
+	.encounters { list-style: none; padding: 0; display: grid; gap: 0.75rem; }
+	.encounters li { padding: 1rem; border: 1px solid var(--line); border-radius: 0.65rem; background: var(--paper); }
+	.encounters p { margin: 0 0 0.5rem; }
+	.pager { display: flex; gap: 1rem; margin: 1rem 0; }
+	a { color: var(--rust-deep); text-decoration: underline; }
+	[role="alert"] { border: 1px solid var(--rust-line); padding: 1rem; background: var(--rust-soft); border-radius: 0.65rem; }
+</style>

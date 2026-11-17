@@ -107,3 +107,33 @@ export function oralSurgeryAnswerLabel(value: boolean | string | null | undefine
 export function oralSurgeryTimestampLabel(value: string): string {
 	return new Date(value).toLocaleString('es');
 }
+
+/** Spanish UI copy for the operative report, keyed by top-level key or `<section>.<field>` control name. */
+export const OPERATIVE_REPORT_LABELS: Record<string, string> = {
+	narrative: 'Relato del procedimiento',
+	asepsis: 'Asepsia',
+	'asepsis.extraoral': 'Extraoral',
+	'asepsis.intraoral': 'Intraoral',
+	anesthesia: 'Anestesia',
+	'anesthesia.technique': 'Técnica anestésica',
+	'anesthesia.drug': 'Anestésico',
+	'anesthesia.dose': 'Dosis',
+	extraction: 'Exodoncia',
+	'extraction.teeth': 'Piezas',
+	'extraction.technique': 'Técnica',
+	'extraction.suture': 'Sutura',
+	prescription: 'Prescripción',
+	'prescription.medications': 'Medicamentos',
+	'prescription.commercial_name': 'Nombre comercial',
+	'prescription.route': 'Vía de administración',
+	'prescription.dose': 'Dosis',
+	'prescription.frequency': 'Frecuencia',
+	'prescription.duration': 'Duración',
+	postoperative_instructions: 'Indicaciones postoperatorias',
+	operative_incident: 'Incidentes operatorios',
+};
+
+/** Status line of an operative report; closure is irreversible. */
+export function operativeReportStatusLabel(status: 'draft' | 'closed'): string {
+	return status === 'closed' ? 'Cerrado por el docente' : 'Abierto: pendiente de cierre docente';
+}

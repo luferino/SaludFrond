@@ -1,0 +1,45 @@
+---
+import { OPERATIVE_REPORT_LAYOUT, type OperativeReport, type OperativeReportSection } from '../../pods/oral-surgery-draft/api';
+import { OPERATIVE_REPORT_LABELS, operativeReportStatusLabel, oralSurgeryAnswerLabel, oralSurgeryTimestampLabel } from '../../pods/oral-surgery-draft/labels';
+
+interface Props { report: OperativeReport }
+const { report } = Astro.props;
+const sectionOf = (key: string): OperativeReportSection | undefined => {
+	const value = report.content[key];
+	return typeof value === 'object' && value !== null ? value : undefined;
+};
+---
+<div class="operative-report-readonly">
+	<dl class="meta">
+		<div><dt>Estado</dt><dd>{operativeReportStatusLabel(report.status)}</dd></div>
+		<div><dt>Versión del parte</dt><dd>{report.version}</dd></div>
+		<div><dt>Versión clínica</dt><dd>{report.draft_version}</dd></div>
+		<div><dt>Autorización docente</dt><dd>{report.authorization_id}</dd></div>
+		<div><dt>Última actualización</dt><dd><time datetime={report.updated_at}>{oralSurgeryTimestampLabel(report.updated_at)}</time></dd></div>
+		{report.closed_by && report.closed_at && <>
+			<div><dt>Cerrado por</dt><dd class="identifier">{report.closed_by}</dd></div>
+			<div><dt>Cerrado el</dt><dd><time datetime={report.closed_at}>{oralSurgeryTimestampLabel(report.closed_at)}</time></dd></div>
+		</>}
+	</dl>
+	{OPERATIVE_REPORT_LAYOUT.map(({ key, fields }) => fields === null
+		? <section>
+			<h3>{OPERATIVE_REPORT_LABELS[key]}</h3>
+			<p class="answer">{oralSurgeryAnswerLabel(report.content[key] as string | null | undefined)}</p>
+		</section>
+		: <section>
+			<h3>{OPERATIVE_REPORT_LABELS[key]}</h3>
+			{sectionOf(key) === undefined ? <p>Sección sin completar.</p> : <dl>
+				{fields.map((field) => <div>
+					<dt>{OPERATIVE_REPORT_LABELS[`${key}.${field}`]}</dt>
+					<dd>{oralSurgeryAnswerLabel(sectionOf(key)?.[field])}</dd>
+				</div>)}
+			</dl>}
+		</section>)}
+</div>
+<style>
+	.operative-report-readonly section { margin: 1rem 0; }
+	.operative-report-readonly dl { display: grid; grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); gap: 0.5rem 1.5rem; }
+	.operative-report-readonly dt { font-weight: 700; }
+	.operative-report-readonly dd, .operative-report-readonly .answer { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+	.operative-report-readonly .identifier { overflow-wrap: anywhere; }
+</style>

@@ -24,7 +24,7 @@ type AnswerKind = 'date' | 'boolean' | 'text';
 type Answer = boolean | string | null;
 export interface FormControl { section: OralSurgerySectionName | null; field: string; kind: AnswerKind }
 interface Pagination { limit: number; offset: number }
-interface ActiveAssignment { assignment: AssignedPatient; page: Pagination; filters: import('../../patient-assignment/api').AssignmentListingFilters }
+export interface ActiveAssignment { assignment: AssignedPatient; page: Pagination; filters: import('../../patient-assignment/api').AssignmentListingFilters }
 
 /** Spanish copy for the student editor. Uncertain outcomes never claim that nothing was stored. */
 export const ORAL_SURGERY_COPY = {
@@ -47,9 +47,12 @@ export const ORAL_SURGERY_COPY = {
 	declareUncertain: 'No se pudo confirmar la declaración. Recargá la página y revisá el historial antes de volver a intentarlo.',
 	createUncertain: 'No se pudo confirmar la creación del borrador. Revisá la lista de borradores antes de volver a intentarlo: cada intento puede crear un encuentro nuevo.',
 	editable: 'Podés editar este borrador. Cada guardado reemplaza todo el contenido y exige una nueva autorización docente.',
+	encounterClosed: 'El encuentro quirúrgico ya fue cerrado por el docente y no admite cambios. Recargá la página para ver la versión cerrada.',
 	readOnly: 'Este borrador se muestra en modo de solo lectura. Solo su autor, con permiso de escritura, puede editarlo; el servicio vuelve a comprobarlo al guardar.',
 } as const;
 
+/** Backend 409 message once the teacher closed the operative report; nothing was written. */
+export const CLOSED_ENCOUNTER = 'closed oral surgery encounter is immutable';
 const HIDDEN_FIELDS = ['id', 'expected_version', 'assignment_id', 'limit', 'offset', 'list_limit', 'list_offset', 'list_patient_id', 'list_student_id', 'list_subject_id', 'list_academic_group_id'];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -181,7 +184,7 @@ function safeError(error: ApiError, notFound: string = ORAL_SURGERY_COPY.draftUn
 }
 
 /** A typed rejection proves nothing was stored; any other failure after a write may have committed. */
-function isTyped(error: unknown): error is ApiError {
+export function isTyped(error: unknown): error is ApiError {
 	return error instanceof ApiError && error.status < 500 && ![408, 429].includes(error.status);
 }
 
@@ -197,7 +200,7 @@ function pagination(input: Record<string, unknown>): { page: Pagination; filters
 }
 
 /** The assignment must still be active in the caller's own list; the backend re-checks every write. */
-async function activeAssignment(input: Record<string, unknown>, cookies: AstroCookies): Promise<ActiveAssignment | null> {
+export async function activeAssignment(input: Record<string, unknown>, cookies: AstroCookies): Promise<ActiveAssignment | null> {
 	const selected = pagination(input);
 	if (!selected || !validId(input.assignment_id)) return null;
 	const list = await listAssignedPatients(selected.page, cookies, selected.filters);
@@ -209,7 +212,7 @@ function contextOf(assignment: AssignedPatient): OralSurgeryContext {
 	return { patient_id: assignment.patient_id, subject_id: assignment.subject_id, academic_group_id: assignment.academic_group_id };
 }
 
-function sameContext(draft: OralSurgeryDraft, assignment: AssignedPatient): boolean {
+export function sameContext(draft: OralSurgeryDraft, assignment: AssignedPatient): boolean {
 	return draft.patient_id === assignment.patient_id
 		&& draft.origin_subject_id === assignment.subject_id
 		&& draft.origin_group_id === assignment.academic_group_id;
@@ -257,7 +260,10 @@ export async function handleUpdateOralSurgeryDraft(input: Record<string, unknown
 			limit: String(current.page.limit), offset: String(current.page.offset), ...(Object.keys(input).some((key) => key.startsWith('list_')) ? { list_filters: current.filters } : {}), draft: saved,
 		};
 	} catch (error) {
-		if (error instanceof ApiError && error.status === 409) return failure(ORAL_SURGERY_COPY.conflict, { conflict: true, values });
+		if (error instanceof ApiError && error.status === 409) {
+			const copy = error.message === CLOSED_ENCOUNTER ? ORAL_SURGERY_COPY.encounterClosed : ORAL_SURGERY_COPY.conflict;
+			return failure(copy, { conflict: true, values });
+		}
 		if (isTyped(error)) return failure(safeError(error), { values });
 		return failure(ORAL_SURGERY_COPY.saveUncertain, { uncertain: true, values });
 	}
@@ -288,7 +294,9 @@ export async function handleDeclareOralSurgeryConsent(input: Record<string, unkn
 			limit: String(current.page.limit), offset: String(current.page.offset), ...(Object.keys(input).some((key) => key.startsWith('list_')) ? { list_filters: current.filters } : {}), declaration,
 		};
 	} catch (error) {
-		if (error instanceof ApiError && error.status === 409) return failure(ORAL_SURGERY_COPY.declareConflict);
+		if (error instanceof ApiError && error.status === 409) {
+			return failure(error.message === CLOSED_ENCOUNTER ? ORAL_SURGERY_COPY.encounterClosed : ORAL_SURGERY_COPY.declareConflict);
+		}
 		if (isTyped(error)) return failure(safeError(error));
 		return failure(ORAL_SURGERY_COPY.declareUncertain, true);
 	}

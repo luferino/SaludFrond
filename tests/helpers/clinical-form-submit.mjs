@@ -52,6 +52,7 @@ const stubbedModules = {
   '../pods/teacher-assignment/actions': ['createTeacherAssignment'], '../pods/teacher-clinical/actions/consent': ['handleRecordTeacherConsent'],
   '../pods/teacher-clinical/actions/reviews': ['handleValidateTeacherSubmission','handleRequestTeacherCorrection'],
   '../pods/oral-surgery-draft/actions/authorizations': ['handleAuthorizeOralSurgeryDraft'],
+  '../pods/oral-surgery-draft/actions/operative-report': ['OPERATIVE_REPORT_FORM_FIELDS','handleCloseOperativeReport','handleSaveOperativeReport'],
 };
 
 export async function loadRegisteredActions(fetchImpl) {
@@ -73,7 +74,7 @@ export async function loadRegisteredActions(fetchImpl) {
       if (specifier === './session') return new vm.SyntheticModule(['getSession','clearSession'], function () { this.setExport('getSession', (jar) => jar.get('session')?.value ?? null); this.setExport('clearSession', () => {}); }, { context: sandbox });
       if (parent.identifier.endsWith(registryPath) && stubbedModules[specifier]) {
         const names = stubbedModules[specifier];
-        return new vm.SyntheticModule(names, function () { for (const name of names) this.setExport(name, () => undefined); }, { context: sandbox });
+        return new vm.SyntheticModule(names, function () { for (const name of names) this.setExport(name, name === 'OPERATIVE_REPORT_FORM_FIELDS' ? [] : () => undefined); }, { context: sandbox });
       }
       const target = new URL(specifier.endsWith('.ts') ? specifier : `${specifier}.ts`, parent.identifier);
       return compile(await readFile(target, 'utf8'), target.href);
@@ -145,7 +146,7 @@ export async function renderCompiledPage(path, { url, oralEnabled = false, statu
     version: '3', status: 'draft',
   };
   const actor = { sub: ids.actor, role: 'student', permissions: ['kinesiology-evaluations:write', 'kinesiology-evaluations:submit', 'oral-surgery-drafts:read', 'oral-surgery-drafts:write'] };
-  const actionNames = ['createKinesiologyEvaluation','updateKinesiologyEvaluation','submitKinesiologyEvaluation','createKinesiologyAmendment','createOralSurgeryDraft','updateOralSurgeryDraft','declareOralSurgeryConsent'];
+  const actionNames = ['createKinesiologyEvaluation','updateKinesiologyEvaluation','submitKinesiologyEvaluation','createKinesiologyAmendment','createOralSurgeryDraft','updateOralSurgeryDraft','declareOralSurgeryConsent','saveOralSurgeryOperativeReport'];
   const actions = Object.fromEntries(actionNames.map((name) => [name, Object.assign(() => undefined, { toString: () => `?_action=${name}` })]));
   const Astro = {
     params: { assignmentId, id: recordId }, url: pageUrl,
@@ -159,6 +160,8 @@ export async function renderCompiledPage(path, { url, oralEnabled = false, statu
   };
   const actionModules = await loadRegisteredActions(async () => Response.json({}));
   const oral = await actionModules.importModule('src/pods/oral-surgery-draft/actions/drafts.ts');
+  const operativeReport = await actionModules.importModule('src/pods/oral-surgery-draft/actions/operative-report.ts');
+  const oralApi = await actionModules.importModule('src/pods/oral-surgery-draft/api.ts');
   const evolution = await actionModules.importModule('src/pods/kinesiology-evolution/listing.ts');
   const kinesiology = await actionModules.importModule('src/pods/kinesiology-evaluation/api.ts');
   const listCoordinates = await actionModules.importModule('src/pods/patient-assignment/list-coordinates.ts');
@@ -166,7 +169,7 @@ export async function renderCompiledPage(path, { url, oralEnabled = false, statu
     parseEvolutionListFilters: evolution.parseEvolutionListFilters,
     clinicalFilterCarrier: evolution.clinicalFilterCarrier,
     listKinesiologyEvolutions: async () => [],
-    actions, Fragment: null, Layout: null, SubmissionSnapshot: null, OralSurgeryReadOnly: null,
+    actions, Fragment: null, Layout: null, SubmissionSnapshot: null, OralSurgeryReadOnly: null, OperativeReportReadOnly: null,
     ApiError: class ApiError extends Error { constructor(status) { super(`API ${status}`); this.status = status; } },
     isInputError: () => false,
     decodeJwt: () => actor,
@@ -189,7 +192,12 @@ export async function renderCompiledPage(path, { url, oralEnabled = false, statu
     getOralSurgeryDraft: async () => oralRecord,
     getConsentHistory: async () => ({ draft_version: '3', plan_revision: '2', current_declaration_id: null, declarations: [] }),
     getAuthorizationHistory: async () => ({ draft_version: '3', current_authorization_id: null, authorizations: [] }),
+    // No operative report yet: the editor renders its create form beside the clinical forms.
+    getOperativeReport: async () => null,
     ...oral,
+    ...operativeReport,
+    OPERATIVE_REPORT_LAYOUT: oralApi.OPERATIVE_REPORT_LAYOUT,
+    OPERATIVE_REPORT_LABELS: Object.fromEntries(operativeReport.OPERATIVE_REPORT_FORM_FIELDS.map((name) => [name, name])),
     ORAL_SURGERY_FIELD_LABELS: Object.fromEntries(oral.ORAL_SURGERY_FORM_SECTIONS.map(({ section, booleans, texts }) => [section, Object.fromEntries([...booleans, ...texts].map((field) => [field, field]))])),
     ORAL_SURGERY_SECTION_LABELS: Object.fromEntries(oral.ORAL_SURGERY_FORM_SECTIONS.map(({ section }) => [section, section])),
     oralSurgeryTimestampLabel: (value) => value,
