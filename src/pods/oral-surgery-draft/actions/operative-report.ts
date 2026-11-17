@@ -216,7 +216,7 @@ function closeRejection(error: unknown): string | null {
 	if (error.status === 400) return CLOSE_COPY.badRequest;
 	if (error.status === 401) return CLOSE_COPY.session;
 	if (error.status === 403) return error.message === 'teacher instructor role required' ? CLOSE_COPY.role : CLOSE_COPY.forbidden;
-	if (error.status === 404) return CLOSE_COPY.unavailable;
+	if (error.status === 404) return error.message === 'oral surgery operative report was not found' ? CLOSE_COPY.missing : CLOSE_COPY.unavailable;
 	if (error.status === 409) {
 		if (error.message === 'operative report does not match current clinical version; save it before closing') return CLOSE_COPY.mismatch;
 		if (error.message === 'draft version changed; reload before saving') return CLOSE_COPY.draftChanged;

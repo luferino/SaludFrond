@@ -46,13 +46,14 @@ Each encounter has at most one operative report, written by the draft's author o
 - **Create and edit**: the first save sends one POST bound to the clinical version (`expected_draft_version`); later saves send one PATCH with both the report version (`expected_version`) and the clinical version. Each save replaces the whole report. Empty controls keep the stored representation (absent stays absent, `null` stays `null`, `''` stays `''`); clearing an answer stores `null`.
 - **Clinical version changes**: saving the clinical draft creates a new version. The report then has to be saved again against the new version (after a new authorization) before the teacher can close it; the page shows a notice while the versions differ.
 - **Conflicts**: if the clinical draft or the report changed, a report already exists, or the report was closed, nothing is stored. The page shows the current report and lists the unsaved values separately for copying. A missing authorization keeps the typed values in the form.
-- **Unknown outcome**: a network failure or server error after the write is reported as unconfirmed, never as saved, and is never retried automatically.
+- **Unknown outcome**: a network failure or server error after the write is reported as unconfirmed, never as saved, and is never retried automatically. Because the write may have landed, the page shows the stored report (so the next save carries its current version) and lists the submitted values separately for copying.
+- **Unreadable report**: if the report cannot be loaded, closure is unknown. The page shows the clinical draft read-only and offers no draft save, consent declaration or report form until a reload reads the report.
 
 ## Teacher closure
 
 The teacher page (`/teacher-clinical/oral-surgery/[id]`) shows the report read-only. The **Cerrar parte quirúrgico** form appears only with the `oral-surgery-drafts:close` grant, an open report saved against the current clinical version, and the checkbox *Revisé el parte quirúrgico y confirmo que está listo para cerrarse. El cierre es irreversible.* It sends one POST with both exact versions. The teacher, not an automatic check, decides that the report is ready.
 
-If the report was saved against an older clinical version, the page asks the student to save it again and offers no close form. Rejections (stale versions, a report that no longer matches the clinical version, missing context or wrong role) are shown with their own message; an unconfirmed outcome asks the teacher to check the state before trying again.
+If the report was saved against an older clinical version, the page asks the student to save it again and offers no close form. Rejections (stale versions, a report that no longer matches the clinical version, a missing report, missing context or wrong role) are shown with their own message; an unconfirmed outcome asks the teacher to check the state before trying again.
 
 ## Closed encounters
 

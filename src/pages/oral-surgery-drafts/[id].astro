@@ -172,9 +172,11 @@ const unsaved: Unsaved[] = draft && !saveFailure?.conflict ? [] : unsavedAnswers
 const fields: FormValues = formValues ?? {};
 // A closed report is the teacher's final state: the clinical draft and the report become read-only.
 const closed = report?.status === 'closed';
-const editable = eligible && !closed;
+// An unreadable report leaves closure unknown, so nothing that writes is offered until a reload reads it.
+const editable = eligible && !closed && !reportError;
 const closedHint = 'El encuentro quirúrgico fue cerrado por el docente y es inmutable: el borrador y el parte se muestran en solo lectura.';
-const editHint = closed ? closedHint : eligible ? ORAL_SURGERY_COPY.editable : ORAL_SURGERY_COPY.readOnly;
+const unknownClosureHint = 'No se pudo confirmar si el encuentro quirúrgico fue cerrado. El borrador se muestra en solo lectura; recargá la página antes de editar o declarar el consentimiento.';
+const editHint = closed ? closedHint : eligible && reportError ? unknownClosureHint : eligible ? ORAL_SURGERY_COPY.editable : ORAL_SURGERY_COPY.readOnly;
 const authorizationStatus = draft && authorization ? authorizationStatusLine(authorization, draft.version) : '';
 const currentDeclaration = consent?.declarations.find((item) => item.id === consent?.current_declaration_id);
 // Report actions need a readable, open report and an eligible author.
@@ -185,19 +187,20 @@ const currentAuthorization = authorization?.authorizations.find((item) => item.i
 const reportAuthorizationMissing = !!draft && !!authorization && currentAuthorization?.draft_version !== draft.version;
 // A report saved against an older clinical version must be saved again before the teacher can close it.
 const reportStale = !!draft && !!report && !closed && report.draft_version !== draft.version;
-// Declaring attests the stored plan, so it needs the same version on both reads and no unsaved answers. A closed encounter cannot be declared.
-const canDeclare = !!draft && eligible && !closed && !!consent && !consentError && consent.current_declaration_id === null
+// Declaring attests the stored plan, so it needs the same version on both reads and no unsaved answers. A closed or possibly closed encounter cannot be declared.
+const canDeclare = !!draft && eligible && !closed && !reportError && !!consent && !consentError && consent.current_declaration_id === null
 	&& consent.draft_version === draft.version && !retainedValues && !declareUncertain;
 const saved = search.get('saved') === '1';
 const declared = search.get('declared') === '1';
 const reportSaved = search.get('report_saved') === '1';
-// A rejected report save keeps its submitted values and versions, except a conflict, which shows the stored report.
-const reportRetained = reportFailure && !reportFailure.conflict && reportFailure.values ? reportFailure : undefined;
+// A rejected report save keeps its submitted values and versions, except a conflict or an uncertain outcome (the write may
+// have landed), which show the stored report so the next save carries its current version.
+const reportRetained = reportFailure && !reportFailure.conflict && !reportFailure.uncertain && reportFailure.values ? reportFailure : undefined;
 const reportFields: FormValues = reportRetained?.values ?? operativeReportFormValues(report?.content ?? {});
 const reportFormVersion = reportRetained ? reportRetained.expected_version : (report?.version ?? '');
 const reportFormDraftVersion = reportRetained ? reportRetained.expected_draft_version : (draft?.version ?? '');
 // Submitted values the form cannot show (a conflict or no form) are listed as unsaved instead.
-const reportUnsaved: Unsaved[] = reportFailure && (reportFailure.conflict || !reportActions) ? unsavedReportAnswers(reportFailure.values) : [];
+const reportUnsaved: Unsaved[] = reportFailure && (reportFailure.conflict || reportFailure.uncertain || !reportActions) ? unsavedReportAnswers(reportFailure.values) : [];
 const coordinates = { limit, offset, filters: listFilters };
 const listCarrier = assignmentListCarrier(coordinates);
 const clinicalCarrier = clinicalFilterCarrier(search);

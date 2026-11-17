@@ -359,15 +359,24 @@ test('R6 other failures re-render the submitted values with the submitted versio
 	assert.equal(page.canDeclare, true);
 });
 
-test('R6 an uncertain outcome shows the save copy, keeps the values and sends no write from the page', async () => {
-	const env = await environment(baseRoutes());
-	const page = await env.renderPage(pagePath, {
-		results: { saveOralSurgeryOperativeReport: { data: { success: false, uncertain: true, conflict: false, error: 'No se pudo confirmar el guardado del parte quirúrgico. Recargá la página para ver la versión guardada antes de volver a intentarlo.', expected_version: '', expected_draft_version: '3', values: reportValues({ narrative: 'Relato nuevo' }) } } },
-	});
+test('R6 an uncertain outcome shows the save copy and the stored report, lists the submitted values as unsaved and sends no write from the page', async () => {
+	const uncertain = { success: false, uncertain: true, conflict: false, error: 'No se pudo confirmar el guardado del parte quirúrgico. Recargá la página para ver la versión guardada antes de volver a intentarlo.', expected_version: '', expected_draft_version: '3', values: reportValues({ narrative: 'Relato nuevo' }) };
+	// The first save may have been written: the form must carry the stored version, never the empty create version.
+	const written = await environment(baseRoutes({ [`GET ${draftPath}/operative-report`]: { body: reportBody() } }));
+	const page = await written.renderPage(pagePath, { results: { saveOralSurgeryOperativeReport: { data: uncertain } } });
 	assert.match(page.reportSaveError, /No se pudo confirmar el guardado del parte quirúrgico/);
-	assert.equal(page.reportFields.narrative, 'Relato nuevo');
-	assert.equal(page.reportFormVersion, '');
-	assert.deepEqual(plain(env.requests).filter((request) => request.method !== 'GET'), []);
+	assert.equal(page.reportFormVersion, '5');
+	assert.equal(page.reportFormDraftVersion, '3');
+	assert.equal(page.reportFields.narrative, 'Exodoncia sin complicaciones');
+	assert.deepEqual(page.reportUnsaved, [{ label: 'Relato del procedimiento', value: 'Relato nuevo' }]);
+	assert.deepEqual(plain(written.requests).filter((request) => request.method !== 'GET'), []);
+	// Not written: the create form comes back empty, with the submitted values still listed.
+	const missing = await environment(baseRoutes());
+	const none = await missing.renderPage(pagePath, { results: { saveOralSurgeryOperativeReport: { data: uncertain } } });
+	assert.equal(none.reportFormVersion, '');
+	assert.equal(none.reportFields.narrative, '');
+	assert.deepEqual(none.reportUnsaved, [{ label: 'Relato del procedimiento', value: 'Relato nuevo' }]);
+	assert.deepEqual(plain(missing.requests).filter((request) => request.method !== 'GET'), []);
 });
 
 test('R6 framework errors use the form copy for input errors and the save-uncertain copy otherwise', async () => {
@@ -389,14 +398,18 @@ test('R6 an expired session in the report action redirects to login', async () =
 
 // R7: report read failures keep the draft.
 
-test('R7 a report read failure keeps the draft editable and hides the report actions with its own alert', async () => {
+test('R7 a report read failure shows the draft read-only, hides the save, the declaration and the report actions, with its own alert', async () => {
 	const env = await environment(baseRoutes({ [`GET ${draftPath}/operative-report`]: { status: 500, body: errorBody('INTERNAL', 'boom') } }));
 	const page = await env.renderPage(pagePath);
 	assert.equal(page.unavailable, false);
 	assert.equal(page.loadError, '');
 	assert.equal(page.draft.id, largeId);
-	assert.equal(page.editable, true);
-	assert.equal(page.canDeclare, true);
+	assert.equal(page.eligible, true);
+	assert.equal(page.closed, false);
+	// The encounter may be closed: nothing that writes is offered until the report state is known.
+	assert.equal(page.editable, false);
+	assert.equal(page.canDeclare, false);
+	assert.equal(page.editHint, 'No se pudo confirmar si el encuentro quirúrgico fue cerrado. El borrador se muestra en solo lectura; recargá la página antes de editar o declarar el consentimiento.');
 	assert.equal(page.reportActions, false);
 	assert.equal(page.report, null);
 	assert.match(page.reportError, /No se pudo cargar el parte quirúrgico/);
