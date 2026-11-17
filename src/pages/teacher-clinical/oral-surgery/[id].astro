@@ -3,10 +3,11 @@ export const prerender = false;
 import { actions, isInputError } from 'astro:actions';
 import Layout from '../../../layouts/Layout.astro';
 import OralSurgeryReadOnly from '../../../components/clinical/OralSurgeryReadOnly.astro';
+import OperativeReportReadOnly from '../../../components/clinical/OperativeReportReadOnly.astro';
 import { ApiError } from '../../../shared/apiClient';
 import { actionHrefWithContext } from '../../../pods/kinesiology-evaluation/api';
 import { parseClinicalContext, teacherGrant, type ClinicalContext } from '../../../pods/teacher-clinical/api';
-import { getAuthorizationHistory, getConsentHistory, getOralSurgeryDraft, type AuthorizationHistory, type ConsentHistory, type OralSurgeryDraft } from '../../../pods/oral-surgery-draft/api';
+import { getAuthorizationHistory, getConsentHistory, getOperativeReport, getOralSurgeryDraft, type AuthorizationHistory, type ConsentHistory, type OperativeReport, type OralSurgeryDraft } from '../../../pods/oral-surgery-draft/api';
 import { oralSurgeryTimestampLabel } from '../../../pods/oral-surgery-draft/labels';
 import { assignmentListCarrier, assignmentListQuery, parseAssignmentListCoordinates } from '../../../pods/patient-assignment/list-coordinates';
 import { clinicalFilterCarrier } from '../../../pods/kinesiology-evolution/listing';
@@ -20,23 +21,34 @@ let consent: ConsentHistory | null = null;
 let consentError = '';
 let authorizations: AuthorizationHistory | null = null;
 let authorizationError = '';
+let report: OperativeReport | null = null;
+let reportError = '';
 const result = Astro.getActionResult(actions.authorizeOralSurgeryDraft);
 const resultData = result?.data;
 const actionError = result?.error ? (isInputError(result.error) ? 'Revisá los campos del formulario.' : 'No se pudo procesar la autorización. Consultá el estado antes de volver a intentarlo.') : resultData?.success === false ? resultData.error : '';
 const uncertain = resultData?.success === false && resultData.uncertain || !!result?.error && !isInputError(result.error);
 if (resultData?.success === false && /sesión venció/i.test(resultData.error)) return loginRedirect();
+const closeResult = Astro.getActionResult(actions.closeOralSurgeryOperativeReport);
+const closeData = closeResult?.data;
+const closeActionError = closeResult?.error ? (isInputError(closeResult.error) ? 'Revisá los campos del formulario.' : 'No se pudo confirmar el cierre del parte quirúrgico.') : closeData?.success === false ? closeData.error : '';
+const closeUncertain = (closeData?.success === false && closeData.uncertain) || (!!closeResult?.error && !isInputError(closeResult.error));
+if (closeData?.success === false && /sesión venció/i.test(closeData.error)) return loginRedirect();
 // The action URL carries the assignment choice so the redirect and «Volver» keep the selected assignment.
 const assignmentChoices = Astro.url.searchParams.getAll('assignment_id');
 const validAssignment = assignmentChoices.length === 1 && /^[1-9]\d{0,18}$/.test(assignmentChoices[0]) ? assignmentChoices[0] : '';
 const assignmentCarrier: Record<string, string> = validAssignment ? { assignment_id: validAssignment } : {};
-if (resultData?.success) {
+// Success returns to the detail with the same origin context, list state and filters; the outcome flag names the action that finished.
+const redirectAfterAction = (data: ClinicalContext & { id: string }, outcome: 'authorized' | 'closed') => {
  const coordinates = parseAssignmentListCoordinates(Astro.url.searchParams, true);
  const carriesListState = [...Astro.url.searchParams.keys()].some((key) => key.startsWith('list_'));
- const returnParams = new URLSearchParams({ patient_id: resultData.patient_id, subject_id: resultData.subject_id, academic_group_id: resultData.academic_group_id, ...(carriesListState ? assignmentListCarrier(coordinates) : {}), ...assignmentCarrier, ...clinicalFilterCarrier(Astro.url.searchParams), authorized: '1' });
- return Astro.redirect(`/teacher-clinical/oral-surgery/${resultData.id}?${returnParams}`);
-}
+ const returnParams = new URLSearchParams({ patient_id: data.patient_id, subject_id: data.subject_id, academic_group_id: data.academic_group_id, ...(carriesListState ? assignmentListCarrier(coordinates) : {}), ...assignmentCarrier, ...clinicalFilterCarrier(Astro.url.searchParams), [outcome]: '1' });
+ return Astro.redirect(`/teacher-clinical/oral-surgery/${data.id}?${returnParams}`);
+};
+if (resultData?.success) return redirectAfterAction(resultData, 'authorized');
+if (closeData?.success) return redirectAfterAction(closeData, 'closed');
 const allowed = teacherGrant(Astro.cookies, 'oral-surgery-drafts:read');
 const canAuthorize = teacherGrant(Astro.cookies, 'oral-surgery-drafts:authorize');
+const canClose = teacherGrant(Astro.cookies, 'oral-surgery-drafts:close');
 let listCoordinates: ReturnType<typeof parseAssignmentListCoordinates> = { filters: {}, limit: 50, offset: 0 };
 let listCoordinatesValid = true;
 try { listCoordinates = parseAssignmentListCoordinates(Astro.url.searchParams, true); }
@@ -71,6 +83,11 @@ if (draft) {
   if (failure instanceof ApiError && failure.status === 401) return loginRedirect();
   authorizationError = 'No se pudo consultar el historial de autorizaciones. No se habilita la autorización.';
  }
+ try { report = await getOperativeReport(draft.id, Astro.cookies); }
+ catch (failure) {
+  if (failure instanceof ApiError && failure.status === 401) return loginRedirect();
+  reportError = 'No se pudo consultar el parte quirúrgico. No se habilita la autorización ni el cierre.';
+ }
 }
 // Both histories must describe the exact version rendered; an edit between reads blocks authorization.
 const versionsMatch = !!draft && consent?.draft_version === draft.version && authorizations?.draft_version === draft.version;
@@ -78,7 +95,12 @@ const versionChanged = !!draft && !!consent && !!authorizations && !versionsMatc
 const currentAuthorizationId = authorizations?.current_authorization_id ?? null;
 const authorizedForVersion = !!draft && authorizations?.authorizations.find((item) => item.id === currentAuthorizationId)?.draft_version === draft.version;
 const declarationId = consent?.current_declaration_id ?? null;
-const canShowForm = canAuthorize && !!draft && versionsMatch && declarationId !== null && !authorizedForVersion && !uncertain;
+// A closed or unreadable report hides the authorize form: the encounter state is then unknown or immutable.
+const reportClosed = report?.status === 'closed';
+const canShowForm = canAuthorize && !!draft && versionsMatch && declarationId !== null && !authorizedForVersion && !uncertain && reportError === '' && !reportClosed;
+// The close form needs a draft report saved against this exact clinical version and no uncertain close outcome.
+const reportMismatch = !!draft && !!report && report.status === 'draft' && report.draft_version !== draft.version;
+const closeReport = canClose && !!draft && reportError === '' && report?.status === 'draft' && report.draft_version === draft.version && !closeUncertain ? report : null;
 const listCarrier = assignmentListCarrier(listCoordinates);
 const clinicalCarrier = clinicalFilterCarrier(Astro.url.searchParams);
 const cleanParams = draft ? new URLSearchParams({ patient_id: draft.patient_id, subject_id: draft.origin_subject_id, academic_group_id: draft.origin_group_id, ...listCarrier, ...assignmentCarrier, ...clinicalCarrier }) : new URLSearchParams(listCarrier);
@@ -87,6 +109,7 @@ if (validAssignment) returnParams.set('assignment_id', validAssignment);
 for (const [key, value] of Object.entries(clinicalCarrier)) returnParams.set(key, value);
 const returnToList = `/teacher-clinical?${returnParams}`;
 const actionHref = actionHrefWithContext(actions.authorizeOralSurgeryDraft.toString(), Object.fromEntries(cleanParams), Astro.url.href);
+const closeHref = actionHrefWithContext(actions.closeOralSurgeryOperativeReport.toString(), Object.fromEntries(cleanParams), Astro.url.href);
 ---
 <Layout>
  <main>
@@ -96,6 +119,9 @@ const actionHref = actionHrefWithContext(actions.authorizeOralSurgeryDraft.toStr
    {Astro.url.searchParams.get('authorized') === '1' && <p role="status">Autorización registrada para la versión actual.</p>}
    {actionError && <p role="alert">{actionError}</p>}
    {uncertain && <p role="status">Consultá el estado antes de volver a autorizar.</p>}
+   {Astro.url.searchParams.get('closed') === '1' && <p role="status">Parte quirúrgico cerrado.</p>}
+   {closeActionError && <p role="alert">{closeActionError}</p>}
+   {closeUncertain && <p role="status">Consultá el estado antes de volver a cerrar.</p>}
    <p>Paciente: {draft.patient_id}<br />Asignatura de origen: {draft.origin_subject_id}<br />Grupo de origen: {draft.origin_group_id}</p>
    <p>Versión actual: {draft.version}</p>
    <section aria-labelledby="content-title">
@@ -134,7 +160,25 @@ const actionHref = actionHrefWithContext(actions.authorizeOralSurgeryDraft.toStr
      <button type="submit">Autorizar esta versión</button>
     </form>}
     {!canAuthorize && <p>Esta consulta no otorga permiso para autorizar.</p>}
-    {canAuthorize && consent && declarationId === null && <p>Para autorizar hace falta una declaración vigente de consentimiento en papel.</p>}
+    {canAuthorize && !reportClosed && consent && declarationId === null && <p>Para autorizar hace falta una declaración vigente de consentimiento en papel.</p>}
+   </section>
+   <section aria-labelledby="report-title">
+    <h2 id="report-title">Parte quirúrgico</h2>
+    {reportError ? <p role="alert">{reportError}</p> : report ? <>
+     <OperativeReportReadOnly report={report} />
+     {reportMismatch && <p role="alert">El parte se guardó contra la versión clínica {report.draft_version}; el borrador está en la versión {draft.version}. El alumno debe volver a guardar el parte para la versión {draft.version} antes de cerrarlo.</p>}
+     {reportClosed && <p>El encuentro está cerrado: el parte quirúrgico y el borrador son de solo lectura e inmutables.</p>}
+     {closeReport && <form method="POST" action={closeHref} id="close-form">
+      <input type="hidden" name="id" value={draft.id} />
+      <input type="hidden" name="patient_id" value={draft.patient_id} />
+      <input type="hidden" name="subject_id" value={draft.origin_subject_id} />
+      <input type="hidden" name="academic_group_id" value={draft.origin_group_id} />
+      <input type="hidden" name="expected_version" value={closeReport.version} />
+      <input type="hidden" name="expected_draft_version" value={draft.version} />
+      <label><input type="checkbox" name="ready_confirmed" value="on" required /> Revisé el parte quirúrgico y confirmo que está listo para cerrarse. El cierre es irreversible.</label>
+      <button type="submit">Cerrar parte quirúrgico</button>
+     </form>}
+    </> : <p>El alumno todavía no guardó el parte quirúrgico.</p>}
    </section>
   </>}
  </main>
@@ -147,6 +191,8 @@ const actionHref = actionHrefWithContext(actions.authorizeOralSurgeryDraft.toStr
   });
   const authorizeForm = document.querySelector<HTMLFormElement>('#authorize-form');
   if (authorizeForm) protectSubmit(authorizeForm, 'Autorizando…');
+  const closeForm = document.querySelector<HTMLFormElement>('#close-form');
+  if (closeForm) protectSubmit(closeForm, 'Cerrando…');
  </script>
 </Layout>
 <style>
