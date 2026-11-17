@@ -422,3 +422,9 @@ test('RED (b) student create-draft form actions carry the clinical filters while
   const oral = await renderCompiledPage('src/pages/my-patients/[assignmentId].astro', { url: `http://127.0.0.1:4321/my-patients/${assignmentId}?${dateQuery}`, oralEnabled: true });
   assert.equal(new URL(formDataFromHtml(oral.html, 'new-draft').action, 'https://fixture.invalid').searchParams.get('date_from'), '2026-01-01');
 });
+
+test('the student editor reads an empty practical evaluation instead of showing its read error', async () => {
+  const page = await renderCompiledPage('src/pages/oral-surgery-drafts/[id].astro', { url: `/oral-surgery-drafts/${recordId}?${queryWithListState()}` });
+  assert.doesNotMatch(page.html, /No se pudo cargar la evaluación práctica/);
+  assert.match(page.html, /La evaluación práctica se registra después del cierre del parte quirúrgico\./);
+});

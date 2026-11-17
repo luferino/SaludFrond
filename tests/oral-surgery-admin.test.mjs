@@ -40,6 +40,13 @@ const report = (overrides = {}) => ({
 });
 const closedReport = report({ version: '3', status: 'closed', closed_by: teacherId, closed_at: iso, teacher_habilitation_id: habilitationId });
 const errorBody = (code, message) => ({ error: { code, message } });
+const practicalItems = { hand_washing: 1, barrier_elements: 0, waste_disposal: 1, clinical_table_setup: 2, asepsis: 0, anamnesis_questionnaire: 2, anesthetic_technique: 1, sindesmotomy_elevators: 2, surgical_procedure: 2, curettage_suture: 1, record_and_equipment: 1, relationship: 1 };
+const practicalRevision = (overrides = {}) => ({ revision: '1', items: practicalItems, total: 14, outcome: 'annulled', reason: null, graded_by: teacherId, teacher_habilitation_id: habilitationId, graded_at: iso, ...overrides });
+const correctedRevision = practicalRevision({ revision: '2', items: { ...practicalItems, barrier_elements: 1, asepsis: 1 }, total: 16, outcome: 'approved', reason: 'Asepsia y barrera revisadas en el video' });
+const instructorView = (history) => ({ current: history.at(-1), history });
+/** The student view has only `current` with the four keys of the S6 contract; the admin must never receive it. */
+const studentView = { current: { items: practicalItems, total: 14, outcome: 'annulled', graded_at: iso } };
+const practicalNotFound = { status: 404, body: errorBody('NOT_FOUND', 'oral surgery practical evaluation was not found') };
 const admin = (overrides = {}) => ({ sub: authorId, username: 'admin', role: 'admin', permissions: ['oral-surgery-drafts:read'], exp: 4102444800, iat: 1, ...overrides });
 const jwt = (payload) => `h.${Buffer.from(JSON.stringify(payload)).toString('base64url')}.s`;
 const plain = (value) => JSON.parse(JSON.stringify(value));
@@ -48,6 +55,7 @@ const detailRoutes = (overrides = {}) => ({
 	[`GET ${draftPath}/consent`]: { body: consent },
 	[`GET ${draftPath}/authorizations`]: { body: authorizations },
 	[`GET ${draftPath}/operative-report`]: { body: report() },
+	[`GET ${draftPath}/practical-evaluation`]: practicalNotFound,
 	...overrides,
 });
 
@@ -127,7 +135,7 @@ async function environment(routes = {}) {
 }
 
 const LIST_STATE = ['allowed', 'listing', 'items', 'error', 'forbidden', 'loaded', 'previousOffset', 'nextOffset', 'listQuery'];
-const DETAIL_STATE = ['allowed', 'unavailable', 'forbidden', 'loadError', 'draft', 'consent', 'consentError', 'authorizationHistory', 'authorizationError', 'report', 'reportError', 'backHref'];
+const DETAIL_STATE = ['allowed', 'unavailable', 'forbidden', 'loadError', 'draft', 'consent', 'consentError', 'authorizationHistory', 'authorizationError', 'report', 'reportError', 'practical', 'practicalError', 'backHref'];
 
 // A1: admin gate and query parsing (S6).
 
@@ -211,7 +219,7 @@ test('A3 the detail reads the draft, consent, authorizations and report, and kee
 	const env = await environment(detailRoutes());
 	const page = await env.renderPage(detailPage, { url: `/oral-surgery-admin/${draftId}?limit=20&offset=40`, state: DETAIL_STATE });
 	assert.deepEqual(env.requests.map((request) => request.url), [
-		`${apiBase}${draftPath}`, `${apiBase}${draftPath}/consent`, `${apiBase}${draftPath}/authorizations`, `${apiBase}${draftPath}/operative-report`,
+		`${apiBase}${draftPath}`, `${apiBase}${draftPath}/consent`, `${apiBase}${draftPath}/authorizations`, `${apiBase}${draftPath}/operative-report`, `${apiBase}${draftPath}/practical-evaluation`,
 	]);
 	assert.equal(page.draft.id, draftId);
 	assert.equal(page.report.status, 'draft');
@@ -233,11 +241,11 @@ test('A3 a report 404 means no report, and a closed report is returned with its 
 
 test('A3 each history failure is isolated in its own alert and the draft still renders', async () => {
 	const failing = { status: 500, body: {} };
-	for (const [path, field] of [['consent', 'consentError'], ['authorizations', 'authorizationError'], ['operative-report', 'reportError']]) {
+	for (const [path, field] of [['consent', 'consentError'], ['authorizations', 'authorizationError'], ['operative-report', 'reportError'], ['practical-evaluation', 'practicalError']]) {
 		const env = await environment(detailRoutes({ [`GET ${draftPath}/${path}`]: failing }));
 		const page = await env.renderPage(detailPage, { url: `/oral-surgery-admin/${draftId}`, state: DETAIL_STATE });
 		assert.equal(page.draft.id, draftId);
-		for (const other of ['consentError', 'authorizationError', 'reportError']) {
+		for (const other of ['consentError', 'authorizationError', 'reportError', 'practicalError']) {
 			if (other === field) assert.match(page[other], /No se pudo/);
 			else assert.equal(page[other], '', `${path} → ${other}`);
 		}
@@ -260,11 +268,49 @@ test('A3 invalid ids and non-admin sessions send no request; draft 404, 403, 401
 	env = await environment(detailRoutes({ [`GET ${draftPath}`]: { status: 500, body: {} } }));
 	page = await env.renderPage(detailPage, { url: `/oral-surgery-admin/${draftId}`, state: DETAIL_STATE });
 	assert.match(page.loadError, /No se pudo cargar/);
-	for (const path of ['', '/consent', '/operative-report']) {
+	for (const path of ['', '/consent', '/operative-report', '/practical-evaluation']) {
 		env = await environment(detailRoutes({ [`GET ${draftPath}${path}`]: { status: 401, body: errorBody('UNAUTHORIZED', 'x') } }));
 		page = await env.renderPage(detailPage, { url: `/oral-surgery-admin/${draftId}?limit=50`, state: DETAIL_STATE });
 		assert.equal(page.redirect, `/auth/login?returnTo=${encodeURIComponent(`/oral-surgery-admin/${draftId}?limit=50`)}`, path);
 	}
+});
+
+// A5-A7: practical evaluation section (S7). The admin reads the instructor view and never grades.
+
+test('A5 the admin detail reads the instructor view after the report and shows the current revision with the full history', async () => {
+	const env = await environment(detailRoutes({ [`GET ${draftPath}/practical-evaluation`]: { body: instructorView([practicalRevision(), correctedRevision]) } }));
+	const page = await env.renderPage(detailPage, { url: `/oral-surgery-admin/${draftId}`, state: DETAIL_STATE });
+	assert.equal(env.requests.at(-1).url, `${apiBase}${draftPath}/practical-evaluation`);
+	assert.equal(page.practicalError, '');
+	assert.equal(page.practical.current.revision, '2');
+	assert.deepEqual(page.practical.history.map((entry) => entry.revision), ['1', '2']);
+	const source = await readFile(new URL(detailPage, root), 'utf8');
+	assert.match(source, /<PracticalEvaluationReadOnly current=\{practical\.current\} history=\{practical\.history\} \/>/);
+	assert.ok(source.indexOf('id="report-title"') > 0 && source.indexOf('id="practical-title"') > source.indexOf('id="report-title"'));
+});
+
+test('A6 without a grade the admin sees the none line; a failed or student-shaped read shows its own alert and hides no other section', async () => {
+	const none = await environment(detailRoutes());
+	const empty = await none.renderPage(detailPage, { url: `/oral-surgery-admin/${draftId}`, state: DETAIL_STATE });
+	assert.deepEqual([empty.practical, empty.practicalError], [null, '']);
+	const source = await readFile(new URL(detailPage, root), 'utf8');
+	assert.match(source, /Sin evaluación práctica registrada\./);
+	for (const practical of [{ status: 500, body: {} }, { body: studentView }]) {
+		const env = await environment(detailRoutes({ [`GET ${draftPath}/practical-evaluation`]: practical }));
+		const page = await env.renderPage(detailPage, { url: `/oral-surgery-admin/${draftId}`, state: DETAIL_STATE });
+		assert.equal(page.practicalError, 'No se pudo consultar la evaluación práctica.');
+		assert.equal(page.practical, null);
+		assert.equal(page.draft.id, draftId);
+		assert.equal(page.consentError, '');
+		assert.equal(page.authorizationError, '');
+		assert.equal(page.reportError, '');
+		assert.equal(page.report.version, '2');
+	}
+});
+
+test('A7 the admin detail offers no grade or correction form, select, button or action', async () => {
+	const source = await readFile(new URL(detailPage, root), 'utf8');
+	assert.doesNotMatch(source, /<form\b|<select\b|<button\b|gradeOralSurgery|correctOralSurgery|expected_revision|PRACTICAL_RUBRIC/);
 });
 
 // A4: read-only markup, compilation and navigation (S6).

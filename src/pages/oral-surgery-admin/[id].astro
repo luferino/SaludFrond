@@ -3,9 +3,10 @@ export const prerender = false;
 import Layout from '../../layouts/Layout.astro';
 import OralSurgeryReadOnly from '../../components/clinical/OralSurgeryReadOnly.astro';
 import OperativeReportReadOnly from '../../components/clinical/OperativeReportReadOnly.astro';
-import type { AuthorizationHistory, ConsentHistory, OperativeReport, OralSurgeryDraft } from '../../pods/oral-surgery-draft/api';
+import PracticalEvaluationReadOnly from '../../components/clinical/PracticalEvaluationReadOnly.astro';
+import type { AuthorizationHistory, ConsentHistory, OperativeReport, OralSurgeryDraft, PracticalInstructorView } from '../../pods/oral-surgery-draft/api';
 import { ApiError } from '../../shared/apiClient';
-import { getAuthorizationHistory, getConsentHistory, getOperativeReport, getOralSurgeryDraft, validId } from '../../pods/oral-surgery-draft/api';
+import { getAuthorizationHistory, getConsentHistory, getOperativeReport, getOralSurgeryDraft, getPracticalEvaluation, validId } from '../../pods/oral-surgery-draft/api';
 import { oralSurgeryAdminGrant, oralSurgeryAdminQuery, parseOralSurgeryAdminListing } from '../../pods/oral-surgery-draft/admin';
 import { oralSurgeryTimestampLabel } from '../../pods/oral-surgery-draft/labels';
 
@@ -30,6 +31,8 @@ let authorizationHistory: AuthorizationHistory | null = null;
 let authorizationError = '';
 let report: OperativeReport | null = null;
 let reportError = '';
+let practical: PracticalInstructorView | null = null;
+let practicalError = '';
 if (allowed) {
 	if (!validId(id)) {
 		unavailable = true;
@@ -60,6 +63,16 @@ if (draft) {
 	catch (failure) {
 		if (failure instanceof ApiError && failure.status === 401) return loginRedirect();
 		reportError = 'No se pudo consultar el parte quirúrgico.';
+	}
+	try {
+		const view = await getPracticalEvaluation(draft.id, Astro.cookies);
+		// The administrator view always carries the history; any other shape is an unreadable evaluation for this page.
+		if (view && !('history' in view)) throw new Error('unexpected practical evaluation view');
+		practical = view;
+	}
+	catch (failure) {
+		if (failure instanceof ApiError && failure.status === 401) return loginRedirect();
+		practicalError = 'No se pudo consultar la evaluación práctica.';
 	}
 }
 const currentAuthorizationId = authorizationHistory?.current_authorization_id ?? null;
@@ -100,6 +113,10 @@ const currentAuthorizationId = authorizationHistory?.current_authorization_id ??
 			<section aria-labelledby="report-title">
 				<h2 id="report-title">Parte quirúrgico</h2>
 				{reportError ? <p role="alert">{reportError}</p> : report ? <OperativeReportReadOnly report={report} /> : <p>Sin parte quirúrgico registrado.</p>}
+			</section>
+			<section aria-labelledby="practical-title">
+				<h2 id="practical-title">Evaluación práctica</h2>
+				{practicalError ? <p role="alert">{practicalError}</p> : practical ? <PracticalEvaluationReadOnly current={practical.current} history={practical.history} /> : <p>Sin evaluación práctica registrada.</p>}
 			</section>
 		</>}
 	</main>

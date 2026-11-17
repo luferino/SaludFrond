@@ -195,6 +195,8 @@ export async function renderCompiledPage(path, { url, oralEnabled = false, statu
     getAuthorizationHistory: async () => ({ draft_version: '3', current_authorization_id: null, authorizations: [] }),
     // No operative report yet: the editor renders its create form beside the clinical forms.
     getOperativeReport: async () => null,
+    // No practical evaluation yet: the editor shows the not-graded line, never the read error.
+    getPracticalEvaluation: async () => null,
     ...oral,
     ...operativeReport,
     OPERATIVE_REPORT_LAYOUT: oralApi.OPERATIVE_REPORT_LAYOUT,
