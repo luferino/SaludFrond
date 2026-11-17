@@ -3,15 +3,17 @@ export const prerender = false;
 import { actions, isInputError } from 'astro:actions';
 import Layout from '../../layouts/Layout.astro';
 import OralSurgeryReadOnly from '../../components/clinical/OralSurgeryReadOnly.astro';
+import OperativeReportReadOnly from '../../components/clinical/OperativeReportReadOnly.astro';
 import { ApiError } from '../../shared/apiClient';
 import { listAssignedPatients } from '../../pods/patient-assignment/api';
 import { assignmentListCarrier, assignmentListQuery, parseAssignmentListCoordinates } from '../../pods/patient-assignment/list-coordinates';
 import { clinicalFilterCarrier } from '../../pods/kinesiology-evolution/listing';
-import type { AuthorizationHistory, ConsentHistory, OralSurgeryDraft } from '../../pods/oral-surgery-draft/api';
-import { getAuthorizationHistory, getConsentHistory, getOralSurgeryDraft, validId } from '../../pods/oral-surgery-draft/api';
+import type { AuthorizationHistory, ConsentHistory, OperativeReport, OralSurgeryDraft } from '../../pods/oral-surgery-draft/api';
+import { getAuthorizationHistory, getConsentHistory, getOperativeReport, getOralSurgeryDraft, OPERATIVE_REPORT_LAYOUT, validId } from '../../pods/oral-surgery-draft/api';
 import type { FormValues } from '../../pods/oral-surgery-draft/actions/drafts';
 import { authorizationStatusLine, formValuesFromContent, ORAL_SURGERY_COPY, ORAL_SURGERY_FORM_CONTROLS, ORAL_SURGERY_FORM_SECTIONS, oralSurgeryTextareaText } from '../../pods/oral-surgery-draft/actions/drafts';
-import { ORAL_SURGERY_FIELD_LABELS, ORAL_SURGERY_SECTION_LABELS, oralSurgeryTimestampLabel } from '../../pods/oral-surgery-draft/labels';
+import { OPERATIVE_REPORT_COPY, OPERATIVE_REPORT_FORM_FIELDS, operativeReportFormValues } from '../../pods/oral-surgery-draft/actions/operative-report';
+import { OPERATIVE_REPORT_LABELS, ORAL_SURGERY_FIELD_LABELS, ORAL_SURGERY_SECTION_LABELS, oralSurgeryTimestampLabel } from '../../pods/oral-surgery-draft/labels';
 import { decodeJwt } from '../../shared/jwt';
 import { actionHrefWithContext } from '../../pods/kinesiology-evaluation/api';
 
@@ -35,7 +37,15 @@ function unsavedAnswers(values: FormValues | undefined): Unsaved[] {
 	});
 }
 
-function actionReturnParams(data: { assignment_id: string; limit: string; offset: string; list_filters?: ReturnType<typeof parseAssignmentListCoordinates>['filters'] }, notice: 'saved' | 'declared') {
+/** Labels and submitted values of the report controls that carry an answer; empty controls are not listed. */
+function unsavedReportAnswers(values: FormValues | undefined): Unsaved[] {
+	return Object.entries(values ?? {}).flatMap(([name, value]) => {
+		if (value === '' || !OPERATIVE_REPORT_FORM_FIELDS.includes(name)) return [];
+		return [{ label: OPERATIVE_REPORT_LABELS[name], value }];
+	});
+}
+
+function actionReturnParams(data: { assignment_id: string; limit: string; offset: string; list_filters?: ReturnType<typeof parseAssignmentListCoordinates>['filters'] }, notice: 'saved' | 'declared' | 'report_saved') {
 	const params = new URLSearchParams({ assignment_id: data.assignment_id });
 	if (data.list_filters !== undefined) {
 		for (const [key, value] of Object.entries(assignmentListCarrier({ limit: Number(data.limit), offset: Number(data.offset), filters: data.list_filters }))) params.set(key, value);
@@ -61,6 +71,13 @@ if (declareData?.success) {
 	const returnParams = actionReturnParams(declareData, 'declared');
 	return Astro.redirect(`/oral-surgery-drafts/${encodeURIComponent(declareData.id)}?${returnParams}`);
 }
+const reportResult = Astro.getActionResult(actions.saveOralSurgeryOperativeReport);
+const reportData = reportResult?.data;
+if (reportData?.success) {
+	// Same redirect rule as the draft: the validated context decides the return URL before any read.
+	const returnParams = actionReturnParams(reportData, 'report_saved');
+	return Astro.redirect(`/oral-surgery-drafts/${encodeURIComponent(reportData.id)}?${returnParams}`);
+}
 const saveFailure = saveData?.success === false ? saveData : undefined;
 const declareFailure = declareData?.success === false ? declareData : undefined;
 let saveError = saveFailure?.error ?? '';
@@ -71,7 +88,10 @@ if (declareResult?.error) {
 	declareUncertain = !isInputError(declareResult.error);
 	declareError = declareUncertain ? ORAL_SURGERY_COPY.declareUncertain : ORAL_SURGERY_COPY.declareMissingConfirmation;
 }
-if (/sesión venció/i.test(saveError) || /sesión venció/i.test(declareError)) return Astro.redirect(loginRedirect);
+const reportFailure = reportData?.success === false ? reportData : undefined;
+let reportSaveError = reportFailure?.error ?? '';
+if (reportResult?.error) reportSaveError = isInputError(reportResult.error) ? OPERATIVE_REPORT_COPY.formInput : OPERATIVE_REPORT_COPY.saveUncertain;
+if (/sesión venció/i.test(saveError) || /sesión venció/i.test(declareError) || /sesión venció/i.test(reportSaveError)) return Astro.redirect(loginRedirect);
 
 // Values the student submitted and the browser never saved; they are never sent again with the current version.
 const retainedValues = saveFailure?.values;
@@ -87,6 +107,8 @@ let consent: ConsentHistory | null = null;
 let consentError = '';
 let authorization: AuthorizationHistory | null = null;
 let authorizationError = '';
+let report: OperativeReport | null = null;
+let reportError = '';
 try {
 	const coordinates = parseAssignmentListCoordinates(search, true);
 	const pagination = { limit: coordinates.limit, offset: coordinates.offset };
@@ -131,6 +153,12 @@ try {
 					if (authorizationFailure instanceof ApiError && authorizationFailure.status === 401) throw authorizationFailure;
 					authorizationError = 'No se pudo cargar la autorización docente. El borrador se muestra igual; intentá recargar la página.';
 				}
+				try {
+					report = await getOperativeReport(id, Astro.cookies);
+				} catch (reportReadFailure) {
+					if (reportReadFailure instanceof ApiError && reportReadFailure.status === 401) throw reportReadFailure;
+					reportError = 'No se pudo cargar el parte quirúrgico. El borrador se muestra igual; intentá recargar la página.';
+				}
 			}
 		}
 	}
@@ -142,14 +170,34 @@ try {
 
 const unsaved: Unsaved[] = draft && !saveFailure?.conflict ? [] : unsavedAnswers(retainedValues);
 const fields: FormValues = formValues ?? {};
-const editHint = eligible ? ORAL_SURGERY_COPY.editable : ORAL_SURGERY_COPY.readOnly;
+// A closed report is the teacher's final state: the clinical draft and the report become read-only.
+const closed = report?.status === 'closed';
+const editable = eligible && !closed;
+const closedHint = 'El encuentro quirúrgico fue cerrado por el docente y es inmutable: el borrador y el parte se muestran en solo lectura.';
+const editHint = closed ? closedHint : eligible ? ORAL_SURGERY_COPY.editable : ORAL_SURGERY_COPY.readOnly;
 const authorizationStatus = draft && authorization ? authorizationStatusLine(authorization, draft.version) : '';
 const currentDeclaration = consent?.declarations.find((item) => item.id === consent?.current_declaration_id);
-// Declaring attests the stored plan, so it needs the same version on both reads and no unsaved answers.
-const canDeclare = !!draft && eligible && !!consent && !consentError && consent.current_declaration_id === null
+// Report actions need a readable, open report and an eligible author.
+const reportActions = !!draft && !reportError && !closed && eligible;
+const currentAuthorizationId = authorization?.current_authorization_id ?? null;
+const currentAuthorization = authorization?.authorizations.find((item) => item.id === currentAuthorizationId);
+// A save needs a current teacher authorization for the exact clinical version; a history that failed to load is left to the backend.
+const reportAuthorizationMissing = !!draft && !!authorization && currentAuthorization?.draft_version !== draft.version;
+// A report saved against an older clinical version must be saved again before the teacher can close it.
+const reportStale = !!draft && !!report && !closed && report.draft_version !== draft.version;
+// Declaring attests the stored plan, so it needs the same version on both reads and no unsaved answers. A closed encounter cannot be declared.
+const canDeclare = !!draft && eligible && !closed && !!consent && !consentError && consent.current_declaration_id === null
 	&& consent.draft_version === draft.version && !retainedValues && !declareUncertain;
 const saved = search.get('saved') === '1';
 const declared = search.get('declared') === '1';
+const reportSaved = search.get('report_saved') === '1';
+// A rejected report save keeps its submitted values and versions, except a conflict, which shows the stored report.
+const reportRetained = reportFailure && !reportFailure.conflict && reportFailure.values ? reportFailure : undefined;
+const reportFields: FormValues = reportRetained?.values ?? operativeReportFormValues(report?.content ?? {});
+const reportFormVersion = reportRetained ? reportRetained.expected_version : (report?.version ?? '');
+const reportFormDraftVersion = reportRetained ? reportRetained.expected_draft_version : (draft?.version ?? '');
+// Submitted values the form cannot show (a conflict or no form) are listed as unsaved instead.
+const reportUnsaved: Unsaved[] = reportFailure && (reportFailure.conflict || !reportActions) ? unsavedReportAnswers(reportFailure.values) : [];
 const coordinates = { limit, offset, filters: listFilters };
 const listCarrier = assignmentListCarrier(coordinates);
 const clinicalCarrier = clinicalFilterCarrier(search);
@@ -160,6 +208,7 @@ const contextHref = `/my-patients/${encodeURIComponent(assignmentId)}?${contextP
 const actionContext = { assignment_id: assignmentId, ...listCarrier, ...clinicalCarrier };
 const saveHref = actionHrefWithContext(actions.updateOralSurgeryDraft.toString(), actionContext, Astro.url.href);
 const declareHref = actionHrefWithContext(actions.declareOralSurgeryConsent.toString(), actionContext, Astro.url.href);
+const reportSaveHref = actionHrefWithContext(actions.saveOralSurgeryOperativeReport.toString(), actionContext, Astro.url.href);
 ---
 <Layout>
 	<main class="clinical-page" aria-labelledby="title">
@@ -195,11 +244,11 @@ const declareHref = actionHrefWithContext(actions.declareOralSurgeryConsent.toSt
 				<input type="hidden" name="list_limit" value={limit} />
 				<input type="hidden" name="list_offset" value={offset} />
 				{Object.entries(listFilters).map(([key, value]) => <input type="hidden" name={`list_${key}`} value={value} />)}
-				<fieldset disabled={!eligible}>
+				<fieldset disabled={!editable}>
 					<legend>Datos de admisión</legend>
 					<label>Fecha de ingreso <input name="admission_date" type="date" value={fields.admission_date} /></label>
 				</fieldset>
-				{ORAL_SURGERY_FORM_SECTIONS.map(({ section, booleans, texts }) => <fieldset disabled={!eligible}>
+				{ORAL_SURGERY_FORM_SECTIONS.map(({ section, booleans, texts }) => <fieldset disabled={!editable}>
 					<legend>{ORAL_SURGERY_SECTION_LABELS[section]}</legend>
 					{booleans.map((field) => <label>{ORAL_SURGERY_FIELD_LABELS[section][field]} <select name={`${section}.${field}`}>
 						<option value="" selected={fields[`${section}.${field}`] === ''}>Sin responder</option>
@@ -208,7 +257,7 @@ const declareHref = actionHrefWithContext(actions.declareOralSurgeryConsent.toSt
 					</select></label>)}
 					{texts.map((field) => <label>{ORAL_SURGERY_FIELD_LABELS[section][field]} <textarea name={`${section}.${field}`}>{oralSurgeryTextareaText(fields[`${section}.${field}`])}</textarea></label>)}
 				</fieldset>)}
-				{eligible && <button class="button" type="submit">Guardar borrador</button>}
+				{editable && <button class="button" type="submit">Guardar borrador</button>}
 			</form>}
 			<section class="consent" aria-labelledby="consent-title">
 				<h2 id="consent-title">Consentimiento en papel</h2>
@@ -241,6 +290,38 @@ const declareHref = actionHrefWithContext(actions.declareOralSurgeryConsent.toSt
 				</>}
 				{declareError && <p class="notice error" role="alert">{declareError}</p>}
 			</section>
+			<section class="report" aria-labelledby="report-title">
+				<h2 id="report-title">Parte quirúrgico</h2>
+				{reportSaved && <p class="success" role="status">Parte quirúrgico guardado.</p>}
+				{reportSaveError && <p class="notice error" role="alert">{reportSaveError}</p>}
+				{report && reportStale && <p class="notice error" role="status">El parte se guardó contra la versión clínica {report.draft_version}. Guardalo nuevamente para la versión actual ({draft.version}) antes de que el docente pueda cerrarlo.</p>}
+				{reportError ? <p class="notice error" role="alert">{reportError}</p>
+				: closed && report ? <OperativeReportReadOnly report={report} />
+				: reportActions ? <>
+					{report && <p>Versión guardada del parte: <strong>{report.version}</strong></p>}
+					{reportAuthorizationMissing && <p class="notice" role="status">Hace falta una autorización docente vigente para la versión {draft.version} antes de guardar el parte quirúrgico.</p>}
+					<form method="POST" action={reportSaveHref} id="report-form">
+						<input type="hidden" name="id" value={draft.id} />
+						{reportFormVersion !== '' && <input type="hidden" name="expected_version" value={reportFormVersion} />}
+						<input type="hidden" name="expected_draft_version" value={reportFormDraftVersion} />
+						<input type="hidden" name="assignment_id" value={assignmentId} />
+						<input type="hidden" name="limit" value={limit} />
+						<input type="hidden" name="offset" value={offset} />
+						<input type="hidden" name="list_limit" value={limit} />
+						<input type="hidden" name="list_offset" value={offset} />
+						{Object.entries(listFilters).map(([key, value]) => <input type="hidden" name={`list_${key}`} value={value} />)}
+						{OPERATIVE_REPORT_LAYOUT.map(({ key, fields }) => fields === null
+							? <label>{OPERATIVE_REPORT_LABELS[key]} <textarea name={key}>{oralSurgeryTextareaText(reportFields[key] ?? '')}</textarea></label>
+							: <fieldset>
+								<legend>{OPERATIVE_REPORT_LABELS[key]}</legend>
+								{fields.map((field) => <label>{OPERATIVE_REPORT_LABELS[`${key}.${field}`]} <textarea name={`${key}.${field}`}>{oralSurgeryTextareaText(reportFields[`${key}.${field}`] ?? '')}</textarea></label>)}
+							</fieldset>)}
+						<p class="notice">Podés guardar un parte incompleto. El docente del contexto lo revisa y confirma el cierre.</p>
+						{!reportAuthorizationMissing && <button id="report-button" class="button" type="submit">Guardar parte quirúrgico</button>}
+					</form>
+				</> : report ? <OperativeReportReadOnly report={report} />
+				: <p>Todavía no se guardó ningún parte quirúrgico para este encuentro.</p>}
+			</section>
 		</> : <section class="notice error" role="alert">
 			<h1 id="title">No se pudo cargar el borrador</h1>
 			<p>Volvé a la asignación e intentá nuevamente.</p>
@@ -250,6 +331,14 @@ const declareHref = actionHrefWithContext(actions.declareOralSurgeryConsent.toSt
 			<h2 id="unsaved-title">Valores no guardados</h2>
 			<p>Estos valores no se guardaron y no se enviarán con la versión actual. Copialos antes de volver a cargar.</p>
 			<dl>{unsaved.map((entry) => <div>
+				<dt>{entry.label}</dt>
+				<dd>{entry.value}</dd>
+			</div>)}</dl>
+		</section>}
+		{reportUnsaved.length > 0 && <section class="preserved" aria-labelledby="report-unsaved-title">
+			<h2 id="report-unsaved-title">Valores no guardados del parte</h2>
+			<p>Estos valores del parte no se guardaron y no se enviarán con la versión actual. Copialos antes de volver a cargar.</p>
+			<dl>{reportUnsaved.map((entry) => <div>
 				<dt>{entry.label}</dt>
 				<dd>{entry.value}</dd>
 			</div>)}</dl>
@@ -288,6 +377,20 @@ const declareHref = actionHrefWithContext(actions.declareOralSurgeryConsent.toSt
 				declareButton.textContent = 'Declarando…';
 			}
 		});
+		// Report edits are a separate form: they never mark the draft dirty, so the consent declaration stays available.
+		const reportForm = document.querySelector<HTMLFormElement>('#report-form');
+		const reportButton = document.querySelector<HTMLButtonElement>('#report-button');
+		reportForm?.addEventListener('submit', (event) => {
+			if (reportForm.dataset.submitting === 'true') {
+				event.preventDefault();
+				return;
+			}
+			reportForm.dataset.submitting = 'true';
+			if (reportButton) {
+				reportButton.disabled = true;
+				reportButton.textContent = 'Guardando…';
+			}
+		});
 	</script>
 </Layout>
 
@@ -310,8 +413,8 @@ const declareHref = actionHrefWithContext(actions.declareOralSurgeryConsent.toSt
 	}
 	.error { border-color: var(--rust-line); background: var(--rust-soft); }
 	.success { border-color: var(--sage); background: var(--sage-soft); }
-	.status, .consent { margin: 1rem 0; padding: 1rem 1.25rem; border: 1px solid var(--line); border-radius: 0.75rem; background: var(--paper); }
-	.status h2, .consent h2 { margin: 0 0 0.5rem; font-size: 1.1rem; }
+	.status, .consent, .report { margin: 1rem 0; padding: 1rem 1.25rem; border: 1px solid var(--line); border-radius: 0.75rem; background: var(--paper); }
+	.status h2, .consent h2, .report h2 { margin: 0 0 0.5rem; font-size: 1.1rem; }
 	.declarations { padding-left: 1.25rem; }
 	.button:disabled { opacity: 0.65; cursor: not-allowed; }
 	fieldset {
