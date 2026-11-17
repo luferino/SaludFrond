@@ -4,12 +4,13 @@ import { actions, isInputError } from 'astro:actions';
 import Layout from '../../layouts/Layout.astro';
 import OralSurgeryReadOnly from '../../components/clinical/OralSurgeryReadOnly.astro';
 import OperativeReportReadOnly from '../../components/clinical/OperativeReportReadOnly.astro';
+import PracticalEvaluationReadOnly from '../../components/clinical/PracticalEvaluationReadOnly.astro';
 import { ApiError } from '../../shared/apiClient';
 import { listAssignedPatients } from '../../pods/patient-assignment/api';
 import { assignmentListCarrier, assignmentListQuery, parseAssignmentListCoordinates } from '../../pods/patient-assignment/list-coordinates';
 import { clinicalFilterCarrier } from '../../pods/kinesiology-evolution/listing';
-import type { AuthorizationHistory, ConsentHistory, OperativeReport, OralSurgeryDraft } from '../../pods/oral-surgery-draft/api';
-import { getAuthorizationHistory, getConsentHistory, getOperativeReport, getOralSurgeryDraft, OPERATIVE_REPORT_LAYOUT, validId } from '../../pods/oral-surgery-draft/api';
+import type { AuthorizationHistory, ConsentHistory, OperativeReport, OralSurgeryDraft, PracticalStudentView } from '../../pods/oral-surgery-draft/api';
+import { getAuthorizationHistory, getConsentHistory, getOperativeReport, getOralSurgeryDraft, getPracticalEvaluation, OPERATIVE_REPORT_LAYOUT, validId } from '../../pods/oral-surgery-draft/api';
 import type { FormValues } from '../../pods/oral-surgery-draft/actions/drafts';
 import { authorizationStatusLine, formValuesFromContent, ORAL_SURGERY_COPY, ORAL_SURGERY_FORM_CONTROLS, ORAL_SURGERY_FORM_SECTIONS, oralSurgeryTextareaText } from '../../pods/oral-surgery-draft/actions/drafts';
 import { OPERATIVE_REPORT_COPY, OPERATIVE_REPORT_FORM_FIELDS, operativeReportFormValues } from '../../pods/oral-surgery-draft/actions/operative-report';
@@ -109,6 +110,9 @@ let authorization: AuthorizationHistory | null = null;
 let authorizationError = '';
 let report: OperativeReport | null = null;
 let reportError = '';
+// The student view: the current grade only, with no history or reasons.
+let evaluation: PracticalStudentView | null = null;
+let evaluationError = '';
 try {
 	const coordinates = parseAssignmentListCoordinates(search, true);
 	const pagination = { limit: coordinates.limit, offset: coordinates.offset };
@@ -159,6 +163,13 @@ try {
 					if (reportReadFailure instanceof ApiError && reportReadFailure.status === 401) throw reportReadFailure;
 					reportError = 'No se pudo cargar el parte quirúrgico. El borrador se muestra igual; intentá recargar la página.';
 				}
+				try {
+					// Read last and only for a loaded draft: a failure here never changes editability, consent or report actions.
+					evaluation = await getPracticalEvaluation(id, Astro.cookies);
+				} catch (evaluationReadFailure) {
+					if (evaluationReadFailure instanceof ApiError && evaluationReadFailure.status === 401) throw evaluationReadFailure;
+					evaluationError = 'No se pudo cargar la evaluación práctica. El resto de la ficha se muestra igual; intentá recargar la página.';
+				}
 			}
 		}
 	}
@@ -172,6 +183,8 @@ const unsaved: Unsaved[] = draft && !saveFailure?.conflict ? [] : unsavedAnswers
 const fields: FormValues = formValues ?? {};
 // A closed report is the teacher's final state: the clinical draft and the report become read-only.
 const closed = report?.status === 'closed';
+// Without a grade: a closed report means the teacher has not graded yet; any other state means grading only follows closure.
+const evaluationNoGradeCopy = closed ? 'El docente todavía no registró la evaluación práctica.' : 'La evaluación práctica se registra después del cierre del parte quirúrgico.';
 // An unreadable report leaves closure unknown, so nothing that writes is offered until a reload reads it.
 const editable = eligible && !closed && !reportError;
 const closedHint = 'El encuentro quirúrgico fue cerrado por el docente y es inmutable: el borrador y el parte se muestran en solo lectura.';
@@ -325,6 +338,12 @@ const reportSaveHref = actionHrefWithContext(actions.saveOralSurgeryOperativeRep
 				</> : report ? <OperativeReportReadOnly report={report} />
 				: <p>Todavía no se guardó ningún parte quirúrgico para este encuentro.</p>}
 			</section>
+			<section class="practical" aria-labelledby="practical-title">
+				<h2 id="practical-title">Evaluación práctica</h2>
+				{evaluationError ? <p class="notice error" role="alert">{evaluationError}</p>
+				: evaluation ? <PracticalEvaluationReadOnly current={evaluation.current} />
+				: <p>{evaluationNoGradeCopy}</p>}
+			</section>
 		</> : <section class="notice error" role="alert">
 			<h1 id="title">No se pudo cargar el borrador</h1>
 			<p>Volvé a la asignación e intentá nuevamente.</p>
@@ -416,8 +435,8 @@ const reportSaveHref = actionHrefWithContext(actions.saveOralSurgeryOperativeRep
 	}
 	.error { border-color: var(--rust-line); background: var(--rust-soft); }
 	.success { border-color: var(--sage); background: var(--sage-soft); }
-	.status, .consent, .report { margin: 1rem 0; padding: 1rem 1.25rem; border: 1px solid var(--line); border-radius: 0.75rem; background: var(--paper); }
-	.status h2, .consent h2, .report h2 { margin: 0 0 0.5rem; font-size: 1.1rem; }
+	.status, .consent, .report, .practical { margin: 1rem 0; padding: 1rem 1.25rem; border: 1px solid var(--line); border-radius: 0.75rem; background: var(--paper); }
+	.status h2, .consent h2, .report h2, .practical h2 { margin: 0 0 0.5rem; font-size: 1.1rem; }
 	.declarations { padding-left: 1.25rem; }
 	.button:disabled { opacity: 0.65; cursor: not-allowed; }
 	fieldset {

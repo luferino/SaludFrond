@@ -77,11 +77,20 @@ const baseRoutes = (overrides = {}) => ({
 	[`GET ${draftPath}/consent`]: { body: consentNone },
 	[`GET ${draftPath}/authorizations`]: { body: authNone },
 	[`GET ${draftPath}/operative-report`]: { status: 404, body: errorBody('NOT_FOUND', 'oral surgery operative report was not found') },
+	[`GET ${draftPath}/practical-evaluation`]: practicalNotFound,
 	...overrides,
 });
 const GET_ASSIGNMENT = { method: 'GET', url: assignmentUrl };
 const GET_DRAFT = { method: 'GET', url: draftUrl };
 const GET_REPORT = { method: 'GET', url: `${draftUrl}/operative-report` };
+const GET_PRACTICAL = { method: 'GET', url: `${draftUrl}/practical-evaluation` };
+const practicalNotFound = { status: 404, body: errorBody('NOT_FOUND', 'oral surgery practical evaluation was not found') };
+const practicalItems = {
+	hand_washing: 1, barrier_elements: 0, waste_disposal: 1, clinical_table_setup: 2, asepsis: 0, anamnesis_questionnaire: 2,
+	anesthetic_technique: 1, sindesmotomy_elevators: 2, surgical_procedure: 2, curettage_suture: 1, record_and_equipment: 1, relationship: 1,
+};
+/** The student view: the current grade only, exactly the four keys of the S6 contract. */
+const studentEvaluation = { current: { items: practicalItems, total: 14, outcome: 'annulled', graded_at: iso } };
 
 /** Real pods and page frontmatter run in one vm context; fetch and cookies are isolated and every request is recorded. */
 async function environment(routes = {}) {
@@ -171,7 +180,7 @@ async function environment(routes = {}) {
 		const state = ['unavailable', 'loadError', 'eligible', 'editable', 'editHint', 'draft', 'formValues', 'formVersion', 'unsaved', 'saveError',
 			'canDeclare', 'declareError', 'consent', 'consentError', 'authorizationStatus', 'authorizationError', 'saved', 'declared', 'limit', 'offset', 'saveHref', 'declareHref',
 			'report', 'reportError', 'closed', 'reportActions', 'reportAuthorizationMissing', 'reportStale', 'reportFields', 'reportFormVersion',
-			'reportFormDraftVersion', 'reportSaveError', 'reportSaved', 'reportUnsaved', 'reportSaveHref'];
+			'reportFormDraftVersion', 'reportSaveError', 'reportSaved', 'reportUnsaved', 'reportSaveHref', 'evaluation', 'evaluationError', 'evaluationNoGradeCopy'];
 		const script = `async function renderPage() {${declarations}\nreturn { ${state.join(', ')} };\n}`;
 		const output = ts.transpileModule(script, { compilerOptions: { module: ts.ModuleKind.None, target: ts.ScriptTarget.ES2022 } }).outputText;
 		vm.runInContext(output, sandbox);
@@ -189,7 +198,7 @@ const sourceOfPage = () => readFile(new URL(pagePath, root), 'utf8');
 test('R1 a 404 for the report means no report yet: the create form has no expected_version and sends the current draft version', async () => {
 	const env = await environment(baseRoutes());
 	const page = await env.renderPage(pagePath);
-	assert.deepEqual(plain(env.requests).at(-1), GET_REPORT);
+	assert.deepEqual(plain(env.requests).slice(-2), [GET_REPORT, GET_PRACTICAL]);
 	assert.equal(page.report, null);
 	assert.equal(page.reportError, '');
 	assert.equal(page.reportActions, true);
@@ -437,6 +446,79 @@ test('R8 report edits never mark the clinical draft dirty, so they cannot block 
 	const source = await sourceOfPage();
 	assert.match(source, /form\?\.addEventListener\('input', markDirty\)/);
 	assert.doesNotMatch(source, /reportForm\??\.addEventListener\('(input|change)', markDirty\)/);
+});
+
+// E1-E6: practical evaluation section (S1, S6). The student sees the current grade only, never history or reasons.
+
+const NO_GRADE_CLOSED = 'El docente todavía no registró la evaluación práctica.';
+const NO_GRADE_OPEN = 'La evaluación práctica se registra después del cierre del parte quirúrgico.';
+const PRACTICAL_FAILED = 'No se pudo cargar la evaluación práctica. El resto de la ficha se muestra igual; intentá recargar la página.';
+const withoutEvaluation = ({ evaluation, evaluationError, evaluationNoGradeCopy, ...rest }) => rest;
+
+test('E1 the practical evaluation is read after the report, only for a loaded draft, and its section follows the report section', async () => {
+	const env = await environment(baseRoutes());
+	await env.renderPage(pagePath);
+	assert.deepEqual(plain(env.requests).slice(-2), [GET_REPORT, GET_PRACTICAL]);
+	const missing = await environment(baseRoutes({ [`GET ${draftPath}`]: { status: 404, body: errorBody('NOT_FOUND', 'oral surgery draft was not found') } }));
+	await missing.renderPage(pagePath);
+	assert.equal(missing.requests.some((request) => request.url.endsWith('/practical-evaluation')), false);
+	const source = await sourceOfPage();
+	assert.ok(source.indexOf('id="report-title"') > 0 && source.indexOf('id="practical-title"') > source.indexOf('id="report-title"'));
+	assert.match(source, /<section class="practical" aria-labelledby="practical-title">\s*<h2 id="practical-title">Evaluación práctica<\/h2>/);
+});
+
+test('E2 the student sees the current grade only: the component receives current, never history or reasons', async () => {
+	const env = await environment(baseRoutes({
+		[`GET ${draftPath}/operative-report`]: { body: closedReport() },
+		[`GET ${draftPath}/practical-evaluation`]: { body: studentEvaluation },
+	}));
+	const page = await env.renderPage(pagePath);
+	assert.deepEqual(page.evaluation, studentEvaluation);
+	assert.equal('history' in page.evaluation, false);
+	assert.equal(page.evaluationError, '');
+	const source = await sourceOfPage();
+	assert.match(source, /<PracticalEvaluationReadOnly current=\{evaluation\.current\} \/>/);
+	assert.doesNotMatch(source, /PracticalEvaluationReadOnly[^>]*(history|reason)/);
+});
+
+test('E3 without a grade the copy depends on the report: a closed report says the teacher has not graded, any other state says grading follows closure', async () => {
+	const closed = await environment(baseRoutes({ [`GET ${draftPath}/operative-report`]: { body: closedReport() } }));
+	const closedPage = await closed.renderPage(pagePath);
+	assert.equal(closedPage.evaluation, null);
+	assert.equal(closedPage.evaluationNoGradeCopy, NO_GRADE_CLOSED);
+	const open = await environment(baseRoutes({ [`GET ${draftPath}/operative-report`]: { body: reportBody() } }));
+	assert.equal((await open.renderPage(pagePath)).evaluationNoGradeCopy, NO_GRADE_OPEN);
+	const none = await environment(baseRoutes());
+	assert.equal((await none.renderPage(pagePath)).evaluationNoGradeCopy, NO_GRADE_OPEN);
+	const source = await sourceOfPage();
+	assert.match(source, /\{evaluationError \?[\s\S]*: evaluation \? <PracticalEvaluationReadOnly current=\{evaluation\.current\} \/>[\s\S]*: <p>\{evaluationNoGradeCopy\}<\/p>\}/);
+});
+
+test('E4 an evaluation read failure shows its own copy and leaves editability, consent, draft and report state unchanged', async () => {
+	for (const report of [{ body: reportBody() }, { body: closedReport() }, null]) {
+		const withReport = (practical) => baseRoutes({
+			...(report ? { [`GET ${draftPath}/operative-report`]: report } : {}),
+			[`GET ${draftPath}/practical-evaluation`]: practical,
+		});
+		const healthy = await (await environment(withReport(practicalNotFound))).renderPage(pagePath);
+		for (const failure of [{ status: 500, body: errorBody('INTERNAL', 'boom') }, { network: true }]) {
+			const failed = await (await environment(withReport(failure))).renderPage(pagePath);
+			assert.equal(failed.evaluationError, PRACTICAL_FAILED);
+			assert.equal(failed.evaluation, null);
+			assert.deepEqual(withoutEvaluation(failed), withoutEvaluation(healthy));
+		}
+	}
+});
+
+test('E5 an expired session on the evaluation read redirects to login', async () => {
+	const env = await environment(baseRoutes({ [`GET ${draftPath}/practical-evaluation`]: { status: 401, body: errorBody('UNAUTHORIZED', 'expired') } }));
+	const page = await env.renderPage(pagePath);
+	assert.equal(page.redirect, `/auth/login?returnTo=${encodeURIComponent(`${draftPath}?assignment_id=17&limit=50&offset=0`)}`);
+});
+
+test('E6 the student page offers no grade or correction form, field or action', async () => {
+	const source = await sourceOfPage();
+	assert.doesNotMatch(source, /gradeOralSurgeryPracticalEvaluation|correctOralSurgeryPracticalEvaluation|PRACTICAL_RUBRIC|expected_revision|practical-evaluation\/corrections|name="(?:items|reason)"/);
 });
 
 test('compiles the student editor with the installed Astro compiler', async () => {

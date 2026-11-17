@@ -66,6 +66,7 @@ const baseRoutes = (overrides = {}) => ({
 	[`GET ${draftPath}/consent`]: { body: consentNone },
 	[`GET ${draftPath}/authorizations`]: { body: authNone },
 	[`GET ${draftPath}/operative-report`]: { status: 404, body: errorBody('NOT_FOUND', 'oral surgery operative report was not found') },
+	[`GET ${draftPath}/practical-evaluation`]: { status: 404, body: errorBody('NOT_FOUND', 'oral surgery practical evaluation was not found') },
 	...overrides,
 });
 
@@ -224,7 +225,7 @@ test('D1 editable hint is shown only to the author with student role and write p
 	const editable = await env.renderPage(pagePath);
 	assert.equal(editable.eligible, true);
 	assert.match(editable.editHint, /Podés editar este borrador/);
-	assert.deepEqual(plain(env.requests), [GET_ASSIGNMENT, GET_DRAFT, { method: 'GET', url: `${draftUrl}/consent` }, { method: 'GET', url: `${draftUrl}/authorizations` }, { method: 'GET', url: `${draftUrl}/operative-report` }]);
+	assert.deepEqual(plain(env.requests), [GET_ASSIGNMENT, GET_DRAFT, { method: 'GET', url: `${draftUrl}/consent` }, { method: 'GET', url: `${draftUrl}/authorizations` }, { method: 'GET', url: `${draftUrl}/operative-report` }, { method: 'GET', url: `${draftUrl}/practical-evaluation` }]);
 	const cases = [
 		{ actor: student({ role: 'teacher' }) },
 		{ actor: student({ permissions: ['oral-surgery-drafts:read'] }) },

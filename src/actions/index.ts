@@ -28,6 +28,7 @@ import { handleRequestTeacherCorrection, handleValidateTeacherSubmission } from 
 import { ORAL_SURGERY_FORM_FIELDS, handleCreateOralSurgeryDraft, handleDeclareOralSurgeryConsent, handleUpdateOralSurgeryDraft } from '../pods/oral-surgery-draft/actions/drafts';
 import { handleAuthorizeOralSurgeryDraft } from '../pods/oral-surgery-draft/actions/authorizations';
 import { OPERATIVE_REPORT_FORM_FIELDS, handleCloseOperativeReport, handleSaveOperativeReport } from '../pods/oral-surgery-draft/actions/operative-report';
+import { PRACTICAL_EVALUATION_FORM_FIELDS, handleCorrectPracticalEvaluation, handleGradePracticalEvaluation } from '../pods/oral-surgery-draft/actions/practical-evaluation';
 
 const UUID_INPUT = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
 const ID_INPUT = z.string().regex(/^[1-9]\d{0,18}$/);
@@ -263,6 +264,23 @@ export const server = {
 			ready_confirmed: z.literal('on'),
 		}).strict(),
 		handler: handleCloseOperativeReport,
+	}),
+	gradeOralSurgeryPracticalEvaluation: defineAction({
+		accept: 'form',
+		input: z.object({
+			id: ID_INPUT, patient_id: UUID_INPUT, subject_id: UUID_INPUT, academic_group_id: UUID_INPUT,
+			...Object.fromEntries(PRACTICAL_EVALUATION_FORM_FIELDS.map((name) => [name, z.string().optional()])),
+		}).strict(),
+		handler: handleGradePracticalEvaluation,
+	}),
+	correctOralSurgeryPracticalEvaluation: defineAction({
+		accept: 'form',
+		input: z.object({
+			id: ID_INPUT, patient_id: UUID_INPUT, subject_id: UUID_INPUT, academic_group_id: UUID_INPUT,
+			expected_revision: ID_INPUT, reason: z.string().optional(),
+			...Object.fromEntries(PRACTICAL_EVALUATION_FORM_FIELDS.map((name) => [name, z.string().optional()])),
+		}).strict(),
+		handler: handleCorrectPracticalEvaluation,
 	}),
 	createPatient: defineAction({
 		accept: 'form',

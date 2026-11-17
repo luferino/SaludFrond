@@ -53,6 +53,7 @@ const stubbedModules = {
   '../pods/teacher-clinical/actions/reviews': ['handleValidateTeacherSubmission','handleRequestTeacherCorrection'],
   '../pods/oral-surgery-draft/actions/authorizations': ['handleAuthorizeOralSurgeryDraft'],
   '../pods/oral-surgery-draft/actions/operative-report': ['OPERATIVE_REPORT_FORM_FIELDS','handleCloseOperativeReport','handleSaveOperativeReport'],
+  '../pods/oral-surgery-draft/actions/practical-evaluation': ['PRACTICAL_EVALUATION_FORM_FIELDS','handleCorrectPracticalEvaluation','handleGradePracticalEvaluation'],
 };
 
 export async function loadRegisteredActions(fetchImpl) {
@@ -74,7 +75,7 @@ export async function loadRegisteredActions(fetchImpl) {
       if (specifier === './session') return new vm.SyntheticModule(['getSession','clearSession'], function () { this.setExport('getSession', (jar) => jar.get('session')?.value ?? null); this.setExport('clearSession', () => {}); }, { context: sandbox });
       if (parent.identifier.endsWith(registryPath) && stubbedModules[specifier]) {
         const names = stubbedModules[specifier];
-        return new vm.SyntheticModule(names, function () { for (const name of names) this.setExport(name, name === 'OPERATIVE_REPORT_FORM_FIELDS' ? [] : () => undefined); }, { context: sandbox });
+        return new vm.SyntheticModule(names, function () { for (const name of names) this.setExport(name, ['OPERATIVE_REPORT_FORM_FIELDS', 'PRACTICAL_EVALUATION_FORM_FIELDS'].includes(name) ? [] : () => undefined); }, { context: sandbox });
       }
       const target = new URL(specifier.endsWith('.ts') ? specifier : `${specifier}.ts`, parent.identifier);
       return compile(await readFile(target, 'utf8'), target.href);
@@ -194,6 +195,8 @@ export async function renderCompiledPage(path, { url, oralEnabled = false, statu
     getAuthorizationHistory: async () => ({ draft_version: '3', current_authorization_id: null, authorizations: [] }),
     // No operative report yet: the editor renders its create form beside the clinical forms.
     getOperativeReport: async () => null,
+    // No practical evaluation yet: the editor shows the not-graded line, never the read error.
+    getPracticalEvaluation: async () => null,
     ...oral,
     ...operativeReport,
     OPERATIVE_REPORT_LAYOUT: oralApi.OPERATIVE_REPORT_LAYOUT,

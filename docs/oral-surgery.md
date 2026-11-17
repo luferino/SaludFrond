@@ -66,8 +66,32 @@ Closure is irreversible. Once the report is closed:
 
 ## Administrator consultation
 
-Administrators with `oral-surgery-drafts:read` reach **Cirugía Oral I** from the navigation (`/oral-surgery-admin`). The list shows the most recent encounters across every context, with optional date filters and previous/next pages (no totals). Each encounter opens a read-only detail (`/oral-surgery-admin/[id]`) with the clinical content, consent declarations, authorizations and the operative report with its closure. The list itself does not show whether a report is closed; the detail does. Administrators never edit, authorize or close.
+Administrators with `oral-surgery-drafts:read` reach **Cirugía Oral I** from the navigation (`/oral-surgery-admin`). The list shows the most recent encounters across every context, with optional date filters and previous/next pages (no totals). Each encounter opens a read-only detail (`/oral-surgery-admin/[id]`) with the clinical content, consent declarations, authorizations, the operative report with its closure and the practical evaluation with its correction history. The list itself does not show whether a report is closed; the detail does. Administrators never edit, authorize, close or grade.
+
+## Practical evaluation
+
+After the operative report is closed, a teacher grades the encounter with the paper form's fixed rubric (20 points). The grade is stored apart from the clinical record: grading never changes the draft, the report or the authorizations.
+
+| Item | Max |
+| --- | --- |
+| Bioseguridad: hand washing, barrier elements, disposal of elements (one point each) | 3 |
+| Clinical table set up and complete instruments | 2 |
+| Applies asepsis | 1 |
+| Instructor's questionnaire and anamnesis | 3 |
+| Anesthetic technique | 2 |
+| Sindesmotomy and use of elevators | 2 |
+| Sequential surgical procedure, extraction without teacher intervention | 3 |
+| Curettage and suture | 2 |
+| Records the procedure, leaves equipment and instruments in order | 1 |
+| Relationship with teacher, patient and staff | 1 |
+
+- **Who grades**: a teacher with `oral-surgery-drafts:grade` and an active habilitation in the encounter's original subject and group, from the teacher page (`/teacher-clinical/oral-surgery/[id]`). The form appears only when the report is closed and no grade exists. Every item must be scored; there is no extra confirmation because a grade can be corrected.
+- **Live preview**: while the teacher scores, the page shows the running total and the outcome it would produce (15 or more = *Aprobado*, less = *Anulado*). The server computes the stored total and outcome.
+- **Annulled**: annulment only records the outcome. The clinical record does not change and the student repeats the practical in another encounter.
+- **Corrections**: a teacher can correct the current grade with every item and a mandatory reason (up to 4000 characters). Each correction is a new revision bound to the current one; if someone else corrected first, nothing is stored and the page asks to reload. Previous grades stay in the history with who graded and when.
+- **Who sees what**: the student sees only the current grade (item scores, total, outcome and date) on the draft page. Teachers and administrators also see every revision with its reason.
+- **Errors**: a report that is not closed, an existing grade, a stale revision, a missing permission or role, an invalid score or reason are each shown with their own message. Writes are sent once; an unconfirmed outcome asks to check the state before trying again.
 
 ## Not included
 
-Grading, attachments, patient electronic signatures and the administrative screen to enable subjects. Verification uses isolated synthetic fixtures; it does not prove a running backend or real data.
+Attachments, patient electronic signatures and the administrative screen to enable subjects. Verification uses isolated synthetic fixtures; it does not prove a running backend or real data.
