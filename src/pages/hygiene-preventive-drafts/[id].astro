@@ -1,0 +1,549 @@
+---
+export const prerender = false;
+import { actions, isInputError } from 'astro:actions';
+import Layout from '../../layouts/Layout.astro';
+import { ApiError } from '../../shared/apiClient';
+import { listAssignedPatients } from '../../pods/patient-assignment/api';
+import { assignmentListCarrier, assignmentListQuery, parseAssignmentListCoordinates } from '../../pods/patient-assignment/list-coordinates';
+import { clinicalFilterCarrier } from '../../pods/kinesiology-evolution/listing';
+import { FDI_TEETH, getHygieneDraft, HYGIENE_INDICES, HYGIENE_MEDICAL_QUESTIONS, HYGIENE_MEDICAL_TEXTS, TOOTH_FACES, validId, type HygieneDraft } from '../../pods/hygiene-preventive-draft/api';
+import { formValuesFromHygieneContent, HYGIENE_COPY, hygieneTextareaText, type FormValues } from '../../pods/hygiene-preventive-draft/actions/drafts';
+import { CHART_ORDER, isUpperTooth } from '../../pods/hygiene-preventive-draft/odontogram';
+import {
+	FACE_MARK_LABELS, HYGIENE_COMPONENT_LABELS, HYGIENE_DETAIL_LABEL, HYGIENE_INDEX_LABELS, HYGIENE_QUESTION_LABELS, HYGIENE_TEXT_LABELS,
+	TOOTH_FACE_LABELS, TOOTH_STATE_LABELS, UNRECORDED_TOOTH_LABEL,
+} from '../../pods/hygiene-preventive-draft/labels';
+import { decodeJwt } from '../../shared/jwt';
+import { actionHrefWithContext } from '../../pods/kinesiology-evaluation/api';
+
+type Unsaved = { label: string; value: string };
+
+const id = Astro.params.id ?? '';
+const search = Astro.url.searchParams;
+const assignmentParams = search.getAll('assignment_id');
+const assignmentId = assignmentParams.length === 1 ? assignmentParams[0] : '';
+let listFilters: ReturnType<typeof parseAssignmentListCoordinates>['filters'] = {};
+const loginRedirect = `/auth/login?returnTo=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`;
+
+/** Labels of every control, so a retained value can be listed with its question or tooth. */
+const CONTROL_LABELS = new Map<string, string>();
+for (const question of HYGIENE_MEDICAL_QUESTIONS) {
+	CONTROL_LABELS.set(`medical_history.${question}`, HYGIENE_QUESTION_LABELS[question]);
+	CONTROL_LABELS.set(`medical_history.${question}_detail`, `${HYGIENE_QUESTION_LABELS[question]} · ${HYGIENE_DETAIL_LABEL}`);
+}
+for (const field of HYGIENE_MEDICAL_TEXTS) CONTROL_LABELS.set(`medical_history.${field}`, HYGIENE_TEXT_LABELS[field]);
+for (const code of FDI_TEETH) {
+	CONTROL_LABELS.set(`odontogram.${code}.state`, `Pieza ${code} · Estado`);
+	for (const face of TOOTH_FACES) CONTROL_LABELS.set(`odontogram.${code}.${face}`, `Pieza ${code} · ${TOOTH_FACE_LABELS[face]}`);
+}
+for (const [name, { components }] of Object.entries(HYGIENE_INDICES)) {
+	for (const component of components) CONTROL_LABELS.set(`indices.${name}.${component}`, `${HYGIENE_INDEX_LABELS[name as keyof typeof HYGIENE_INDEX_LABELS]} · ${HYGIENE_COMPONENT_LABELS[component]}`);
+}
+
+/** Answered controls only: an empty control has nothing to copy. */
+function unsavedAnswers(values: FormValues | undefined): Unsaved[] {
+	return Object.entries(values ?? {}).flatMap(([name, value]) => {
+		const label = CONTROL_LABELS.get(name);
+		if (!label) return [];
+		let shown: string;
+		if (Array.isArray(value)) shown = value.map((mark) => FACE_MARK_LABELS[mark as keyof typeof FACE_MARK_LABELS]).join(', ');
+		else if (name.endsWith('.state')) shown = value === '' ? '' : TOOTH_STATE_LABELS[value as keyof typeof TOOTH_STATE_LABELS];
+		else if (value === 'true') shown = 'Sí';
+		else if (value === 'false') shown = 'No';
+		else shown = value;
+		return shown === '' ? [] : [{ label, value: shown }];
+	});
+}
+
+function actionReturnParams(data: { assignment_id: string; limit: string; offset: string; list_filters?: ReturnType<typeof parseAssignmentListCoordinates>['filters'] }) {
+	const params = new URLSearchParams({ assignment_id: data.assignment_id });
+	if (data.list_filters !== undefined) {
+		for (const [key, value] of Object.entries(assignmentListCarrier({ limit: Number(data.limit), offset: Number(data.offset), filters: data.list_filters }))) params.set(key, value);
+	} else {
+		params.set('limit', data.limit);
+		params.set('offset', data.offset);
+	}
+	for (const [key, value] of Object.entries(clinicalFilterCarrier(search))) params.set(key, value);
+	params.set('saved', '1');
+	return params;
+}
+
+const saveResult = Astro.getActionResult(actions.updateHygieneDraft);
+const saveData = saveResult?.data;
+if (saveData?.success) {
+	// Redirect from the context the action validated, before any fallible read.
+	return Astro.redirect(`/hygiene-preventive-drafts/${encodeURIComponent(saveData.id)}?${actionReturnParams(saveData)}`);
+}
+const saveFailure = saveData?.success === false ? saveData : undefined;
+let saveError = saveFailure?.error ?? '';
+if (saveResult?.error) saveError = isInputError(saveResult.error) ? HYGIENE_COPY.formInput : HYGIENE_COPY.saveUncertain;
+if (/sesión venció/i.test(saveError)) return Astro.redirect(loginRedirect);
+
+// Values the student submitted and the browser never saved; they are never sent again with the current version.
+const retainedValues = saveFailure?.values;
+let limit = 50;
+let offset = 0;
+let draft: HygieneDraft | null = null;
+let eligible = false;
+let unavailable = false;
+let loadError = '';
+let formValues: FormValues | undefined;
+let formVersion = '';
+try {
+	const coordinates = parseAssignmentListCoordinates(search, true);
+	limit = coordinates.limit;
+	offset = coordinates.offset;
+	listFilters = coordinates.filters;
+	if (!validId(assignmentId) || !validId(id)) {
+		unavailable = true;
+	} else {
+		const page = await listAssignedPatients({ limit, offset }, Astro.cookies, listFilters);
+		const assignment = page.items.find((item) => item.id === assignmentId && item.ended_at === null);
+		if (!assignment) {
+			unavailable = true;
+		} else {
+			const record = await getHygieneDraft(id, Astro.cookies);
+			if (record.patient_id !== assignment.patient_id || record.origin_subject_id !== assignment.subject_id || record.origin_group_id !== assignment.academic_group_id) {
+				unavailable = true;
+			} else {
+				draft = record;
+				const token = Astro.cookies.get('session')?.value;
+				const actor = token ? decodeJwt(token) : null;
+				const student = actor?.role === 'estudiante' || actor?.role === 'student';
+				// Presentation only: the backend re-checks authorship and permissions on every write.
+				eligible = !!actor && actor.sub === record.author_id && student && !!actor.permissions?.includes('hygiene-preventive-drafts:write');
+				// A failed save keeps the submitted values with the version they were written against; a conflict shows the stored version.
+				if (retainedValues && !saveFailure?.conflict) {
+					formValues = retainedValues;
+					formVersion = saveFailure?.expected_version ?? record.version;
+				} else {
+					formValues = formValuesFromHygieneContent(record.content);
+					formVersion = record.version;
+				}
+			}
+		}
+	}
+} catch (error) {
+	if (error instanceof ApiError && error.status === 401) return Astro.redirect(loginRedirect);
+	if (error instanceof ApiError && error.status === 404) unavailable = true;
+	else loadError = 'No se pudo verificar este borrador. Volvé a la lista antes de intentar otra acción.';
+}
+
+const fields: FormValues = formValues ?? {};
+/** Text of a control; a control that is not a text (or is missing) reads as empty. */
+const text = (name: string): string => {
+	const value = fields[name];
+	return typeof value === 'string' ? value : '';
+};
+/** Checked marks of a face checkbox group. */
+const marked = (name: string): string[] => {
+	const value = fields[name];
+	return Array.isArray(value) ? value : [];
+};
+const editable = eligible;
+const editHint = eligible ? HYGIENE_COPY.editable : HYGIENE_COPY.readOnly;
+const saved = search.get('saved') === '1';
+const unsaved: Unsaved[] = draft && !saveFailure?.conflict ? [] : unsavedAnswers(retainedValues);
+const coordinates = { limit, offset, filters: listFilters };
+const listCarrier = assignmentListCarrier(coordinates);
+const clinicalCarrier = clinicalFilterCarrier(search);
+const contextParams = new URLSearchParams(assignmentListQuery(coordinates));
+for (const [key, value] of Object.entries(clinicalCarrier)) contextParams.set(key, value);
+const contextHref = `/my-patients/${encodeURIComponent(assignmentId)}?${contextParams}`;
+// Keep the validated assignment-list coordinates on the form post, separate from clinical context.
+const actionContext = { assignment_id: assignmentId, ...listCarrier, ...clinicalCarrier };
+const saveHref = actionHrefWithContext(actions.updateHygieneDraft.toString(), actionContext, Astro.url.href);
+const STATE_OPTIONS = ['', 'present', 'absent', 'to_extract'] as const;
+---
+<Layout>
+	<main class="clinical-page" aria-labelledby="title">
+		<p class="eyebrow"><a href={contextHref}>Volver a la asignación</a></p>
+		{unavailable ? <section class="notice" role="status">
+			<h1 id="title">Borrador no disponible</h1>
+			<p>No se pudo confirmar que este borrador pertenezca a la asignación seleccionada. Volvé a elegir el contexto vigente.</p>
+			<a class="button secondary" href="/my-patients">Volver a mis pacientes</a>
+		</section> : loadError ? <section class="notice error" role="alert">
+			<h1 id="title">No se pudo cargar el borrador</h1>
+			<p>{loadError}</p>
+			<a href={contextHref}>Volver a la asignación</a>
+		</section> : draft ? <>
+			<header>
+				<h1 id="title">Borrador de Higiene y Preventiva II</h1>
+				<p class="context">Asignatura · <span class="identifier">{draft.origin_subject_id}</span><br />Grupo académico · <span class="identifier">{draft.origin_group_id}</span></p>
+				<p>Versión guardada: <strong>{draft.version}</strong></p>
+			</header>
+			{saved && <p class="success" role="status">Borrador guardado.</p>}
+			{saveError && <p class="notice error" role="alert">{saveError}</p>}
+			<p class="notice" id="edit-hint">{editHint}</p>
+			{formValues && <form method="POST" action={saveHref} id="draft-form">
+				<input type="hidden" name="id" value={draft.id} />
+				<input type="hidden" name="expected_version" value={formVersion} />
+				<input type="hidden" name="assignment_id" value={assignmentId} />
+				<input type="hidden" name="limit" value={limit} />
+				<input type="hidden" name="offset" value={offset} />
+				<input type="hidden" name="list_limit" value={limit} />
+				<input type="hidden" name="list_offset" value={offset} />
+				{Object.entries(listFilters).map(([key, value]) => <input type="hidden" name={`list_${key}`} value={value} />)}
+				<fieldset disabled={!editable} class="medical">
+					<legend>Antecedentes médicos</legend>
+					{HYGIENE_MEDICAL_QUESTIONS.map((question) => <div class="question">
+						<label>{HYGIENE_QUESTION_LABELS[question]} <select name={`medical_history.${question}`}>
+							<option value="" selected={text(`medical_history.${question}`) === ''}>Sin responder</option>
+							<option value="true" selected={text(`medical_history.${question}`) === 'true'}>Sí</option>
+							<option value="false" selected={text(`medical_history.${question}`) === 'false'}>No</option>
+						</select></label>
+						<label>{HYGIENE_DETAIL_LABEL} <textarea name={`medical_history.${question}_detail`}>{hygieneTextareaText(text(`medical_history.${question}_detail`))}</textarea></label>
+					</div>)}
+					{HYGIENE_MEDICAL_TEXTS.map((field) => <label>{HYGIENE_TEXT_LABELS[field]} <textarea name={`medical_history.${field}`}>{hygieneTextareaText(text(`medical_history.${field}`))}</textarea></label>)}
+				</fieldset>
+				<fieldset disabled={!editable} class="odontogram" data-odontogram>
+					<legend>Odontograma</legend>
+					<p class="hint">Cada pieza tiene su estado y sus caras. Las piezas sin estado quedan sin registrar.</p>
+					<ul class="legend" aria-label="Convenciones del odontograma">
+						<li><span class="swatch caries" aria-hidden="true"></span>{FACE_MARK_LABELS.caries}</li>
+						<li><span class="swatch filled" aria-hidden="true"></span>{FACE_MARK_LABELS.filled}</li>
+						<li><span class="swatch both" aria-hidden="true"></span>Caries secundaria</li>
+						<li><span class="cross absent" aria-hidden="true">✕</span>{TOOTH_STATE_LABELS.absent}</li>
+						<li><span class="cross extract" aria-hidden="true">✕</span>{TOOTH_STATE_LABELS.to_extract}</li>
+						<li><span class="swatch unrecorded" aria-hidden="true"></span>{UNRECORDED_TOOTH_LABEL}</li>
+					</ul>
+					{CHART_ORDER.map((code) => {
+						const state = text(`odontogram.${code}.state`);
+						return <fieldset class="tooth" data-tooth={code} id={`tooth-${code}`} data-state={state}>
+							<legend>Pieza {code} · {isUpperTooth(code) ? 'superior' : 'inferior'} · {Number(code) > 50 ? 'temporal' : 'permanente'}</legend>
+							<div class="states" role="radiogroup" aria-label={`Estado de la pieza ${code}`}>
+								{STATE_OPTIONS.map((option) => <label><input type="radio" name={`odontogram.${code}.state`} value={option} checked={state === option} /> {option === '' ? UNRECORDED_TOOTH_LABEL : TOOTH_STATE_LABELS[option]}</label>)}
+							</div>
+							{TOOTH_FACES.map((face) => <div class="face">
+								<span>{TOOTH_FACE_LABELS[face]}</span>
+								{(['caries', 'filled'] as const).map((mark) => <label><input type="checkbox" name={`odontogram.${code}.${face}`} value={mark} checked={marked(`odontogram.${code}.${face}`).includes(mark)} disabled={state === 'absent'} /> {FACE_MARK_LABELS[mark]}</label>)}
+							</div>)}
+						</fieldset>;
+					})}
+				</fieldset>
+				<fieldset disabled={!editable} class="indices">
+					<legend>Índices</legend>
+					{Object.entries(HYGIENE_INDICES).map(([name, { components }]) => {
+						const total = draft?.content.indices?.[name as keyof typeof HYGIENE_INDICES]?.total;
+						return <div class="index">
+							<h3>{HYGIENE_INDEX_LABELS[name as keyof typeof HYGIENE_INDEX_LABELS]}</h3>
+							{components.map((component) => <label>{HYGIENE_COMPONENT_LABELS[component]} <input type="number" name={`indices.${name}.${component}`} value={text(`indices.${name}.${component}`)} min="0" step="1" inputmode="numeric" /></label>)}
+							{total !== undefined && <p class="total">Total calculado por el servidor: {total}</p>}
+						</div>;
+					})}
+				</fieldset>
+				{editable && <button class="button" type="submit">Guardar borrador</button>}
+			</form>}
+		</> : <section class="notice error" role="alert">
+			<h1 id="title">No se pudo cargar el borrador</h1>
+			<p>Volvé a la asignación e intentá nuevamente.</p>
+			<a href={contextHref}>Volver a la asignación</a>
+		</section>}
+		{unsaved.length > 0 && <section class="preserved" aria-labelledby="unsaved-title">
+			<h2 id="unsaved-title">Valores no guardados</h2>
+			<p>Estos valores no se guardaron y no se enviarán con la versión actual. Copialos antes de volver a cargar.</p>
+			<dl>{unsaved.map((entry) => <div>
+				<dt>{entry.label}</dt>
+				<dd>{entry.value}</dd>
+			</div>)}</dl>
+		</section>}
+	</main>
+	<script>
+		import { CHART_ORDER, CHART_ROWS, FACE_POLYGONS, faceAt, isUpperTooth } from '../../pods/hygiene-preventive-draft/odontogram';
+
+		const form = document.querySelector<HTMLFormElement>('#draft-form');
+		// A second submit while the first is in flight is ignored; the backend never sees a duplicate save.
+		form?.addEventListener('submit', (event) => {
+			if (form.dataset.submitting === 'true') {
+				event.preventDefault();
+				return;
+			}
+			form.dataset.submitting = 'true';
+		});
+
+		const root = document.querySelector<HTMLElement>('[data-odontogram]');
+		if (root) {
+			const editable = !root.hasAttribute('disabled');
+			const ns = 'http://www.w3.org/2000/svg';
+			const FACES = ['occlusal', 'mesial', 'distal', 'vestibular', 'lingual'];
+			const teeth = new Map<string, HTMLElement>();
+			for (const element of root.querySelectorAll<HTMLElement>('.tooth')) teeth.set(element.dataset.tooth ?? '', element);
+			const stateOf = (code: string) => (root.querySelector<HTMLInputElement>(`input[name="odontogram.${code}.state"]:checked`)?.value ?? '');
+			const marksOf = (code: string, face: string) => [...root.querySelectorAll<HTMLInputElement>(`input[name="odontogram.${code}.${face}"]:checked`)].map((input) => input.value);
+			const stateText = (state: string) => state === 'present' ? 'presente' : state === 'absent' ? 'ausente' : state === 'to_extract' ? 'a extraer' : 'sin registrar';
+			const notice = document.createElement('p');
+			notice.className = 'notice';
+			notice.setAttribute('role', 'status');
+			notice.setAttribute('aria-live', 'polite');
+			let selected = CHART_ORDER[0];
+
+			// Shared fill definitions: the secondary caries is a striped pattern of both colors.
+			const defs = document.createElementNS(ns, 'svg');
+			defs.setAttribute('width', '0');
+			defs.setAttribute('height', '0');
+			defs.setAttribute('aria-hidden', 'true');
+			defs.setAttribute('class', 'defs');
+			defs.innerHTML = '<defs><pattern id="hygiene-secondary" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="6" height="6" fill="#2a5d9f"></rect><rect width="3" height="6" fill="#c0392b"></rect></pattern></defs>';
+
+			function toothSvg(code: string): SVGSVGElement {
+				const state = stateOf(code);
+				const svg = document.createElementNS(ns, 'svg');
+				svg.setAttribute('viewBox', '0 0 46 46');
+				svg.setAttribute('class', `t${state === '' ? ' unrecorded' : ''}`);
+				svg.setAttribute('aria-hidden', 'true');
+				for (const position of ['top', 'bottom', 'left', 'right', 'center'] as const) {
+					const face = faceAt(position, code);
+					const marks = marksOf(code, face);
+					const shape = document.createElementNS(ns, position === 'center' ? 'rect' : 'polygon');
+					if (position === 'center') {
+						shape.setAttribute('x', '14');
+						shape.setAttribute('y', '14');
+						shape.setAttribute('width', '18');
+						shape.setAttribute('height', '18');
+					} else {
+						shape.setAttribute('points', FACE_POLYGONS[position]);
+					}
+					shape.setAttribute('class', `face${marks.length === 2 ? ' both' : marks[0] ? ` ${marks[0]}` : ''}`);
+					svg.append(shape);
+				}
+				if (state === 'absent' || state === 'to_extract') {
+					for (const [x1, y1, x2, y2] of [[4, 4, 42, 42], [42, 4, 4, 42]]) {
+						const line = document.createElementNS(ns, 'line');
+						line.setAttribute('x1', String(x1));
+						line.setAttribute('y1', String(y1));
+						line.setAttribute('x2', String(x2));
+						line.setAttribute('y2', String(y2));
+						line.setAttribute('class', `mark ${state === 'absent' ? 'absent' : 'extract'}`);
+						svg.append(line);
+					}
+				}
+				return svg;
+			}
+
+			// Chart redrawn from the controls: the controls are the only source of truth.
+			const chart = document.createElement('div');
+			chart.className = 'chart';
+			chart.setAttribute('role', 'listbox');
+			chart.setAttribute('aria-label', 'Piezas dentarias (FDI)');
+			function renderChart() {
+				chart.replaceChildren();
+				for (const row of CHART_ROWS) {
+					const label = document.createElement('div');
+					label.className = 'row-label';
+					label.textContent = row.label;
+					const line = document.createElement('div');
+					line.className = 'row';
+					for (const code of [...row.left, ...row.right]) {
+						const button = document.createElement('button');
+						button.type = 'button';
+						button.className = 'pick';
+						button.setAttribute('role', 'option');
+						button.setAttribute('aria-selected', String(code === selected));
+						button.setAttribute('aria-label', `Pieza ${code}, ${stateText(stateOf(code))}`);
+						button.tabIndex = code === selected ? 0 : -1;
+						button.dataset.code = code;
+						const number = document.createElement('span');
+						number.textContent = code;
+						button.append(...(isUpperTooth(code) ? [number, toothSvg(code)] : [toothSvg(code), number]));
+						button.addEventListener('click', () => select(code, false));
+						button.addEventListener('keydown', (event) => {
+							const index = CHART_ORDER.indexOf(code);
+							if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+								event.preventDefault();
+								select(CHART_ORDER[Math.min(CHART_ORDER.length - 1, index + 1)], true);
+							}
+							if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+								event.preventDefault();
+								select(CHART_ORDER[Math.max(0, index - 1)], true);
+							}
+						});
+						line.append(button);
+					}
+					if (row.upper) chart.append(label, line);
+					else chart.append(line, label);
+				}
+			}
+
+			// Inspector: the selected tooth's fieldset only, with previous and next links.
+			const inspector = document.createElement('div');
+			inspector.className = 'inspector';
+			const nav = document.createElement('nav');
+			nav.className = 'nav';
+			const previous = document.createElement('a');
+			previous.href = '#';
+			previous.textContent = '← Pieza anterior';
+			const next = document.createElement('a');
+			next.href = '#';
+			next.textContent = 'Pieza siguiente →';
+			nav.append(previous, next);
+			inspector.append(nav, notice);
+
+			function select(code: string, focus: boolean) {
+				selected = code;
+				notice.textContent = '';
+				for (const [key, element] of teeth) element.toggleAttribute('data-selected', key === code);
+				renderChart();
+				if (focus) chart.querySelector<HTMLButtonElement>(`.pick[data-code="${code}"]`)?.focus();
+			}
+			previous.addEventListener('click', (event) => {
+				event.preventDefault();
+				select(CHART_ORDER[Math.max(0, CHART_ORDER.indexOf(selected) - 1)], false);
+			});
+			next.addEventListener('click', (event) => {
+				event.preventDefault();
+				select(CHART_ORDER[Math.min(CHART_ORDER.length - 1, CHART_ORDER.indexOf(selected) + 1)], false);
+			});
+
+			if (editable) {
+				for (const [code, element] of teeth) {
+					element.dataset.state = stateOf(code);
+					element.querySelectorAll<HTMLInputElement>('input[type="radio"]').forEach((radio) => {
+						radio.addEventListener('change', () => {
+							const previousState = element.dataset.state ?? '';
+							notice.textContent = '';
+							if (radio.value === 'absent' && FACES.some((face) => marksOf(code, face).length > 0)) {
+								if (!confirm(`La pieza ${code} tiene caras marcadas. ¿Borrarlas y marcarla ausente?`)) {
+									radio.checked = false;
+									element.querySelectorAll<HTMLInputElement>(`input[name="odontogram.${code}.state"][value="${previousState}"]`).forEach((input) => { input.checked = true; });
+									return;
+								}
+								element.querySelectorAll<HTMLInputElement>('input[type="checkbox"]').forEach((input) => { input.checked = false; });
+							}
+							if (radio.value === '') notice.textContent = `La pieza ${code} quedó sin registrar.`;
+							element.dataset.state = radio.value;
+							element.querySelectorAll<HTMLInputElement>('input[type="checkbox"]').forEach((input) => { input.disabled = radio.value === 'absent'; });
+							renderChart();
+						});
+					});
+					element.querySelectorAll<HTMLInputElement>('input[type="checkbox"]').forEach((box) => {
+						box.addEventListener('change', () => {
+							notice.textContent = '';
+							if (stateOf(code) === '') {
+								const present = element.querySelector<HTMLInputElement>(`input[name="odontogram.${code}.state"][value="present"]`);
+								if (present) present.checked = true;
+								element.dataset.state = 'present';
+								notice.textContent = `La pieza ${code} quedó registrada como presente.`;
+							}
+							renderChart();
+						});
+					});
+				}
+			}
+			// Tooth fieldsets move into the inspector, which follows the chart; both stay inside the form, so every control still posts.
+			root.querySelector('legend')?.insertAdjacentElement('afterend', defs);
+			const teethContainer = document.createElement('div');
+			teethContainer.className = 'teeth';
+			for (const element of teeth.values()) teethContainer.append(element);
+			inspector.append(teethContainer);
+			root.append(chart, inspector);
+			root.dataset.enhanced = 'true';
+			select(selected, false);
+		}
+	</script>
+</Layout>
+
+<style>
+	.clinical-page {
+		max-width: 58rem;
+		margin: 0 auto;
+		padding: 1.5rem 0 3rem;
+		color: var(--ink);
+	}
+	.eyebrow a { color: var(--rust-deep); text-decoration: underline; }
+	.context { line-height: 1.6; }
+	.identifier { overflow-wrap: anywhere; }
+	.notice, .success, .error, .preserved {
+		margin: 1rem 0;
+		padding: 1rem;
+		border: 1px solid var(--line);
+		border-radius: 0.65rem;
+		background: var(--paper);
+	}
+	.error { border-color: var(--rust-line); background: var(--rust-soft); }
+	.success { border-color: var(--sage); background: var(--sage-soft); }
+	.button:disabled { opacity: 0.65; cursor: not-allowed; }
+	fieldset {
+		display: grid;
+		gap: 1rem;
+		margin: 1rem 0;
+		padding: 1.25rem;
+		border: 1px solid var(--line);
+		border-radius: 0.75rem;
+		background: var(--paper);
+	}
+	legend { padding: 0 0.5rem; font-weight: 700; }
+	label { display: grid; gap: 0.35rem; font-weight: 600; }
+	input, textarea, select {
+		min-width: 0;
+		padding: 0.65rem;
+		border: 1px solid var(--field-line);
+		border-radius: 0.35rem;
+		background: var(--field);
+		color: var(--ink);
+		font: inherit;
+	}
+	input[type='checkbox'], input[type='radio'] { accent-color: var(--rust); width: 1.05rem; height: 1.05rem; padding: 0; }
+	textarea { min-height: 5rem; resize: vertical; }
+	.medical .question { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+	.hint { margin: 0; color: var(--muted); }
+	.tooth { gap: 0.5rem; padding: 0.8rem 1rem; }
+	.tooth .states { display: flex; flex-wrap: wrap; gap: 0.3rem 1rem; }
+	.tooth .states label, .tooth .face label { display: inline-flex; grid-auto-flow: column; gap: 0.35rem; align-items: center; font-weight: 400; }
+	.tooth .face { display: flex; flex-wrap: wrap; gap: 0.3rem 1rem; align-items: center; }
+	.tooth .face span { min-width: 9rem; font-weight: 600; }
+	.indices { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+	.index { display: grid; gap: 0.5rem; }
+	.index h3 { margin: 0; font-size: 1rem; }
+	.total { margin: 0; color: var(--muted); }
+	.legend { display: flex; flex-wrap: wrap; gap: 0.4rem 1rem; margin: 0; padding: 0; list-style: none; color: var(--muted); font-size: 0.8rem; }
+	.legend li { display: inline-flex; gap: 0.35rem; align-items: center; }
+	.swatch { width: 0.8rem; height: 0.8rem; border: 1px solid var(--ink); border-radius: 3px; display: inline-block; }
+	.swatch.caries { background: #c0392b; }
+	.swatch.filled { background: #2a5d9f; }
+	.swatch.both { background: repeating-linear-gradient(45deg, #c0392b 0 3px, #2a5d9f 3px 6px); }
+	.swatch.unrecorded { background: #f1ece2; border-style: dashed; }
+	.cross { font-weight: 700; }
+	.cross.absent { color: #2a5d9f; }
+	.cross.extract { color: #c0392b; }
+	.button {
+		padding: 0.7rem 0.95rem;
+		border: 1px solid var(--rust-deep);
+		border-radius: 0.4rem;
+		background: var(--rust);
+		color: white;
+		font: inherit;
+		font-weight: 700;
+		cursor: pointer;
+	}
+	.button.secondary { border-color: var(--sage-deep); background: var(--sage-soft); color: var(--ink); }
+	/* Enhanced chart: the no-JS list stays the form's source; the chart and inspector only present it. */
+	.odontogram[data-enhanced] .tooth { display: none; }
+	.odontogram[data-enhanced] .tooth[data-selected] { display: grid; }
+	/* The chart, inspector and notice are created by the client script, so they carry no scope attribute: style them through the scoped root. */
+	.odontogram :global(.defs) { position: absolute; }
+	.odontogram :global(.chart) { display: grid; gap: 0.3rem; padding: 1rem; background: var(--field); border: 1px solid var(--field-line); border-radius: 0.5rem; }
+	.odontogram :global(.row) { display: flex; gap: 3px; justify-content: center; }
+	.odontogram :global(.row-label) { text-align: center; color: var(--muted); font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase; }
+	.odontogram :global(.pick) { display: grid; justify-items: center; gap: 1px; padding: 3px; border: 2px solid transparent; border-radius: 6px; background: none; cursor: pointer; font: 600 0.7rem/1 Consolas, monospace; color: var(--ink); }
+	.odontogram :global(.pick:hover) { background: var(--sage-soft); }
+	.odontogram :global(.pick[aria-selected='true']) { border-color: var(--rust); background: var(--rust-soft); }
+	.odontogram :global(svg.t) { width: 36px; height: 36px; display: block; }
+	.odontogram :global(svg.t .face) { fill: var(--paper); stroke: var(--ink); stroke-width: 1.2; }
+	.odontogram :global(svg.t.unrecorded .face) { fill: #f1ece2; stroke: var(--field-line); stroke-dasharray: 2 2; }
+	.odontogram :global(svg.t .face.caries) { fill: #c0392b; }
+	.odontogram :global(svg.t .face.filled) { fill: #2a5d9f; }
+	.odontogram :global(svg.t .face.both) { fill: url(#hygiene-secondary); }
+	.odontogram :global(svg.t .mark) { stroke-width: 3.5; stroke-linecap: round; }
+	.odontogram :global(svg.t .mark.absent) { stroke: #2a5d9f; }
+	.odontogram :global(svg.t .mark.extract) { stroke: #c0392b; }
+	.odontogram :global(.inspector) { display: grid; gap: 0.75rem; }
+	.odontogram :global(.teeth) { display: grid; }
+	.odontogram :global(.nav) { display: flex; justify-content: space-between; }
+	.odontogram :global(.nav a) { color: var(--rust-deep); text-decoration: underline; text-underline-offset: 4px; }
+	.odontogram :global(.notice) { margin: 0; color: var(--rust-deep); font-weight: 600; }
+	.odontogram :global(.notice:empty) { display: none; }
+	@media (max-width: 760px) {
+		fieldset { grid-template-columns: minmax(0, 1fr); }
+		.medical .question, .indices { grid-template-columns: minmax(0, 1fr); }
+	}
+</style>

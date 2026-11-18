@@ -30,6 +30,7 @@ import { handleAuthorizeOralSurgeryDraft } from '../pods/oral-surgery-draft/acti
 import { OPERATIVE_REPORT_FORM_FIELDS, handleCloseOperativeReport, handleSaveOperativeReport } from '../pods/oral-surgery-draft/actions/operative-report';
 import { PRACTICAL_EVALUATION_FORM_FIELDS, handleCorrectPracticalEvaluation, handleGradePracticalEvaluation } from '../pods/oral-surgery-draft/actions/practical-evaluation';
 import { handleEnableHygieneSubject } from '../pods/hygiene-preventive-draft/actions/subjects';
+import { HYGIENE_FORM_FIELDS, HYGIENE_MARK_FIELDS, handleCreateHygieneDraft, handleUpdateHygieneDraft } from '../pods/hygiene-preventive-draft/actions/drafts';
 
 const UUID_INPUT = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
 const ID_INPUT = z.string().regex(/^[1-9]\d{0,18}$/);
@@ -287,6 +288,23 @@ export const server = {
 		accept: 'form',
 		input: z.object({ subject_id: UUID_INPUT, irreversible_confirmed: z.literal('on') }).strict(),
 		handler: handleEnableHygieneSubject,
+	}),
+	createHygieneDraft: defineAction({
+		accept: 'form',
+		input: z.object({
+			patient_id: UUID_INPUT, subject_id: UUID_INPUT, academic_group_id: UUID_INPUT,
+			assignment_id: z.string(), limit: z.string(), offset: z.string(), ...LIST_COORDINATE_INPUTS,
+		}).strict(),
+		handler: handleCreateHygieneDraft,
+	}),
+	updateHygieneDraft: defineAction({
+		accept: 'form',
+		input: z.object({
+			id: z.string(), expected_version: z.string(), assignment_id: z.string(), limit: z.string(), offset: z.string(), ...LIST_COORDINATE_INPUTS,
+			// Checkbox face fields post one value per checked mark, so they are arrays; every other control is a single string.
+			...Object.fromEntries(HYGIENE_FORM_FIELDS.map((name) => [name, HYGIENE_MARK_FIELDS.includes(name) ? z.array(z.enum(['caries', 'filled'])).optional() : z.string().optional()])),
+		}).strict(),
+		handler: handleUpdateHygieneDraft,
 	}),
 	createPatient: defineAction({
 		accept: 'form',
