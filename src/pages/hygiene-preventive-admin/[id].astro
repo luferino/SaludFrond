@@ -1,0 +1,63 @@
+---
+export const prerender = false;
+import Layout from '../../layouts/Layout.astro';
+import HygieneReadOnly from '../../components/clinical/HygieneReadOnly.astro';
+import type { HygieneDraft } from '../../pods/hygiene-preventive-draft/api';
+import { ApiError } from '../../shared/apiClient';
+import { getHygieneDraft, validId } from '../../pods/hygiene-preventive-draft/api';
+import { hygieneAdminGrant, hygieneAdminQuery, parseHygieneAdminListing } from '../../pods/hygiene-preventive-draft/admin';
+import { hygieneTimestampLabel } from '../../pods/hygiene-preventive-draft/labels';
+
+Astro.response.headers.set('Cache-Control', 'no-store');
+const UNAVAILABLE = 'Borrador no disponible.';
+// Presentation hint: the backend re-checks the administrator grant on every read. Nothing on this page writes.
+const allowed = hygieneAdminGrant(Astro.cookies);
+const id = Astro.params.id ?? '';
+let backHref = '/hygiene-preventive-admin';
+try {
+	backHref = `/hygiene-preventive-admin?${hygieneAdminQuery(parseHygieneAdminListing(Astro.url.searchParams))}`;
+} catch {
+	// An invalid list query falls back to the first page.
+}
+let draft: HygieneDraft | null = null;
+let error = '';
+let forbidden = false;
+if (allowed) {
+	if (!validId(id)) {
+		error = UNAVAILABLE;
+	} else {
+		try {
+			draft = await getHygieneDraft(id, Astro.cookies);
+		} catch (failure) {
+			if (failure instanceof ApiError && failure.status === 401) return Astro.redirect(`/auth/login?returnTo=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`);
+			if (failure instanceof ApiError && failure.status === 404) error = UNAVAILABLE;
+			else if (failure instanceof ApiError && failure.status === 403) forbidden = true;
+			else error = 'No se pudo cargar el borrador. Probá de nuevo más tarde.';
+		}
+	}
+}
+---
+<Layout>
+	<main aria-labelledby="title">
+		<a href={backHref}>Volver a los borradores</a>
+		<h1 id="title">Higiene y Preventiva II · consulta de borrador</h1>
+		{!allowed ? <p role="alert">No tenés permiso para consultar los borradores de Higiene y Preventiva II.</p>
+		: forbidden ? <p role="alert">No tenés permiso vigente para consultar este borrador.</p>
+		: error ? <p role="alert">{error}</p>
+		: draft && <>
+			<p>Consulta de solo lectura. Los administradores no editan borradores.</p>
+			<p>Paciente: {draft.patient_id}<br />Asignatura de origen: {draft.origin_subject_id}<br />Grupo de origen: {draft.origin_group_id}</p>
+			<p>Versión clínica: {draft.version} · actualizada <time datetime={draft.updated_at}>{hygieneTimestampLabel(draft.updated_at)}</time></p>
+			<section aria-labelledby="content-title">
+				<h2 id="content-title">Contenido clínico</h2>
+				<HygieneReadOnly content={draft.content} />
+			</section>
+		</>}
+	</main>
+</Layout>
+<style>
+	main { max-width: 58rem; margin: auto; padding: 1.5rem 0 3rem; overflow-wrap: anywhere; color: var(--ink); }
+	section { margin: 1rem 0; padding: 1rem; background: var(--paper); border: 1px solid var(--line); border-radius: 0.65rem; }
+	a { color: var(--rust-deep); text-decoration: underline; }
+	[role="alert"] { border: 1px solid var(--rust-line); padding: 1rem; background: var(--rust-soft); border-radius: 0.65rem; }
+</style>
