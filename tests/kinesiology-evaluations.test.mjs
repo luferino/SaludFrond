@@ -112,6 +112,7 @@ async function evaluate(path, options = {}) {
      '../pods/oral-surgery-draft/actions/authorizations': ['handleAuthorizeOralSurgeryDraft'],
      '../pods/oral-surgery-draft/actions/operative-report': ['OPERATIVE_REPORT_FORM_FIELDS', 'handleCloseOperativeReport', 'handleSaveOperativeReport'],
      '../pods/oral-surgery-draft/actions/practical-evaluation': ['PRACTICAL_EVALUATION_FORM_FIELDS', 'handleCorrectPracticalEvaluation', 'handleGradePracticalEvaluation'],
+     '../pods/hygiene-preventive-draft/actions/subjects': ['handleEnableHygieneSubject'],
     };
     return new vm.SyntheticModule(exports[specifier], function () { for (const n of exports[specifier]) this.setExport(n, ['ORAL_SURGERY_FORM_FIELDS', 'OPERATIVE_REPORT_FORM_FIELDS', 'PRACTICAL_EVALUATION_FORM_FIELDS'].includes(n) ? [] : () => undefined); }, { context: sandbox });
    }
