@@ -521,7 +521,9 @@ const STATE_OPTIONS = ['', 'present', 'absent', 'to_extract'] as const;
 	.odontogram[data-enhanced] .tooth[data-selected] { display: grid; }
 	/* The chart, inspector and notice are created by the client script, so they carry no scope attribute: style them through the scoped root. */
 	.odontogram :global(.defs) { position: absolute; }
-	.odontogram :global(.chart) { display: grid; gap: 0.3rem; padding: 1rem; background: var(--field); border: 1px solid var(--field-line); border-radius: 0.5rem; }
+	/* A fieldset grows to its min-content width by default; the 16-tooth row scrolls inside the chart instead of widening the page. */
+	.odontogram { min-inline-size: 0; }
+	.odontogram :global(.chart) { display: grid; gap: 0.3rem; padding: 1rem; overflow-x: auto; background: var(--field); border: 1px solid var(--field-line); border-radius: 0.5rem; }
 	.odontogram :global(.row) { display: flex; gap: 3px; justify-content: center; }
 	.odontogram :global(.row-label) { text-align: center; color: var(--muted); font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase; }
 	.odontogram :global(.pick) { display: grid; justify-items: center; gap: 1px; padding: 3px; border: 2px solid transparent; border-radius: 6px; background: none; cursor: pointer; font: 600 0.7rem/1 Consolas, monospace; color: var(--ink); }

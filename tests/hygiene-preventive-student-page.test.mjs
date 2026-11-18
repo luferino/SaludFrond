@@ -272,6 +272,9 @@ test('odontogram chart styles reach the nodes the client script creates, which c
 	// Scoped selectors would require data-astro-cid-* on these script-created nodes and never match.
 	const scoped = styles.match(/(?:\.chart|\.row|\.row-label|\.pick|\.inspector|\.teeth|\.nav|svg\.t|\.t|\.mark|\.face\.(?:caries|filled|both))\[data-astro-cid[^\]]*\]/g) ?? [];
 	assert.deepEqual(scoped, []);
+	// A fieldset grows to its min-content width by default; the 16-tooth row must scroll inside the chart, not widen the page.
+	assert.match(styles, /\.odontogram\[data-astro-cid[^\]]*\]\{[^}]*min-inline-size:0/);
+	assert.match(styles, /\.odontogram\[data-astro-cid[^\]]*\] \.chart\{[^}]*overflow-x:auto/);
 	for (const selector of ['.chart', '.pick', 'svg.t .face.caries', 'svg.t .face.filled', 'svg.t .face.both', 'svg.t .mark.absent', '.inspector']) {
 		assert.match(styles, new RegExp(String.raw`\.odontogram\[data-astro-cid[^\]]*\] ` + selector.replaceAll('.', String.raw`\.`)), selector);
 	}
