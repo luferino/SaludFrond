@@ -1,0 +1,134 @@
+---
+import { FDI_TEETH, HYGIENE_INDICES, HYGIENE_MEDICAL_QUESTIONS, HYGIENE_MEDICAL_TEXTS, TOOTH_FACES, type HygieneContent, type HygieneIndexName, type ToothFace } from '../../pods/hygiene-preventive-draft/api';
+import { CHART_ROWS, FACE_POLYGONS, FACE_POSITIONS, faceAt, type FacePosition } from '../../pods/hygiene-preventive-draft/odontogram';
+import { FACE_MARK_LABELS, HYGIENE_COMPONENT_LABELS, HYGIENE_DETAIL_LABEL, HYGIENE_INDEX_LABELS, HYGIENE_QUESTION_LABELS, HYGIENE_SECTION_LABELS, HYGIENE_TEXT_LABELS, TOOTH_FACE_LABELS, TOOTH_STATE_LABELS, UNRECORDED_TOOTH_LABEL, hygieneAnswerLabel } from '../../pods/hygiene-preventive-draft/labels';
+
+// Read-only view for teachers and administrators (D8). Server-rendered: no form, no script, no action.
+interface Props { content: HygieneContent }
+const { content } = Astro.props;
+const answers = content.medical_history;
+const teeth = content.odontogram ?? {};
+const indices = content.indices ?? {};
+const indexNames = Object.keys(HYGIENE_INDICES) as HygieneIndexName[];
+const recorded = FDI_TEETH.filter((code) => Object.hasOwn(teeth, code));
+const unrecordedCount = FDI_TEETH.length - recorded.length;
+const rows = CHART_ROWS.map((row) => ({ ...row, cells: [...row.left, null, ...row.right] }));
+
+const toothSummary = (code: string): string => {
+	const tooth = teeth[code];
+	const faces = TOOTH_FACES.filter((face) => tooth.surfaces?.[face]?.length).map((face: ToothFace) => `${TOOTH_FACE_LABELS[face]}: ${tooth.surfaces![face]!.map((mark) => FACE_MARK_LABELS[mark].toLowerCase()).join(' y ')}`);
+	return `Pieza ${code} · ${TOOTH_STATE_LABELS[tooth.state]}${faces.length ? ` · ${faces.join('; ')}` : ''}`;
+};
+const faceClass = (code: string, position: FacePosition): string => {
+	const marks = teeth[code]?.surfaces?.[faceAt(position, code)] ?? [];
+	return ['face', marks.length === 2 ? 'both' : marks[0]].filter(Boolean).join(' ');
+};
+const crossed = (code: string): 'absent' | 'extract' | null => (teeth[code]?.state === 'absent' ? 'absent' : teeth[code]?.state === 'to_extract' ? 'extract' : null);
+const textValue = (value: unknown): string => (typeof value === 'string' && value !== '' ? value : 'Sin responder');
+---
+<div class="hygiene-readonly">
+	<section aria-labelledby="hygiene-medical-title">
+		<h3 id="hygiene-medical-title">{HYGIENE_SECTION_LABELS.medical_history}</h3>
+		{answers === undefined ? <p>Sección sin completar.</p> : <>
+			<dl>
+				{HYGIENE_MEDICAL_QUESTIONS.map((name) => {
+					const detail = answers[`${name}_detail`];
+					return <div>
+						<dt>{HYGIENE_QUESTION_LABELS[name]}</dt>
+						<dd>
+							{hygieneAnswerLabel(answers[name])}
+							{typeof detail === 'string' && detail !== '' && <span class="detail"><strong>{HYGIENE_DETAIL_LABEL}:</strong> {detail}</span>}
+						</dd>
+					</div>;
+				})}
+			</dl>
+			<dl>
+				{HYGIENE_MEDICAL_TEXTS.map((name) => <div>
+					<dt>{HYGIENE_TEXT_LABELS[name]}</dt>
+					<dd>{textValue(answers[name])}</dd>
+				</div>)}
+			</dl>
+		</>}
+	</section>
+	<section aria-labelledby="hygiene-odontogram-title">
+		<h3 id="hygiene-odontogram-title">{HYGIENE_SECTION_LABELS.odontogram}</h3>
+		<p class="count">{unrecordedCount} piezas sin registrar</p>
+		<div class="chart" aria-hidden="true">
+			<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+				<pattern id="hygiene-secondary" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+					<rect width="6" height="6" fill="#2a5d9f"></rect><rect width="3" height="6" fill="#c0392b"></rect>
+				</pattern>
+			</defs></svg>
+			{rows.map((row) => <>
+				{row.upper && <div class="row-label">{row.label}</div>}
+				<div class="row">
+					{row.cells.map((code) => code === null ? <span class="mid"></span> : <svg class={`t${teeth[code] ? '' : ' unrecorded'}`} viewBox="0 0 46 46" aria-hidden="true">
+						{FACE_POSITIONS.map((position) => position === 'center'
+							? <rect x="14" y="14" width="18" height="18" class={faceClass(code, position)} />
+							: <polygon points={FACE_POLYGONS[position]} class={faceClass(code, position)} />)}
+						{crossed(code) && <>
+							<line x1="4" y1="4" x2="42" y2="42" class={`mark ${crossed(code)}`} />
+							<line x1="42" y1="4" x2="4" y2="42" class={`mark ${crossed(code)}`} />
+						</>}
+					</svg>)}
+				</div>
+				{!row.upper && <div class="row-label">{row.label}</div>}
+			</>)}
+		</div>
+		<ul class="legend" aria-label="Convenciones del odontograma">
+			<li><span class="swatch caries"></span>{FACE_MARK_LABELS.caries}</li>
+			<li><span class="swatch filled"></span>{FACE_MARK_LABELS.filled}</li>
+			<li><span class="swatch both"></span>Caries secundaria</li>
+			<li><b class="absent">✕</b> {TOOTH_STATE_LABELS.absent}</li>
+			<li><b class="extract">✕</b> {TOOTH_STATE_LABELS.to_extract}</li>
+			<li><span class="swatch unrecorded"></span>{UNRECORDED_TOOTH_LABEL}</li>
+		</ul>
+		{recorded.length ? <ul class="teeth">{recorded.map((code) => <li>{toothSummary(code)}</li>)}</ul> : <p>No hay piezas registradas.</p>}
+	</section>
+	<section aria-labelledby="hygiene-indices-title">
+		<h3 id="hygiene-indices-title">{HYGIENE_SECTION_LABELS.indices}</h3>
+		{indexNames.map((name) => {
+			const index = indices[name];
+			return <div class="index">
+				<h4>{HYGIENE_INDEX_LABELS[name]}</h4>
+				{index ? <>
+					<ul>{HYGIENE_INDICES[name].components.map((component) => <li>{HYGIENE_COMPONENT_LABELS[component]}: {index[component]}</li>)}</ul>
+					<p>Total calculado por el servidor: {index.total}</p>
+				</> : <p>No cargado</p>}
+			</div>;
+		})}
+	</section>
+</div>
+<style>
+	.hygiene-readonly { --caries: #c0392b; --filled: #2a5d9f; color: var(--ink); overflow-wrap: anywhere; }
+	.hygiene-readonly section { margin: 1rem 0; }
+	.hygiene-readonly dl { display: grid; grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); gap: 0.5rem 1.5rem; }
+	.hygiene-readonly dt { font-weight: 700; }
+	.hygiene-readonly dd { margin: 0; white-space: pre-wrap; }
+	.detail { display: block; }
+	.count { color: var(--muted); font-weight: 600; }
+	.chart { display: grid; gap: 0.3rem; padding: 1rem; background: var(--field); border: 1px solid var(--field-line); border-radius: 8px; overflow-x: auto; }
+	.row { display: flex; gap: 3px; justify-content: center; align-items: center; }
+	.mid { width: 1rem; border-left: 2px dashed var(--line); margin-left: 0.5rem; }
+	.row-label { text-align: center; color: var(--muted); font: 0.6rem/1.6 Consolas, monospace; letter-spacing: 0.1em; text-transform: uppercase; }
+	svg.t { width: 36px; height: 36px; display: block; }
+	svg.t .face { fill: var(--paper); stroke: var(--ink); stroke-width: 1.2; }
+	svg.t.unrecorded .face { fill: #f1ece2; stroke: var(--field-line); stroke-dasharray: 2 2; }
+	.face.caries { fill: var(--caries) !important; }
+	.face.filled { fill: var(--filled) !important; }
+	.face.both { fill: url(#hygiene-secondary) !important; }
+	.mark { stroke-width: 3.5; stroke-linecap: round; }
+	.mark.absent { stroke: var(--filled); }
+	.mark.extract { stroke: var(--caries); }
+	.legend { display: flex; flex-wrap: wrap; gap: 1rem; margin: 0.8rem 0; padding: 0; list-style: none; color: var(--muted); font-size: 0.8rem; }
+	.legend li { display: inline-flex; gap: 0.35rem; align-items: center; }
+	.swatch { width: 0.8rem; height: 0.8rem; border-radius: 3px; border: 1px solid var(--ink); display: inline-block; }
+	.swatch.caries { background: var(--caries); }
+	.swatch.filled { background: var(--filled); }
+	.swatch.both { background: repeating-linear-gradient(45deg, #c0392b 0 3px, #2a5d9f 3px 6px); }
+	.swatch.unrecorded { background: #f1ece2; border-style: dashed; }
+	.legend .absent { color: var(--filled); }
+	.legend .extract { color: var(--caries); }
+	.teeth { padding-left: 1.2rem; }
+	.index h4 { margin: 0.5rem 0 0.25rem; }
+</style>
