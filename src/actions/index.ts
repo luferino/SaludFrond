@@ -32,6 +32,7 @@ import { PRACTICAL_EVALUATION_FORM_FIELDS, handleCorrectPracticalEvaluation, han
 import { handleEnableHygieneSubject } from '../pods/hygiene-preventive-draft/actions/subjects';
 import { HYGIENE_FORM_FIELDS, HYGIENE_MARK_FIELDS, handleCreateHygieneDraft, handleUpdateHygieneDraft } from '../pods/hygiene-preventive-draft/actions/drafts';
 import { handleDeclareHygieneConsent } from '../pods/hygiene-preventive-draft/actions/consent';
+import { handleCreateHygieneProcedure, handleDeleteHygieneProcedure, handleUpdateHygieneProcedure } from '../pods/hygiene-preventive-draft/actions/procedures';
 
 const UUID_INPUT = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
 const ID_INPUT = z.string().regex(/^[1-9]\d{0,18}$/);
@@ -317,6 +318,31 @@ export const server = {
 			signer_document: z.string().optional(),
 		}).strict(),
 		handler: handleDeclareHygieneConsent,
+	}),
+	createHygieneProcedure: defineAction({
+		accept: 'form',
+		input: z.object({
+			id: ID_INPUT, assignment_id: z.string(), limit: z.string(), offset: z.string(), ...LIST_COORDINATE_INPUTS,
+			procedure_date: z.string().optional(),
+			description: z.string().optional(),
+		}).strict(),
+		handler: handleCreateHygieneProcedure,
+	}),
+	updateHygieneProcedure: defineAction({
+		accept: 'form',
+		input: z.object({
+			id: ID_INPUT, procedure_id: ID_INPUT, expected_version: ID_INPUT, assignment_id: z.string(), limit: z.string(), offset: z.string(), ...LIST_COORDINATE_INPUTS,
+			procedure_date: z.string().optional(),
+			description: z.string().optional(),
+		}).strict(),
+		handler: handleUpdateHygieneProcedure,
+	}),
+	deleteHygieneProcedure: defineAction({
+		accept: 'form',
+		input: z.object({
+			id: ID_INPUT, procedure_id: ID_INPUT, expected_version: ID_INPUT, assignment_id: z.string(), limit: z.string(), offset: z.string(), ...LIST_COORDINATE_INPUTS,
+		}).strict(),
+		handler: handleDeleteHygieneProcedure,
 	}),
 	createPatient: defineAction({
 		accept: 'form',

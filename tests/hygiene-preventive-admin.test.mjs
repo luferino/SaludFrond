@@ -98,10 +98,13 @@ const readOnlyComponent = (...args) => compileAstro(readOnlyPage, { ...hygieneAp
 // S3: the shared consent history, compiled on first use like the read-only draft component.
 const consentComponentPath = 'src/components/clinical/HygieneConsentHistory.astro';
 const consentComponent = (...args) => compileAstro(consentComponentPath, { ...labels, ...helpers, Fragment: null, $$renderComponent: renderComponent }).then((component) => component(...args));
+// S4: the shared procedure log, compiled on first use.
+const procedureComponentPath = 'src/components/clinical/HygieneProcedureLog.astro';
+const procedureComponent = (...args) => compileAstro(procedureComponentPath, { ...labels, ...helpers, Fragment: null, $$renderComponent: renderComponent }).then((component) => component(...args));
 
 /** Renders an admin page with the real admin helpers and API; `search` is the query string of the page URL. */
 async function renderAdmin(path, { actor = admin(), search = '', pageId = id, responses = {} } = {}) {
- routes = path === detailPage ? { [`GET /hygiene-preventive-drafts/${pageId}/consent`]: { body: { current_declaration_id: null, declarations: [] } }, ...responses } : responses;
+ routes = path === detailPage ? { [`GET /hygiene-preventive-drafts/${pageId}/consent`]: { body: { current_declaration_id: null, declarations: [] } }, [`GET /hygiene-preventive-drafts/${pageId}/procedures`]: { body: { items: [] } }, ...responses } : responses;
  calls = [];
  const headers = new Headers();
  const Astro = {
@@ -111,7 +114,7 @@ async function renderAdmin(path, { actor = admin(), search = '', pageId = id, re
  };
  const mocks = {
   ...helpers, ...hygieneApi, ...labels, ...admin_, Layout: null, Fragment: null, ApiError: FixtureApiError,
-  HygieneReadOnly: readOnlyComponent, HygieneConsentHistory: consentComponent, $$renderComponent: renderComponent,
+  HygieneReadOnly: readOnlyComponent, HygieneConsentHistory: consentComponent, HygieneProcedureLog: procedureComponent, $$renderComponent: renderComponent,
  };
  const component = await compileAstro(path, mocks);
  const value = await component({ createAstro: () => Astro }, {}, {});
@@ -196,7 +199,7 @@ test('A2 401 redirects to login, 403 is a permission notice, other failures and 
 
 test('A3 the detail reads the draft once, renders its content read-only and keeps the list query for the back link', async () => {
  const page = await renderAdmin(detailPage, { search: 'limit=20&offset=40', responses: { [`GET /hygiene-preventive-drafts/${id}`]: { body: draft() } } });
- assert.deepEqual(calls.map((call) => `${call.method} ${call.path}`), [`GET /hygiene-preventive-drafts/${id}`, `GET /hygiene-preventive-drafts/${id}/consent`]);
+ assert.deepEqual(calls.map((call) => `${call.method} ${call.path}`), [`GET /hygiene-preventive-drafts/${id}`, `GET /hygiene-preventive-drafts/${id}/consent`, `GET /hygiene-preventive-drafts/${id}/procedures`]);
  assert.match(page.html, /Losartán/);
  assert.match(page.html, /Higiene y Preventiva II · consulta de borrador/);
  assert.match(page.html, /href="\/hygiene-preventive-admin\?limit=20&offset=40"/);
@@ -313,5 +316,34 @@ test('S3 a consent read failure is a section error and the admin draft still ren
 
 test('S3 a 401 on the admin consent read redirects to login', async () => {
  const page = await renderAdmin(detailPage, { responses: { [`GET /hygiene-preventive-drafts/${id}`]: { body: draft() }, ...adminConsentRoute({ status: 401 }) } });
+ assert.equal(page.redirect, `/auth/login?returnTo=${encodeURIComponent(`/hygiene-preventive-admin/${id}`)}`);
+});
+
+// S4: the procedure log is read-only for administrators; a failed read never hides the draft.
+
+const adminProcedureRoute = (overrides) => ({ [`GET /hygiene-preventive-drafts/${id}/procedures`]: overrides });
+const adminProcedureEntry = (overrides = {}) => ({
+ id: '21', draft_id: id, procedure_date: '2026-11-10', description: 'Profilaxis', author_id: author, student_name: 'Ana Pérez',
+ version: '4', approved_by: null, teacher_name: null, approved_at: null, created_at: iso, updated_at: iso, status: 'pending', ...overrides,
+});
+
+test('S4 the admin detail shows the procedure log read-only, in creation order, with no form', async () => {
+ const approved = adminProcedureEntry({ id: '22', description: 'Destartraje', version: '5', approved_by: '77777777-7777-4777-8777-777777777777', teacher_name: 'Marta Gómez', approved_at: iso, status: 'approved' });
+ const page = await renderAdmin(detailPage, { responses: { [`GET /hygiene-preventive-drafts/${id}`]: { body: draft() }, ...adminProcedureRoute({ body: { items: [adminProcedureEntry(), approved] } }) } });
+ assert.match(page.html, /Registro de procedimientos/);
+ assert.ok(page.html.indexOf('Profilaxis') < page.html.indexOf('Destartraje'), 'creation order');
+ assert.match(page.html, /Aprobado por Marta Gómez/);
+ assert.doesNotMatch(page.html, /<form|method="POST"|<button/);
+});
+
+test('S4 a procedure read failure is a section error and the admin draft still renders', async () => {
+ const page = await renderAdmin(detailPage, { responses: { [`GET /hygiene-preventive-drafts/${id}`]: { body: draft() }, ...adminProcedureRoute({ status: 500 }) } });
+ assert.match(page.html, /Losartán/);
+ assert.match(page.html, /No se pudo cargar el registro de procedimientos/);
+ assert.doesNotMatch(page.html, /<form|method="POST"/);
+});
+
+test('S4 a 401 on the admin procedure read redirects to login', async () => {
+ const page = await renderAdmin(detailPage, { responses: { [`GET /hygiene-preventive-drafts/${id}`]: { body: draft() }, ...adminProcedureRoute({ status: 401 }) } });
  assert.equal(page.redirect, `/auth/login?returnTo=${encodeURIComponent(`/hygiene-preventive-admin/${id}`)}`);
 });

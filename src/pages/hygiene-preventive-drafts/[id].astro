@@ -6,9 +6,10 @@ import { ApiError } from '../../shared/apiClient';
 import { listAssignedPatients } from '../../pods/patient-assignment/api';
 import { assignmentListCarrier, assignmentListQuery, parseAssignmentListCoordinates } from '../../pods/patient-assignment/list-coordinates';
 import { clinicalFilterCarrier } from '../../pods/kinesiology-evolution/listing';
-import { getHygieneConsent, getHygieneDraft, HYGIENE_INDICES, HYGIENE_MEDICAL_QUESTIONS, HYGIENE_MEDICAL_TEXTS, TOOTH_FACES, validId, type HygieneConsentHistory as ConsentHistory, type HygieneDraft } from '../../pods/hygiene-preventive-draft/api';
+import { getHygieneConsent, getHygieneDraft, HYGIENE_INDICES, HYGIENE_MEDICAL_QUESTIONS, HYGIENE_MEDICAL_TEXTS, TOOTH_FACES, validId, listHygieneProcedures, type HygieneConsentHistory as ConsentHistory, type HygieneDraft, type HygieneProcedure } from '../../pods/hygiene-preventive-draft/api';
 import { formValuesFromHygieneContent, HYGIENE_COPY, hygieneTextareaText, hygieneUnsavedEntries, type FormValues } from '../../pods/hygiene-preventive-draft/actions/drafts';
 import { HYGIENE_CONSENT_COPY } from '../../pods/hygiene-preventive-draft/actions/consent';
+import { HYGIENE_PROCEDURE_COPY, type ProcedureValues } from '../../pods/hygiene-preventive-draft/actions/procedures';
 import { CHART_ORDER, isUpperTooth } from '../../pods/hygiene-preventive-draft/odontogram';
 import {
 	FACE_MARK_LABELS, HYGIENE_COMPONENT_LABELS, HYGIENE_DETAIL_LABEL, HYGIENE_INDEX_LABELS, HYGIENE_QUESTION_LABELS, HYGIENE_TEXT_LABELS,
@@ -18,6 +19,7 @@ import { decodeJwt } from '../../shared/jwt';
 import { actionHrefWithContext } from '../../pods/kinesiology-evaluation/api';
 import HygienePlaqueFields from '../../components/clinical/HygienePlaqueFields.astro';
 import HygieneConsentHistory from '../../components/clinical/HygieneConsentHistory.astro';
+import HygieneProcedureLog from '../../components/clinical/HygieneProcedureLog.astro';
 
 const id = Astro.params.id ?? '';
 const search = Astro.url.searchParams;
@@ -67,6 +69,16 @@ if (consentResult?.error) {
 if (/sesión venció/i.test(consentError)) return Astro.redirect(loginRedirect);
 // The signer values the student typed, kept when a declaration is rejected.
 const consentFields = consentFailure?.values ?? { signer: '', signer_name: '', signer_document: '' };
+// Procedure log (D4): a success redirects with its return carriers before any read; a failure keeps its values for the page.
+const procedureResult = [Astro.getActionResult(actions.createHygieneProcedure), Astro.getActionResult(actions.updateHygieneProcedure), Astro.getActionResult(actions.deleteHygieneProcedure)].find((item) => item !== undefined);
+const procedureData = procedureResult?.data;
+if (procedureData?.success) {
+	return Astro.redirect(`/hygiene-preventive-drafts/${encodeURIComponent(procedureData.id)}?${actionReturnParams(procedureData, procedureData.action === 'delete' ? 'procedure_deleted' : 'procedure_saved')}`);
+}
+const procedureFailure = procedureData?.success === false ? procedureData : undefined;
+let procedureError = procedureFailure?.error ?? '';
+if (procedureResult?.error) procedureError = isInputError(procedureResult.error) ? HYGIENE_PROCEDURE_COPY.formInput : HYGIENE_PROCEDURE_COPY.frameworkUncertain;
+if (/sesión venció/i.test(procedureError)) return Astro.redirect(loginRedirect);
 
 // Values the student submitted and the browser never saved; they are never sent again with the current version.
 const retainedValues = saveFailure?.values;
@@ -80,6 +92,8 @@ let formValues: FormValues | undefined;
 let formVersion = '';
 let consent: ConsentHistory | null = null;
 let consentLoadError = '';
+let procedures: HygieneProcedure[] | null = null;
+let procedureLoadError = '';
 try {
 	const coordinates = parseAssignmentListCoordinates(search, true);
 	limit = coordinates.limit;
@@ -118,6 +132,13 @@ try {
 					if (consentReadFailure instanceof ApiError && consentReadFailure.status === 401) throw consentReadFailure;
 					consentLoadError = 'No se pudo cargar el consentimiento. El borrador se muestra igual; intentá recargar la página.';
 				}
+				try {
+					// Read after the consent: a failure here replaces only the procedure section, never the editable draft.
+					procedures = await listHygieneProcedures(id, Astro.cookies);
+				} catch (procedureReadFailure) {
+					if (procedureReadFailure instanceof ApiError && procedureReadFailure.status === 401) throw procedureReadFailure;
+					procedureLoadError = HYGIENE_PROCEDURE_COPY.readFailure;
+				}
 			}
 		}
 	}
@@ -145,6 +166,23 @@ const consentSaved = search.get('consent_saved') === '1';
 const hasCurrentDeclaration = consent !== null && consent.current_declaration_id !== null;
 // Declaring needs the history: without it the button copy and the duplicate guard are unknown, so the form stays closed.
 const canDeclare = eligible && consent !== null && !consentLoadError && !consentUncertain;
+const procedureSaved = search.get('procedure_saved') === '1';
+const procedureDeleted = search.get('procedure_deleted') === '1';
+// The new-entry form needs a loaded history with a current declaration (D4); an unreadable consent keeps it closed.
+const canCreateProcedure = eligible && consent !== null && !consentLoadError && consent.current_declaration_id !== null;
+const procedureMax = new Date().toISOString().slice(0, 10);
+const pendingIds = new Set((procedures ?? []).filter((item) => item.status === 'pending').map((item) => item.id));
+// A rejected edit keeps its typed text in that entry, unless the outcome was stale or uncertain: then the stored entry shows and the text is listed as unsaved.
+const retainedEntryId = procedureFailure?.action === 'update' && !procedureFailure.uncertain && !procedureFailure.conflict && pendingIds.has(procedureFailure.procedure_id) ? procedureFailure.procedure_id : '';
+// A rejected create keeps the typed text, except after an uncertain outcome: the entry may already exist.
+const retainedCreate = procedureFailure?.action === 'create' && !procedureFailure.uncertain ? procedureFailure.values : undefined;
+const unsavedValues = procedureFailure?.values && retainedEntryId === '' && !retainedCreate && (procedureFailure.values.procedure_date !== '' || procedureFailure.values.description !== '') ? procedureFailure.values : undefined;
+const createFields: ProcedureValues = retainedCreate ?? { procedure_date: '', description: '' };
+const procedureCarriers: [string, string][] = draft ? [
+	['id', draft.id], ['assignment_id', assignmentId], ['limit', String(limit)], ['offset', String(offset)],
+	['list_limit', String(limit)], ['list_offset', String(offset)],
+	...Object.entries(listFilters).map(([key, value]): [string, string] => [`list_${key}`, String(value)]),
+] : [];
 const unsaved = draft && !saveFailure?.conflict ? [] : hygieneUnsavedEntries(retainedValues);
 const coordinates = { limit, offset, filters: listFilters };
 const listCarrier = assignmentListCarrier(coordinates);
@@ -156,6 +194,17 @@ const contextHref = `/my-patients/${encodeURIComponent(assignmentId)}?${contextP
 const actionContext = { assignment_id: assignmentId, ...listCarrier, ...clinicalCarrier };
 const saveHref = actionHrefWithContext(actions.updateHygieneDraft.toString(), actionContext, Astro.url.href);
 const consentHref = actionHrefWithContext(actions.declareHygieneConsent.toString(), actionContext, Astro.url.href);
+const createProcedureHref = actionHrefWithContext(actions.createHygieneProcedure.toString(), actionContext, Astro.url.href);
+const updateProcedureHref = actionHrefWithContext(actions.updateHygieneProcedure.toString(), actionContext, Astro.url.href);
+const deleteProcedureHref = actionHrefWithContext(actions.deleteHygieneProcedure.toString(), actionContext, Astro.url.href);
+// Editing controls (D4): only the author gets them, and the log component adds them to each pending entry.
+const procedureEditing = eligible ? {
+	updateHref: updateProcedureHref,
+	deleteHref: deleteProcedureHref,
+	carriers: procedureCarriers,
+	maxDate: procedureMax,
+	retained: retainedEntryId !== '' && procedureFailure?.values ? { procedureId: retainedEntryId, values: procedureFailure.values } : undefined,
+} : undefined;
 const STATE_OPTIONS = ['', 'present', 'absent', 'to_extract'] as const;
 ---
 <Layout>
@@ -266,6 +315,32 @@ const STATE_OPTIONS = ['', 'present', 'absent', 'to_extract'] as const;
 					</form>}
 				</>}
 			</section>
+			<section class="procedures" aria-labelledby="procedures-title">
+				<h2 id="procedures-title">Registro de procedimientos</h2>
+				{procedureSaved && <p class="success" role="status">Procedimiento guardado.</p>}
+				{procedureDeleted && <p class="success" role="status">Procedimiento eliminado.</p>}
+				{procedureError && <p class="notice error" role="alert">{procedureError}</p>}
+				{procedureLoadError ? <p class="notice error" role="alert">{procedureLoadError}</p> : procedures && <>
+					<HygieneProcedureLog procedures={procedures} editing={procedureEditing} />
+					{eligible && consent !== null && consent.current_declaration_id === null && <p class="notice">Declará el consentimiento en papel antes de registrar procedimientos.</p>}
+					{eligible && consentLoadError && <p class="notice">El registro de procedimientos no está disponible hasta que se pueda verificar el consentimiento. Recargá la página para intentar de nuevo.</p>}
+					{canCreateProcedure && <form method="POST" action={createProcedureHref} id="procedure-create-form" data-procedure-form>
+						{procedureCarriers.map(([name, value]) => <input type="hidden" name={name} value={value} />)}
+						<label>Fecha del procedimiento <input type="date" name="procedure_date" max={procedureMax} value={createFields.procedure_date} required /></label>
+						<label>Descripción <textarea name="description" maxlength="1000" required>{hygieneTextareaText(createFields.description)}</textarea></label>
+						<button class="button" type="submit" data-procedure-submit>Registrar procedimiento</button>
+					</form>}
+				</>}
+				{unsavedValues && <section class="preserved" aria-labelledby="procedure-unsaved-title">
+					<h3 id="procedure-unsaved-title">Valores no guardados del procedimiento</h3>
+					<p>Estos valores no se guardaron y no se enviarán con la versión actual. Copialos antes de volver a cargar.</p>
+					<dl>
+						<div><dt>Fecha</dt><dd>{unsavedValues.procedure_date}</dd></div>
+						<div><dt>Descripción</dt><dd>{unsavedValues.description}</dd></div>
+					</dl>
+				</section>}
+				<p id="procedure-dirty-notice" class="notice error" role="status" hidden>{HYGIENE_CONSENT_COPY.unsavedDraft}</p>
+			</section>
 		</> : <section class="notice error" role="alert">
 			<h1 id="title">No se pudo cargar el borrador</h1>
 			<p>Volvé a la asignación e intentá nuevamente.</p>
@@ -297,11 +372,16 @@ const STATE_OPTIONS = ['', 'present', 'absent', 'to_extract'] as const;
 		const consentForm = document.querySelector<HTMLFormElement>('#consent-form');
 		const consentButton = document.querySelector<HTMLButtonElement>('#consent-button');
 		const dirtyNotice = document.querySelector<HTMLElement>('#dirty-notice');
+		// Procedure controls follow the same dirty rule (D4): unsaved draft edits block them until the draft is saved.
+		const procedureButtons = document.querySelectorAll<HTMLButtonElement>('[data-procedure-submit]');
+		const procedureDirtyNotice = document.querySelector<HTMLElement>('#procedure-dirty-notice');
 		let dirty = false;
 		const markDirty = () => {
 			dirty = true;
 			if (consentButton) consentButton.disabled = true;
+			for (const button of procedureButtons) button.disabled = true;
 			if (dirtyNotice) dirtyNotice.hidden = false;
+			if (procedureDirtyNotice) procedureDirtyNotice.hidden = false;
 		};
 		form?.addEventListener('input', markDirty);
 		form?.addEventListener('change', markDirty);
@@ -317,6 +397,27 @@ const STATE_OPTIONS = ['', 'present', 'absent', 'to_extract'] as const;
 				consentButton.textContent = 'Declarando…';
 			}
 		});
+
+		// Each procedure form posts once: unsaved draft edits block it, delete asks first, and a second submit is ignored.
+		for (const procedureForm of document.querySelectorAll<HTMLFormElement>('[data-procedure-form]')) {
+			procedureForm.addEventListener('submit', (event) => {
+				const message = procedureForm.dataset.confirm;
+				if (dirty || procedureForm.dataset.submitting === 'true') {
+					event.preventDefault();
+					return;
+				}
+				if (message && !confirm(message)) {
+					event.preventDefault();
+					return;
+				}
+				procedureForm.dataset.submitting = 'true';
+				const button = procedureForm.querySelector<HTMLButtonElement>('[data-procedure-submit]');
+				if (button) {
+					button.disabled = true;
+					button.textContent = 'Enviando…';
+				}
+			});
+		}
 
 		const root = document.querySelector<HTMLElement>('[data-odontogram]');
 		if (root) {
@@ -577,6 +678,10 @@ const STATE_OPTIONS = ['', 'present', 'absent', 'to_extract'] as const;
 	.consent h2 { margin: 0 0 0.5rem; font-size: 1.1rem; }
 	.consent .confirm, .consent .choice { display: inline-flex; gap: 0.35rem; align-items: center; font-weight: 400; }
 	.consent .signer { margin: 1rem 0 0; }
+	.procedures { margin: 1rem 0; padding: 1.25rem; border: 1px solid var(--line); border-radius: 0.75rem; background: var(--paper); }
+	.procedures h2 { margin: 0 0 0.5rem; font-size: 1.1rem; }
+	.procedures form { display: grid; gap: 0.5rem; margin: 0.75rem 0; }
+	.procedures label { display: grid; gap: 0.35rem; font-weight: 600; }
 	/* Enhanced chart: the no-JS list stays the form's source; the chart and inspector only present it. */
 	.odontogram[data-enhanced] .tooth { display: none; }
 	.odontogram[data-enhanced] .tooth[data-selected] { display: grid; }
