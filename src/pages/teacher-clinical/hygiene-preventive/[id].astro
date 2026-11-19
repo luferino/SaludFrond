@@ -2,9 +2,10 @@
 export const prerender = false;
 import Layout from '../../../layouts/Layout.astro';
 import HygieneReadOnly from '../../../components/clinical/HygieneReadOnly.astro';
+import HygieneConsentHistory from '../../../components/clinical/HygieneConsentHistory.astro';
 import { ApiError } from '../../../shared/apiClient';
 import { parseClinicalContext, teacherGrant, type ClinicalContext } from '../../../pods/teacher-clinical/api';
-import { getHygieneDraft, validId, type HygieneDraft } from '../../../pods/hygiene-preventive-draft/api';
+import { getHygieneConsent, getHygieneDraft, validId, type HygieneConsentHistory as ConsentHistory, type HygieneDraft } from '../../../pods/hygiene-preventive-draft/api';
 import { hygieneTimestampLabel } from '../../../pods/hygiene-preventive-draft/labels';
 import { assignmentListQuery, parseAssignmentListCoordinates } from '../../../pods/patient-assignment/list-coordinates';
 
@@ -15,6 +16,8 @@ const allowed = teacherGrant(Astro.cookies, 'hygiene-preventive-drafts:read');
 const id = Astro.params.id ?? '';
 let draft: HygieneDraft | null = null;
 let error = '';
+let consent: ConsentHistory | null = null;
+let consentError = '';
 // Origin guard first: an invalid or foreign context never renders the draft.
 let selected: ClinicalContext | null = null;
 try { selected = parseClinicalContext(Astro.url.searchParams); } catch { selected = null; }
@@ -32,6 +35,15 @@ if (allowed) {
     : failure instanceof ApiError && failure.status === 403 ? 'No tenés permiso vigente para consultar este borrador.'
     : 'No se pudo cargar el borrador en este contexto de origen.';
   }
+ }
+}
+// Read after the draft and only for a loaded draft: a failure here replaces the consent section, never the draft.
+if (draft) {
+ try {
+  consent = await getHygieneConsent(id, Astro.cookies);
+ } catch (failure) {
+  if (failure instanceof ApiError && failure.status === 401) return Astro.redirect(`/auth/login?returnTo=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`);
+  consentError = 'No se pudo cargar el consentimiento. El borrador se muestra igual; intentá recargar la página.';
  }
 }
 // Back link keeps the list coordinates and the selected assignment, like the Oral Surgery detail.
@@ -58,6 +70,10 @@ try {
    <section aria-labelledby="content-title">
     <h2 id="content-title">Contenido del borrador</h2>
     <HygieneReadOnly content={draft.content} />
+   </section>
+   <section aria-labelledby="consent-title">
+    <h2 id="consent-title">Consentimiento en papel</h2>
+    {consentError ? <p role="alert">{consentError}</p> : consent && <HygieneConsentHistory consent={consent} />}
    </section>
   </>}
  </main>

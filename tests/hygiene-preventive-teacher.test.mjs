@@ -104,6 +104,12 @@ const readOnlyComponent = (...args) => compileAstro(readOnlyPage, {
  ...hygieneApi, ...labels, ...odontogram, ...helpers, Fragment: null, $$renderComponent: renderComponent,
 }).then((component) => component(...args));
 
+// S3: the shared consent history, compiled on first use like the read-only draft component.
+const consentComponentPath = 'src/components/clinical/HygieneConsentHistory.astro';
+const consentComponent = (...args) => compileAstro(consentComponentPath, {
+ ...labels, ...helpers, Fragment: null, $$renderComponent: renderComponent,
+}).then((component) => component(...args));
+
 /** Teacher list page with real hygiene discovery and reads; Kinesiology and Oral Surgery reads are recorded mocks. */
 async function renderList({ grants = [], hygieneRoutes = {}, oral = {} } = {}) {
  routes = hygieneRoutes;
@@ -145,7 +151,7 @@ async function renderList({ grants = [], hygieneRoutes = {}, oral = {} } = {}) {
 
 /** Teacher detail page: real draft read and read-only component, with the origin query as the only context. */
 async function renderDetail({ grants = [readGrant], hygieneRoutes = {}, search = query, pageId = id } = {}) {
- routes = hygieneRoutes;
+ routes = { [`GET /hygiene-preventive-drafts/${pageId}/consent`]: { body: { current_declaration_id: null, declarations: [] } }, ...hygieneRoutes };
  calls = [];
  const headers = new Headers();
  const Astro = {
@@ -162,6 +168,8 @@ async function renderDetail({ grants = [readGrant], hygieneRoutes = {}, search =
   },
   validId: hygieneApi.validId,
   getHygieneDraft: hygieneApi.getHygieneDraft,
+  getHygieneConsent: hygieneApi.getHygieneConsent,
+  HygieneConsentHistory: consentComponent,
   hygieneTimestampLabel: labels.hygieneTimestampLabel,
  parseAssignmentListCoordinates: () => ({ filters: {}, limit: 50, offset: 0 }),
   assignmentListQuery: () => 'limit=50&offset=0',
@@ -253,7 +261,7 @@ test('T4 a 401 from hygiene discovery redirects to login', async () => {
 test('D7 a matching origin renders the read-only draft with no-store and no form', async () => {
  const result = await renderDetail({ hygieneRoutes: { [`GET /hygiene-preventive-drafts/${id}`]: { body: draft() } } });
  assert.equal(result.cacheControl, 'no-store');
- assert.deepEqual(result.calls.map((call) => call.method), ['GET']);
+ assert.deepEqual(result.calls.map((call) => call.method), ['GET', 'GET']);
  assert.match(result.html, /Higiene y Preventiva II · consulta docente/);
  assert.match(result.html, /Losartán/);
  assert.doesNotMatch(result.html, /<form|method="POST"/);
@@ -340,4 +348,36 @@ test('D7 a draft with stored plaque renders read-only without a load error', asy
 	assert.match(result.html, /Losartán/);
 	assert.doesNotMatch(result.html, /No se pudo cargar|role="alert"/);
 	assert.doesNotMatch(result.html, /<form|method="POST"/);
+});
+
+// S3: the consent history is read-only for teachers; a failed consent read never hides the draft.
+
+const consentRoute = (overrides) => ({ [`GET /hygiene-preventive-drafts/${id}/consent`]: overrides });
+const consentHistory = {
+ current_declaration_id: '12',
+ declarations: [
+  { id: '11', draft_id: id, signer: 'patient', signer_name: 'Ana Pérez', signer_document: '12345678', declared_by: author, declared_at: iso },
+  { id: '12', draft_id: id, signer: 'parent', signer_name: 'Laura Pérez', signer_document: '30123456', declared_by: author, declared_at: iso },
+ ],
+};
+
+test('S3 the detail shows the consent history read-only, oldest first, with the current mark and no form', async () => {
+ const result = await renderDetail({ hygieneRoutes: { [`GET /hygiene-preventive-drafts/${id}`]: { body: draft() }, ...consentRoute({ body: consentHistory }) } });
+ assert.match(result.html, /Consentimiento en papel/);
+ assert.ok(result.html.indexOf('Ana Pérez') < result.html.indexOf('Laura Pérez'), 'oldest first');
+ assert.equal((result.html.match(/vigente/g) ?? []).length, 1);
+ assert.doesNotMatch(result.html, /<form|method="POST"/);
+ assert.deepEqual(result.calls.map((call) => call.path), [`/hygiene-preventive-drafts/${id}`, `/hygiene-preventive-drafts/${id}/consent`]);
+});
+
+test('S3 a consent read failure is a section error and the draft still renders', async () => {
+ const result = await renderDetail({ hygieneRoutes: { [`GET /hygiene-preventive-drafts/${id}`]: { body: draft() }, ...consentRoute({ status: 500 }) } });
+ assert.match(result.html, /Losartán/);
+ assert.match(result.html, /No se pudo cargar el consentimiento/);
+ assert.doesNotMatch(result.html, /<form|method="POST"/);
+});
+
+test('S3 a 401 on the consent read redirects to login', async () => {
+ const result = await renderDetail({ hygieneRoutes: { [`GET /hygiene-preventive-drafts/${id}`]: { body: draft() }, ...consentRoute({ status: 401 }) } });
+ assert.equal(result.redirect, `/auth/login?returnTo=${encodeURIComponent(`/teacher-clinical/hygiene-preventive/${id}?${query}`)}`);
 });

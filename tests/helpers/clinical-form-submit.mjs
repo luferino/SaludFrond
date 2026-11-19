@@ -56,6 +56,7 @@ const stubbedModules = {
   '../pods/oral-surgery-draft/actions/practical-evaluation': ['PRACTICAL_EVALUATION_FORM_FIELDS','handleCorrectPracticalEvaluation','handleGradePracticalEvaluation'],
   '../pods/hygiene-preventive-draft/actions/subjects': ['handleEnableHygieneSubject'],
   '../pods/hygiene-preventive-draft/actions/drafts': ['HYGIENE_FORM_FIELDS','HYGIENE_MARK_FIELDS','handleCreateHygieneDraft','handleUpdateHygieneDraft'],
+  '../pods/hygiene-preventive-draft/actions/consent': ['handleDeclareHygieneConsent'],
 };
 
 /** `realModules` names stubbed specifiers the caller needs compiled for real (the Astro schema tests). */

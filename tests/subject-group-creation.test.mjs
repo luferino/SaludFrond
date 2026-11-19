@@ -81,6 +81,7 @@ async function evaluate(path, options = {}) {
 					'../pods/oral-surgery-draft/actions/practical-evaluation': ['PRACTICAL_EVALUATION_FORM_FIELDS', 'handleCorrectPracticalEvaluation', 'handleGradePracticalEvaluation'],
 					'../pods/hygiene-preventive-draft/actions/subjects': ['handleEnableHygieneSubject'],
 					'../pods/hygiene-preventive-draft/actions/drafts': ['HYGIENE_FORM_FIELDS', 'HYGIENE_MARK_FIELDS', 'handleCreateHygieneDraft', 'handleUpdateHygieneDraft'],
+					'../pods/hygiene-preventive-draft/actions/consent': ['handleDeclareHygieneConsent'],
 					'../pods/kinesiology-evaluation/actions/evaluations': ['handleCreateKinesiologyEvaluation', 'handleUpdateKinesiologyEvaluation', 'handleSubmitKinesiologyEvaluation', 'handleCreateKinesiologyAmendment'],
 				};
 				return new vm.SyntheticModule(exports[specifier], function () {
