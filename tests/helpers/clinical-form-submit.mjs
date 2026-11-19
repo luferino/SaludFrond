@@ -58,6 +58,7 @@ const stubbedModules = {
   '../pods/hygiene-preventive-draft/actions/drafts': ['HYGIENE_FORM_FIELDS','HYGIENE_MARK_FIELDS','handleCreateHygieneDraft','handleUpdateHygieneDraft'],
   '../pods/hygiene-preventive-draft/actions/consent': ['handleDeclareHygieneConsent'],
   '../pods/hygiene-preventive-draft/actions/procedures': ['handleCreateHygieneProcedure', 'handleUpdateHygieneProcedure', 'handleDeleteHygieneProcedure'],
+  '../pods/hygiene-preventive-draft/actions/approval': ['handleApproveHygieneProcedure'],
 };
 
 /** `realModules` names stubbed specifiers the caller needs compiled for real (the Astro schema tests). */

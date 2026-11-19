@@ -33,6 +33,7 @@ import { handleEnableHygieneSubject } from '../pods/hygiene-preventive-draft/act
 import { HYGIENE_FORM_FIELDS, HYGIENE_MARK_FIELDS, handleCreateHygieneDraft, handleUpdateHygieneDraft } from '../pods/hygiene-preventive-draft/actions/drafts';
 import { handleDeclareHygieneConsent } from '../pods/hygiene-preventive-draft/actions/consent';
 import { handleCreateHygieneProcedure, handleDeleteHygieneProcedure, handleUpdateHygieneProcedure } from '../pods/hygiene-preventive-draft/actions/procedures';
+import { handleApproveHygieneProcedure } from '../pods/hygiene-preventive-draft/actions/approval';
 
 const UUID_INPUT = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
 const ID_INPUT = z.string().regex(/^[1-9]\d{0,18}$/);
@@ -343,6 +344,17 @@ export const server = {
 			id: ID_INPUT, procedure_id: ID_INPUT, expected_version: ID_INPUT, assignment_id: z.string(), limit: z.string(), offset: z.string(), ...LIST_COORDINATE_INPUTS,
 		}).strict(),
 		handler: handleDeleteHygieneProcedure,
+	}),
+	approveHygieneProcedure: defineAction({
+		accept: 'form',
+		input: z.object({
+			id: ID_INPUT, procedure_id: ID_INPUT, expected_version: ID_INPUT,
+			patient_id: UUID_INPUT, subject_id: UUID_INPUT, academic_group_id: UUID_INPUT,
+			approval_confirmed: z.literal('on'),
+			// The list and assignment choice of the teacher page, carried so the redirect keeps them.
+			assignment_id: z.string().optional(), ...LIST_COORDINATE_INPUTS,
+		}).strict(),
+		handler: handleApproveHygieneProcedure,
 	}),
 	createPatient: defineAction({
 		accept: 'form',

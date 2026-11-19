@@ -3,9 +3,9 @@ import type { HygieneProcedure } from '../../pods/hygiene-preventive-draft/api';
 import type { ProcedureValues } from '../../pods/hygiene-preventive-draft/actions/procedures';
 import { HYGIENE_PROCEDURE_STATUS_LABELS, hygieneTimestampLabel } from '../../pods/hygiene-preventive-draft/labels';
 
-// Procedure log (S4, D4), shared by the student editor and the teacher and admin pages. Read-only unless `editing` is given:
-// then each pending entry gets the author's edit and delete forms. Approved entries never get forms. A teacher approval form
-// (T5) joins through its own prop in the same way.
+// Procedure log (S4, D4, S5), shared by the student editor and the teacher and admin pages. Read-only unless a controls prop is
+// given: `editing` adds the author's edit and delete forms, `approval` adds the teacher's approve form. Each prop applies to
+// pending entries only; approved entries never get forms.
 interface Editing {
 	updateHref: string;
 	deleteHref: string;
@@ -16,8 +16,14 @@ interface Editing {
 	/** A rejected edit keeps the typed values in its own entry only; the other entries show what is stored. */
 	retained?: { procedureId: string; values: ProcedureValues };
 }
-interface Props { procedures: HygieneProcedure[]; editing?: Editing }
-const { procedures, editing } = Astro.props;
+/** Teacher approval (D5): one form per pending entry, posted with the origin context and the list carriers of the page. */
+interface Approval {
+	href: string;
+	/** Hidden fields every approval form carries: the draft id, the origin context and the page's list carriers. */
+	carriers: [string, string][];
+}
+interface Props { procedures: HygieneProcedure[]; editing?: Editing; approval?: Approval }
+const { procedures, editing, approval } = Astro.props;
 const fieldsOf = (item: HygieneProcedure): ProcedureValues => (editing?.retained?.procedureId === item.id
 	? editing.retained.values
 	: { procedure_date: item.procedure_date, description: item.description });
@@ -46,6 +52,13 @@ const fieldsOf = (item: HygieneProcedure): ProcedureValues => (editing?.retained
 					<button class="button secondary" type="submit" data-procedure-submit>Eliminar procedimiento</button>
 				</form>
 			</>}
+			{approval && item.status === 'pending' && <form method="POST" action={approval.href} id={`procedure-approve-${item.id}`} data-approval-form>
+				{approval.carriers.map(([name, value]) => <input type="hidden" name={name} value={value} />)}
+				<input type="hidden" name="procedure_id" value={item.id} />
+				<input type="hidden" name="expected_version" value={item.version} />
+				<label class="confirm"><input type="checkbox" name="approval_confirmed" value="on" required /> Entiendo que la aprobación es definitiva: el alumno ya no podrá editar ni eliminar este procedimiento.</label>
+				<button class="button" type="submit">Aprobar procedimiento</button>
+			</form>}
 		</li>)}
 	</ol>}
 </div>
@@ -57,4 +70,5 @@ const fieldsOf = (item: HygieneProcedure): ProcedureValues => (editing?.retained
 	.meta, .status { color: var(--muted); }
 	.entries form { display: grid; gap: 0.5rem; margin: 0.75rem 0 0; }
 	.entries label { display: grid; gap: 0.35rem; font-weight: 600; }
+	.entries .confirm { display: inline-flex; gap: 0.35rem; align-items: center; font-weight: 400; }
 </style>
