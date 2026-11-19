@@ -332,8 +332,8 @@ const STATE_OPTIONS = ['', 'present', 'absent', 'to_extract'] as const;
 					</form>}
 				</>}
 				{unsavedValues && <section class="preserved" aria-labelledby="procedure-unsaved-title">
-					<h3 id="procedure-unsaved-title">Valores no guardados del procedimiento</h3>
-					<p>Estos valores no se guardaron y no se enviarán con la versión actual. Copialos antes de volver a cargar.</p>
+					<h3 id="procedure-unsaved-title">{procedureFailure?.uncertain ? 'Valores enviados del procedimiento' : 'Valores no guardados del procedimiento'}</h3>
+					<p>{procedureFailure?.uncertain ? 'No se pudo confirmar si estos valores se guardaron. No se reenviarán automáticamente. Copialos y revisá el registro antes de volver a intentarlo.' : 'Estos valores no se guardaron y no se enviarán con la versión actual. Copialos antes de volver a cargar.'}</p>
 					<dl>
 						<div><dt>Fecha</dt><dd>{unsavedValues.procedure_date}</dd></div>
 						<div><dt>Descripción</dt><dd>{unsavedValues.description}</dd></div>

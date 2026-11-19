@@ -332,8 +332,11 @@ test('D4 an uncertain create shows its copy and lists the typed text as unsaved,
 	});
 	assert.match(page.html, new RegExp(UNCERTAIN_CREATE));
 	assert.doesNotMatch(formOf(page.html, 'procedure-create-form'), /Maybe saved/);
-	assert.match(page.html, /Valores no guardados/);
-	assert.match(page.html, /Maybe saved/);
+	const procedures = sectionOf(page.html);
+	assert.match(procedures, /Valores enviados del procedimiento/);
+	assert.match(procedures, /No se pudo confirmar si estos valores se guardaron\. No se reenviarán automáticamente\. Copialos y revisá el registro antes de volver a intentarlo\./);
+	assert.doesNotMatch(procedures, /Estos valores no se guardaron/);
+	assert.match(procedures, /Maybe saved/);
 });
 
 test('D4 a rejected edit keeps the typed text in that entry only, with the stored version', async () => {
@@ -367,7 +370,11 @@ test('D4 an uncertain edit shows the reload copy and lists the typed text as uns
 	});
 	assert.match(page.html, new RegExp(UNCERTAIN_CHANGE));
 	assert.doesNotMatch(formOf(page.html, 'procedure-edit-21'), /Maybe changed/);
-	assert.match(page.html, /Maybe changed/);
+	const procedures = sectionOf(page.html);
+	assert.match(procedures, /Valores enviados del procedimiento/);
+	assert.match(procedures, /No se pudo confirmar si estos valores se guardaron\. No se reenviarán automáticamente\. Copialos y revisá el registro antes de volver a intentarlo\./);
+	assert.doesNotMatch(procedures, /Estos valores no se guardaron/);
+	assert.match(procedures, /Maybe changed/);
 });
 
 test('D4 an approved rejection shows the approved copy and the entry is no longer editable', async () => {
