@@ -143,7 +143,7 @@ export function hygieneTextareaText(value: string): string {
 	return `\n${value}`;
 }
 
-function sameLines(a: string, b: string): boolean {
+export function sameLines(a: string, b: string): boolean {
 	const lines = (text: string) => text.replace(/\r\n|\r/g, '\n');
 	return lines(a) === lines(b);
 }
@@ -378,12 +378,20 @@ function safeError(error: ApiError, notFound: string = HYGIENE_COPY.draftUnavail
 }
 
 /** A typed rejection proves nothing was stored; any other failure after a write may have committed. */
-function isTyped(error: unknown): error is ApiError {
+export function isTyped(error: unknown): error is ApiError {
 	return error instanceof ApiError && error.status < 500 && ![408, 429].includes(error.status);
 }
 
 function readFailure(error: unknown): string {
 	return error instanceof ApiError && error.status < 500 ? safeError(error) : HYGIENE_COPY.readFailure;
+}
+
+/** Read failure of an assignment or draft guard: 404 and 400 are unavailable, 401 and 403 keep their copy, anything else is unverified. */
+export function contextReadFailure(error: unknown): string {
+	if (!(error instanceof ApiError) || error.status >= 500) return HYGIENE_COPY.readFailure;
+	if (error.status === 401) return HYGIENE_COPY.session;
+	if (error.status === 403) return HYGIENE_COPY.forbidden;
+	return HYGIENE_COPY.draftUnavailable;
 }
 
 function pagination(input: Record<string, unknown>): { page: ActiveAssignment['page']; filters: ActiveAssignment['filters'] } | null {
@@ -394,7 +402,7 @@ function pagination(input: Record<string, unknown>): { page: ActiveAssignment['p
 }
 
 /** The assignment must still be active in the caller's own list; the backend re-checks every write. */
-async function activeAssignment(input: Record<string, unknown>, cookies: AstroCookies): Promise<ActiveAssignment | null> {
+export async function activeAssignment(input: Record<string, unknown>, cookies: AstroCookies): Promise<ActiveAssignment | null> {
 	const selected = pagination(input);
 	if (!selected || !validId(input.assignment_id)) return null;
 	const list = await listAssignedPatients(selected.page, cookies, selected.filters);
@@ -406,7 +414,7 @@ function contextOf(assignment: AssignedPatient): HygieneContext {
 	return { patient_id: assignment.patient_id, subject_id: assignment.subject_id, academic_group_id: assignment.academic_group_id };
 }
 
-function sameContext(draft: HygieneDraft, assignment: AssignedPatient): boolean {
+export function sameContext(draft: HygieneDraft, assignment: AssignedPatient): boolean {
 	return draft.patient_id === assignment.patient_id
 		&& draft.origin_subject_id === assignment.subject_id
 		&& draft.origin_group_id === assignment.academic_group_id;
@@ -417,7 +425,7 @@ function isUuid(value: unknown): value is string {
 }
 
 /** Editor coordinates: list filters are carried only when the form posted them. */
-function returnCoordinates(input: Record<string, unknown>, active: ActiveAssignment) {
+export function returnCoordinates(input: Record<string, unknown>, active: ActiveAssignment) {
 	return {
 		assignment_id: active.assignment.id,
 		limit: String(active.page.limit),

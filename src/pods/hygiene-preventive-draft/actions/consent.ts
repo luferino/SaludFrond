@@ -1,8 +1,8 @@
 import type { AstroCookies } from 'astro';
 import { ApiError } from '../../../shared/apiClient';
-import { listAssignedPatients, type AssignedPatient, type AssignmentListingFilters } from '../../patient-assignment/api';
-import { parseAssignmentActionCoordinates } from '../../patient-assignment/list-coordinates';
-import { declareHygieneConsent, getHygieneDraft, validId, type HygieneConsentDeclaration, type HygieneDraft, type HygieneSignerInput } from '../api';
+import type { AssignmentListingFilters } from '../../patient-assignment/api';
+import { declareHygieneConsent, getHygieneDraft, validId, type HygieneConsentDeclaration, type HygieneSignerInput } from '../api';
+import { activeAssignment, contextReadFailure, isTyped, returnCoordinates, sameContext, type ActiveAssignment } from './drafts';
 
 /** Spanish copy for the paper consent section (D3) and the dirty notice (D4). Uncertain outcomes never claim that nothing was stored. */
 export const HYGIENE_CONSENT_COPY = {
@@ -18,7 +18,6 @@ export const HYGIENE_CONSENT_COPY = {
 	session: 'Tu sesión venció. Iniciá sesión nuevamente.',
 	badRequest: 'Revisá los datos del consentimiento.',
 	generic: 'No se pudo completar la acción. Intentá nuevamente más tarde.',
-	readFailure: 'No se pudo verificar el borrador. No se guardó ni se envió nada.',
 	uncertain: 'No se pudo confirmar la declaración. Recargá la página y revisá el historial antes de volver a intentarlo.',
 	unsavedDraft: 'Hay cambios sin guardar en el borrador. Guardalos antes de declarar el consentimiento o registrar procedimientos.',
 } as const;
@@ -31,7 +30,6 @@ export interface ConsentValues { signer: string; signer_name: string; signer_doc
 export interface DeclareSuccess { success: true; id: string; assignment_id: string; limit: string; offset: string; list_filters?: AssignmentListingFilters; declaration: HygieneConsentDeclaration }
 export interface DeclareFailure { success: false; uncertain: boolean; error: string; values: ConsentValues }
 export type DeclareResult = DeclareSuccess | DeclareFailure;
-interface ActiveAssignment { assignment: AssignedPatient; page: { limit: number; offset: number }; filters: AssignmentListingFilters }
 
 function textOf(value: unknown): string {
 	return typeof value === 'string' ? value : '';
@@ -54,11 +52,6 @@ function signerBody(input: Record<string, unknown>): { ok: true; body: HygieneSi
 	return { ok: true, body: { signer: 'parent', signer_name: name, signer_document: document } };
 }
 
-/** A typed rejection proves nothing was stored; any other failure after the POST may have committed. */
-function isTyped(error: unknown): error is ApiError {
-	return error instanceof ApiError && error.status < 500 && ![408, 429].includes(error.status);
-}
-
 function rejectionCopy(error: ApiError): string {
 	if (error.status === 401) return HYGIENE_CONSENT_COPY.session;
 	if (error.status === 403) return HYGIENE_CONSENT_COPY.forbidden;
@@ -69,34 +62,6 @@ function rejectionCopy(error: ApiError): string {
 	if (error.message.startsWith('signer_name must be')) return HYGIENE_CONSENT_COPY.signerName;
 	if (error.message === 'signer_name and signer_document are only accepted for a parent signer') return HYGIENE_CONSENT_COPY.patientWithData;
 	return HYGIENE_CONSENT_COPY.badRequest;
-}
-
-function readFailure(error: unknown): string {
-	if (!(error instanceof ApiError) || error.status >= 500) return HYGIENE_CONSENT_COPY.readFailure;
-	if (error.status === 401) return HYGIENE_CONSENT_COPY.session;
-	if (error.status === 403) return HYGIENE_CONSENT_COPY.forbidden;
-	return HYGIENE_CONSENT_COPY.draftUnavailable;
-}
-
-/** The assignment must still be active in the caller's own list; the backend re-checks the write. */
-async function activeAssignment(input: Record<string, unknown>, cookies: AstroCookies): Promise<ActiveAssignment | null> {
-	let selected: { page: { limit: number; offset: number }; filters: AssignmentListingFilters };
-	try {
-		const coordinates = parseAssignmentActionCoordinates(input, true);
-		selected = { page: { limit: coordinates.limit, offset: coordinates.offset }, filters: coordinates.filters };
-	} catch {
-		return null;
-	}
-	if (!validId(input.assignment_id)) return null;
-	const list = await listAssignedPatients(selected.page, cookies, selected.filters);
-	const assignment = list.items.find((item) => item.id === input.assignment_id && item.ended_at === null);
-	return assignment ? { assignment, page: selected.page, filters: selected.filters } : null;
-}
-
-function sameContext(draft: HygieneDraft, assignment: AssignedPatient): boolean {
-	return draft.patient_id === assignment.patient_id
-		&& draft.origin_subject_id === assignment.subject_id
-		&& draft.origin_group_id === assignment.academic_group_id;
 }
 
 /**
@@ -119,16 +84,11 @@ export async function handleDeclareHygieneConsent(input: Record<string, unknown>
 		if (!sameContext(draft, active.assignment)) return failure(HYGIENE_CONSENT_COPY.draftUnavailable);
 		current = active;
 	} catch (error) {
-		return failure(readFailure(error));
+		return failure(contextReadFailure(error));
 	}
 	try {
 		const declaration = await declareHygieneConsent(id, signer.body, context.cookies);
-		return {
-			success: true, id, assignment_id: current.assignment.id,
-			limit: String(current.page.limit), offset: String(current.page.offset),
-			...(Object.keys(input).some((key) => key.startsWith('list_')) ? { list_filters: current.filters } : {}),
-			declaration,
-		};
+		return { success: true, id, ...returnCoordinates(input, current), declaration };
 	} catch (error) {
 		if (isTyped(error)) return failure(rejectionCopy(error));
 		return failure(HYGIENE_CONSENT_COPY.uncertain, true);

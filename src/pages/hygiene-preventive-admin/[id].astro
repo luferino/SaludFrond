@@ -3,9 +3,10 @@ export const prerender = false;
 import Layout from '../../layouts/Layout.astro';
 import HygieneReadOnly from '../../components/clinical/HygieneReadOnly.astro';
 import HygieneConsentHistory from '../../components/clinical/HygieneConsentHistory.astro';
-import type { HygieneConsentHistory as ConsentHistory, HygieneDraft } from '../../pods/hygiene-preventive-draft/api';
+import HygieneProcedureLog from '../../components/clinical/HygieneProcedureLog.astro';
+import type { HygieneConsentHistory as ConsentHistory, HygieneDraft, HygieneProcedure } from '../../pods/hygiene-preventive-draft/api';
 import { ApiError } from '../../shared/apiClient';
-import { getHygieneConsent, getHygieneDraft, validId } from '../../pods/hygiene-preventive-draft/api';
+import { getHygieneConsent, getHygieneDraft, listHygieneProcedures, validId } from '../../pods/hygiene-preventive-draft/api';
 import { hygieneAdminGrant, hygieneAdminQuery, parseHygieneAdminListing } from '../../pods/hygiene-preventive-draft/admin';
 import { hygieneTimestampLabel } from '../../pods/hygiene-preventive-draft/labels';
 
@@ -25,6 +26,8 @@ let error = '';
 let forbidden = false;
 let consent: ConsentHistory | null = null;
 let consentError = '';
+let procedures: HygieneProcedure[] | null = null;
+let procedureError = '';
 if (allowed) {
 	if (!validId(id)) {
 		error = UNAVAILABLE;
@@ -47,6 +50,12 @@ if (draft) {
 		if (failure instanceof ApiError && failure.status === 401) return Astro.redirect(`/auth/login?returnTo=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`);
 		consentError = 'No se pudo cargar el consentimiento. El borrador se muestra igual; intentá recargar la página.';
 	}
+	try {
+		procedures = await listHygieneProcedures(id, Astro.cookies);
+	} catch (failure) {
+		if (failure instanceof ApiError && failure.status === 401) return Astro.redirect(`/auth/login?returnTo=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`);
+		procedureError = 'No se pudo cargar el registro de procedimientos. El borrador se muestra igual; intentá recargar la página.';
+	}
 }
 ---
 <Layout>
@@ -67,6 +76,10 @@ if (draft) {
 			<section aria-labelledby="consent-title">
 				<h2 id="consent-title">Consentimiento en papel</h2>
 				{consentError ? <p role="alert">{consentError}</p> : consent && <HygieneConsentHistory consent={consent} />}
+			</section>
+			<section aria-labelledby="procedures-title">
+				<h2 id="procedures-title">Registro de procedimientos</h2>
+				{procedureError ? <p role="alert">{procedureError}</p> : procedures && <HygieneProcedureLog procedures={procedures} />}
 			</section>
 		</>}
 	</main>

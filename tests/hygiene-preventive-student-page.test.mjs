@@ -55,6 +55,7 @@ async function renderEditor(options = {}) {
 	const drafts = await importModule('src/pods/hygiene-preventive-draft/actions/drafts.ts');
 	const hygieneApi = await importModule('src/pods/hygiene-preventive-draft/api.ts');
 	const consentModule = await importModule('src/pods/hygiene-preventive-draft/actions/consent.ts');
+	const procedureModule = await importModule('src/pods/hygiene-preventive-draft/actions/procedures.ts');
 	const labels = await importModule('src/pods/hygiene-preventive-draft/labels.ts');
 	const odontogram = await importModule('src/pods/hygiene-preventive-draft/odontogram.ts');
 	const apiClient = await importModule('src/shared/apiClient.ts');
@@ -63,6 +64,7 @@ async function renderEditor(options = {}) {
 	const clinicalListing = await importModule('src/pods/kinesiology-evolution/listing.ts');
 	const reads = [];
 	const consentReads = [];
+	const procedureReads = [];
 	const actionStub = Object.assign(() => undefined, { toString: () => SAVE_URL });
 	const actor = options.actor ?? student();
 	const token = 'session-token';
@@ -75,10 +77,22 @@ async function renderEditor(options = {}) {
 	};
 	const plaqueProps = [];
 	const mocks = {
-		...hygieneApi, ...drafts, ...labels, ...odontogram, ...consentModule,
-		actions: { updateHygieneDraft: actionStub, declareHygieneConsent: Object.assign(() => undefined, { toString: () => '/_actions/declareHygieneConsent' }) },
+		...hygieneApi, ...drafts, ...labels, ...odontogram, ...consentModule, ...procedureModule,
+		actions: {
+			updateHygieneDraft: actionStub,
+			declareHygieneConsent: Object.assign(() => undefined, { toString: () => '/_actions/declareHygieneConsent' }),
+			createHygieneProcedure: Object.assign(() => undefined, { toString: () => '/_actions/createHygieneProcedure' }),
+			updateHygieneProcedure: Object.assign(() => undefined, { toString: () => '/_actions/updateHygieneProcedure' }),
+			deleteHygieneProcedure: Object.assign(() => undefined, { toString: () => '/_actions/deleteHygieneProcedure' }),
+		},
 		HygienePlaqueFields: (_astro, props) => { plaqueProps.push(props); return '<div data-plaque-fields></div>'; },
 		HygieneConsentHistory: () => '<div data-consent-history></div>',
+		HygieneProcedureLog: () => '<ol data-procedure-log></ol>',
+		listHygieneProcedures: async (draftId) => {
+			procedureReads.push(draftId);
+			if (options.procedureStatus) throw new apiClient.ApiError(options.procedureStatus, 'backend message');
+			return [];
+		},
 		getHygieneConsent: async (draftId) => {
 			consentReads.push(draftId);
 			if (options.consentStatus) throw new apiClient.ApiError(options.consentStatus, 'expired');
@@ -116,7 +130,7 @@ async function renderEditor(options = {}) {
 	new Function('exports', ...Object.keys(mocks), output)(exports, ...Object.values(mocks));
 	// The compiler adds a scoped `astro-*` class to styled elements; assertions read the page's own classes and attributes.
 	const rendered = (await html(exports.default({ createAstro: () => Astro }, {}, {}))).replace(/ class="astro-[a-z0-9]+"/g, '').replace(/ astro-[a-z0-9]+(?=")/g, '');
-	return { html: rendered, reads, consentReads, server, importModule, plaqueProps };
+	return { html: rendered, reads, consentReads, procedureReads, server, importModule, plaqueProps };
 }
 
 const count = (text, pattern) => (text.match(pattern) ?? []).length;
@@ -324,4 +338,14 @@ test('S3 a consent read failure is a section error and the editable draft still 
 	assert.match(page.html, /<button class="button" type="submit">Guardar borrador<\/button>/);
 	assert.match(page.html, /No se pudo cargar el consentimiento/);
 	assert.deepEqual(page.consentReads, [largeId]);
+});
+
+// S4: the procedure read is separate from the draft read; its failure never hides the editable draft.
+
+test('S4 a procedure read failure is a section error and the editable draft still renders', async () => {
+	const page = await renderEditor({ procedureStatus: 500 });
+	assert.match(page.html, /id="draft-form"/);
+	assert.match(page.html, /<button class="button" type="submit">Guardar borrador<\/button>/);
+	assert.match(page.html, /No se pudo cargar el registro de procedimientos/);
+	assert.deepEqual(page.procedureReads, [largeId]);
 });

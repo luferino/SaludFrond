@@ -57,6 +57,7 @@ const stubbedModules = {
   '../pods/hygiene-preventive-draft/actions/subjects': ['handleEnableHygieneSubject'],
   '../pods/hygiene-preventive-draft/actions/drafts': ['HYGIENE_FORM_FIELDS','HYGIENE_MARK_FIELDS','handleCreateHygieneDraft','handleUpdateHygieneDraft'],
   '../pods/hygiene-preventive-draft/actions/consent': ['handleDeclareHygieneConsent'],
+  '../pods/hygiene-preventive-draft/actions/procedures': ['handleCreateHygieneProcedure', 'handleUpdateHygieneProcedure', 'handleDeleteHygieneProcedure'],
 };
 
 /** `realModules` names stubbed specifiers the caller needs compiled for real (the Astro schema tests). */
@@ -67,11 +68,15 @@ export async function loadRegisteredActions(fetchImpl, { realModules = [] } = {}
     return fetchImpl(url, init);
   } });
   const cache = new Map();
-  async function compile(code, identifier) {
-    if (cache.has(identifier)) return cache.get(identifier);
+  // The cache holds the pending link, not the module: Node may ask for the same module from parallel links, and a module still
+  // linking must not be handed to a second link.
+  function compile(code, identifier) {
+    if (!cache.has(identifier)) cache.set(identifier, build(code, identifier));
+    return cache.get(identifier);
+  }
+  async function build(code, identifier) {
     const js = ts.transpileModule(code, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
     const mod = new vm.SourceTextModule(js, { context: sandbox, identifier, initializeImportMeta: (meta) => { meta.env = { PUBLIC_API_URL: 'https://backend.invalid', PROD: false }; } });
-    cache.set(identifier, mod);
     await mod.link(async (specifier, parent) => {
       if (specifier === 'astro:actions') return new vm.SyntheticModule(['defineAction'], function () { this.setExport('defineAction', (definition) => definition); }, { context: sandbox });
       if (specifier === 'astro/zod') return new vm.SyntheticModule(['z'], function () { this.setExport('z', z); }, { context: sandbox });

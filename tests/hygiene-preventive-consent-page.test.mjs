@@ -59,6 +59,7 @@ async function renderEditor(options = {}) {
 	const { server, importModule } = await loadRegisteredActions(async () => Response.json({}), { realModules: [draftsSpecifier, consentModulePath] });
 	const drafts = await importModule('src/pods/hygiene-preventive-draft/actions/drafts.ts');
 	const consentModule = await importModule(consentModulePath);
+	const procedureModule = await importModule('src/pods/hygiene-preventive-draft/actions/procedures.ts');
 	const hygieneApi = await importModule('src/pods/hygiene-preventive-draft/api.ts');
 	const labels = await importModule('src/pods/hygiene-preventive-draft/labels.ts');
 	const odontogram = await importModule('src/pods/hygiene-preventive-draft/odontogram.ts');
@@ -70,6 +71,7 @@ async function renderEditor(options = {}) {
 	const consentReads = [];
 	const saveStub = Object.assign(() => undefined, { toString: () => SAVE_URL });
 	const consentStub = Object.assign(() => undefined, { toString: () => CONSENT_URL });
+	const stubFor = (href) => Object.assign(() => undefined, { toString: () => href });
 	const actor = options.actor ?? student();
 	const Astro = {
 		params: { id: largeId }, url: new URL(options.url ?? EDIT_URL, 'https://fixture.invalid'),
@@ -79,8 +81,13 @@ async function renderEditor(options = {}) {
 		redirect: (location) => `REDIRECT:${location}`,
 	};
 	const mocks = {
-		...hygieneApi, ...drafts, ...labels, ...odontogram, ...consentModule,
-		actions: { updateHygieneDraft: saveStub, declareHygieneConsent: consentStub },
+		...hygieneApi, ...drafts, ...labels, ...odontogram, ...consentModule, ...procedureModule,
+		actions: {
+			updateHygieneDraft: saveStub, declareHygieneConsent: consentStub,
+			createHygieneProcedure: stubFor('/_actions/createHygieneProcedure'), updateHygieneProcedure: stubFor('/_actions/updateHygieneProcedure'), deleteHygieneProcedure: stubFor('/_actions/deleteHygieneProcedure'),
+		},
+		HygieneProcedureLog: () => '<ol data-procedure-log></ol>',
+		listHygieneProcedures: async () => [],
 		HygienePlaqueFields: () => '<div data-plaque-fields></div>',
 		HygieneConsentHistory: (_astro, props) => `<ol data-consent-history data-declarations="${props.consent.declarations.length}" data-current="${props.consent.current_declaration_id ?? ''}"></ol>`,
 		isInputError: (error) => error?.input === true,

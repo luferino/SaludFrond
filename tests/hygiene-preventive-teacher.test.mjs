@@ -109,6 +109,11 @@ const consentComponentPath = 'src/components/clinical/HygieneConsentHistory.astr
 const consentComponent = (...args) => compileAstro(consentComponentPath, {
  ...labels, ...helpers, Fragment: null, $$renderComponent: renderComponent,
 }).then((component) => component(...args));
+// S4: the shared procedure log, compiled the same way.
+const procedureComponentPath = 'src/components/clinical/HygieneProcedureLog.astro';
+const procedureComponent = (...args) => compileAstro(procedureComponentPath, {
+ ...labels, ...helpers, Fragment: null, $$renderComponent: renderComponent,
+}).then((component) => component(...args));
 
 /** Teacher list page with real hygiene discovery and reads; Kinesiology and Oral Surgery reads are recorded mocks. */
 async function renderList({ grants = [], hygieneRoutes = {}, oral = {} } = {}) {
@@ -151,7 +156,11 @@ async function renderList({ grants = [], hygieneRoutes = {}, oral = {} } = {}) {
 
 /** Teacher detail page: real draft read and read-only component, with the origin query as the only context. */
 async function renderDetail({ grants = [readGrant], hygieneRoutes = {}, search = query, pageId = id } = {}) {
- routes = { [`GET /hygiene-preventive-drafts/${pageId}/consent`]: { body: { current_declaration_id: null, declarations: [] } }, ...hygieneRoutes };
+ routes = {
+ [`GET /hygiene-preventive-drafts/${pageId}/consent`]: { body: { current_declaration_id: null, declarations: [] } },
+ [`GET /hygiene-preventive-drafts/${pageId}/procedures`]: { body: { items: [] } },
+ ...hygieneRoutes,
+ };
  calls = [];
  const headers = new Headers();
  const Astro = {
@@ -170,6 +179,8 @@ async function renderDetail({ grants = [readGrant], hygieneRoutes = {}, search =
   getHygieneDraft: hygieneApi.getHygieneDraft,
   getHygieneConsent: hygieneApi.getHygieneConsent,
   HygieneConsentHistory: consentComponent,
+  listHygieneProcedures: hygieneApi.listHygieneProcedures,
+  HygieneProcedureLog: procedureComponent,
   hygieneTimestampLabel: labels.hygieneTimestampLabel,
  parseAssignmentListCoordinates: () => ({ filters: {}, limit: 50, offset: 0 }),
   assignmentListQuery: () => 'limit=50&offset=0',
@@ -261,7 +272,7 @@ test('T4 a 401 from hygiene discovery redirects to login', async () => {
 test('D7 a matching origin renders the read-only draft with no-store and no form', async () => {
  const result = await renderDetail({ hygieneRoutes: { [`GET /hygiene-preventive-drafts/${id}`]: { body: draft() } } });
  assert.equal(result.cacheControl, 'no-store');
- assert.deepEqual(result.calls.map((call) => call.method), ['GET', 'GET']);
+ assert.deepEqual(result.calls.map((call) => call.method), ['GET', 'GET', 'GET']);
  assert.match(result.html, /Higiene y Preventiva II · consulta docente/);
  assert.match(result.html, /Losartán/);
  assert.doesNotMatch(result.html, /<form|method="POST"/);
@@ -367,7 +378,7 @@ test('S3 the detail shows the consent history read-only, oldest first, with the 
  assert.ok(result.html.indexOf('Ana Pérez') < result.html.indexOf('Laura Pérez'), 'oldest first');
  assert.equal((result.html.match(/vigente/g) ?? []).length, 1);
  assert.doesNotMatch(result.html, /<form|method="POST"/);
- assert.deepEqual(result.calls.map((call) => call.path), [`/hygiene-preventive-drafts/${id}`, `/hygiene-preventive-drafts/${id}/consent`]);
+ assert.deepEqual(result.calls.map((call) => call.path), [`/hygiene-preventive-drafts/${id}`, `/hygiene-preventive-drafts/${id}/consent`, `/hygiene-preventive-drafts/${id}/procedures`]);
 });
 
 test('S3 a consent read failure is a section error and the draft still renders', async () => {
@@ -379,5 +390,35 @@ test('S3 a consent read failure is a section error and the draft still renders',
 
 test('S3 a 401 on the consent read redirects to login', async () => {
  const result = await renderDetail({ hygieneRoutes: { [`GET /hygiene-preventive-drafts/${id}`]: { body: draft() }, ...consentRoute({ status: 401 }) } });
+ assert.equal(result.redirect, `/auth/login?returnTo=${encodeURIComponent(`/teacher-clinical/hygiene-preventive/${id}?${query}`)}`);
+});
+
+// S4: the procedure log is read-only for teachers; a failed read never hides the draft.
+
+const procedureRoute = (overrides) => ({ [`GET /hygiene-preventive-drafts/${id}/procedures`]: overrides });
+const procedureEntry = (overrides = {}) => ({
+ id: '21', draft_id: id, procedure_date: '2026-11-10', description: 'Profilaxis', author_id: author, student_name: 'Ana Pérez',
+ version: '4', approved_by: null, teacher_name: null, approved_at: null, created_at: iso, updated_at: iso, status: 'pending', ...overrides,
+});
+
+test('S4 the detail shows the procedure log read-only, in creation order, with no form', async () => {
+ const approved = procedureEntry({ id: '22', description: 'Destartraje', version: '5', approved_by: '77777777-7777-4777-8777-777777777777', teacher_name: 'Marta Gómez', approved_at: iso, status: 'approved' });
+ const result = await renderDetail({ hygieneRoutes: { [`GET /hygiene-preventive-drafts/${id}`]: { body: draft() }, ...procedureRoute({ body: { items: [procedureEntry(), approved] } }) } });
+ assert.match(result.html, /Registro de procedimientos/);
+ assert.ok(result.html.indexOf('Profilaxis') < result.html.indexOf('Destartraje'), 'creation order');
+ assert.match(result.html, /Pendiente/);
+ assert.match(result.html, /Aprobado por Marta Gómez/);
+ assert.doesNotMatch(result.html, /<form|method="POST"|<button/);
+});
+
+test('S4 a procedure read failure is a section error and the draft still renders', async () => {
+ const result = await renderDetail({ hygieneRoutes: { [`GET /hygiene-preventive-drafts/${id}`]: { body: draft() }, ...procedureRoute({ status: 500 }) } });
+ assert.match(result.html, /Losartán/);
+ assert.match(result.html, /No se pudo cargar el registro de procedimientos/);
+ assert.doesNotMatch(result.html, /<form|method="POST"/);
+});
+
+test('S4 a 401 on the procedure read redirects to login', async () => {
+ const result = await renderDetail({ hygieneRoutes: { [`GET /hygiene-preventive-drafts/${id}`]: { body: draft() }, ...procedureRoute({ status: 401 }) } });
  assert.equal(result.redirect, `/auth/login?returnTo=${encodeURIComponent(`/teacher-clinical/hygiene-preventive/${id}?${query}`)}`);
 });

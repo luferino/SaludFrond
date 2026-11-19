@@ -1,0 +1,60 @@
+---
+import type { HygieneProcedure } from '../../pods/hygiene-preventive-draft/api';
+import type { ProcedureValues } from '../../pods/hygiene-preventive-draft/actions/procedures';
+import { HYGIENE_PROCEDURE_STATUS_LABELS, hygieneTimestampLabel } from '../../pods/hygiene-preventive-draft/labels';
+
+// Procedure log (S4, D4), shared by the student editor and the teacher and admin pages. Read-only unless `editing` is given:
+// then each pending entry gets the author's edit and delete forms. Approved entries never get forms. A teacher approval form
+// (T5) joins through its own prop in the same way.
+interface Editing {
+	updateHref: string;
+	deleteHref: string;
+	/** Hidden draft and list-coordinate fields every form carries. */
+	carriers: [string, string][];
+	/** Today in UTC: the date input's max. */
+	maxDate: string;
+	/** A rejected edit keeps the typed values in its own entry only; the other entries show what is stored. */
+	retained?: { procedureId: string; values: ProcedureValues };
+}
+interface Props { procedures: HygieneProcedure[]; editing?: Editing }
+const { procedures, editing } = Astro.props;
+const fieldsOf = (item: HygieneProcedure): ProcedureValues => (editing?.retained?.procedureId === item.id
+	? editing.retained.values
+	: { procedure_date: item.procedure_date, description: item.description });
+---
+<div class="hygiene-procedures">
+	{procedures.length === 0 ? <p>Todavía no hay procedimientos registrados.</p> : <ol class="entries">
+		{procedures.map((item) => <li>
+			<p><time datetime={item.procedure_date}>{item.procedure_date}</time></p>
+			<p class="description">{item.description}</p>
+			<p class="meta">Registrado por {item.student_name ?? 'autor no disponible'}</p>
+			{item.status === 'pending' ? <p class="status">{HYGIENE_PROCEDURE_STATUS_LABELS.pending}</p> : <p class="status">Aprobado por {item.teacher_name} · <time datetime={item.approved_at ?? undefined}>{item.approved_at ? hygieneTimestampLabel(item.approved_at) : ''}</time></p>}
+			{editing && item.status === 'pending' && <>
+				<form method="POST" action={editing.updateHref} id={`procedure-edit-${item.id}`} data-procedure-form>
+					{editing.carriers.map(([name, value]) => <input type="hidden" name={name} value={value} />)}
+					<input type="hidden" name="procedure_id" value={item.id} />
+					<input type="hidden" name="expected_version" value={item.version} />
+					<label>Fecha del procedimiento <input type="date" name="procedure_date" max={editing.maxDate} value={fieldsOf(item).procedure_date} required /></label>
+					{/* The parser drops one line break right after <textarea>, so the stored text starts on a new line, as hygieneTextareaText does. */}
+					<label>Descripción <textarea name="description" maxlength="1000" required>{`\n${fieldsOf(item).description}`}</textarea></label>
+					<button class="button" type="submit" data-procedure-submit>Guardar procedimiento</button>
+				</form>
+				<form method="POST" action={editing.deleteHref} id={`procedure-delete-${item.id}`} data-procedure-form data-confirm="¿Eliminar este procedimiento? No se puede deshacer.">
+					{editing.carriers.map(([name, value]) => <input type="hidden" name={name} value={value} />)}
+					<input type="hidden" name="procedure_id" value={item.id} />
+					<input type="hidden" name="expected_version" value={item.version} />
+					<button class="button secondary" type="submit" data-procedure-submit>Eliminar procedimiento</button>
+				</form>
+			</>}
+		</li>)}
+	</ol>}
+</div>
+<style>
+	.entries { display: grid; gap: 0.75rem; margin: 0; padding: 0; list-style: none; }
+	.entries li { padding: 0.75rem; border: 1px solid var(--line); border-radius: 0.5rem; }
+	.entries p { margin: 0 0 0.35rem; }
+	.description { white-space: pre-wrap; overflow-wrap: anywhere; }
+	.meta, .status { color: var(--muted); }
+	.entries form { display: grid; gap: 0.5rem; margin: 0.75rem 0 0; }
+	.entries label { display: grid; gap: 0.35rem; font-weight: 600; }
+</style>

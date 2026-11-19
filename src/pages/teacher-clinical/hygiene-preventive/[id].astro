@@ -3,9 +3,10 @@ export const prerender = false;
 import Layout from '../../../layouts/Layout.astro';
 import HygieneReadOnly from '../../../components/clinical/HygieneReadOnly.astro';
 import HygieneConsentHistory from '../../../components/clinical/HygieneConsentHistory.astro';
+import HygieneProcedureLog from '../../../components/clinical/HygieneProcedureLog.astro';
 import { ApiError } from '../../../shared/apiClient';
 import { parseClinicalContext, teacherGrant, type ClinicalContext } from '../../../pods/teacher-clinical/api';
-import { getHygieneConsent, getHygieneDraft, validId, type HygieneConsentHistory as ConsentHistory, type HygieneDraft } from '../../../pods/hygiene-preventive-draft/api';
+import { getHygieneConsent, getHygieneDraft, listHygieneProcedures, validId, type HygieneConsentHistory as ConsentHistory, type HygieneDraft, type HygieneProcedure } from '../../../pods/hygiene-preventive-draft/api';
 import { hygieneTimestampLabel } from '../../../pods/hygiene-preventive-draft/labels';
 import { assignmentListQuery, parseAssignmentListCoordinates } from '../../../pods/patient-assignment/list-coordinates';
 
@@ -18,6 +19,8 @@ let draft: HygieneDraft | null = null;
 let error = '';
 let consent: ConsentHistory | null = null;
 let consentError = '';
+let procedures: HygieneProcedure[] | null = null;
+let procedureError = '';
 // Origin guard first: an invalid or foreign context never renders the draft.
 let selected: ClinicalContext | null = null;
 try { selected = parseClinicalContext(Astro.url.searchParams); } catch { selected = null; }
@@ -44,6 +47,12 @@ if (draft) {
  } catch (failure) {
   if (failure instanceof ApiError && failure.status === 401) return Astro.redirect(`/auth/login?returnTo=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`);
   consentError = 'No se pudo cargar el consentimiento. El borrador se muestra igual; intentá recargar la página.';
+ }
+ try {
+  procedures = await listHygieneProcedures(id, Astro.cookies);
+ } catch (failure) {
+  if (failure instanceof ApiError && failure.status === 401) return Astro.redirect(`/auth/login?returnTo=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`);
+  procedureError = 'No se pudo cargar el registro de procedimientos. El borrador se muestra igual; intentá recargar la página.';
  }
 }
 // Back link keeps the list coordinates and the selected assignment, like the Oral Surgery detail.
@@ -74,6 +83,10 @@ try {
    <section aria-labelledby="consent-title">
     <h2 id="consent-title">Consentimiento en papel</h2>
     {consentError ? <p role="alert">{consentError}</p> : consent && <HygieneConsentHistory consent={consent} />}
+   </section>
+   <section aria-labelledby="procedures-title">
+    <h2 id="procedures-title">Registro de procedimientos</h2>
+    {procedureError ? <p role="alert">{procedureError}</p> : procedures && <HygieneProcedureLog procedures={procedures} />}
    </section>
   </>}
  </main>

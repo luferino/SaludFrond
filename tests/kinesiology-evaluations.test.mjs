@@ -115,6 +115,7 @@ async function evaluate(path, options = {}) {
      '../pods/hygiene-preventive-draft/actions/subjects': ['handleEnableHygieneSubject'],
      '../pods/hygiene-preventive-draft/actions/drafts': ['HYGIENE_FORM_FIELDS', 'HYGIENE_MARK_FIELDS', 'handleCreateHygieneDraft', 'handleUpdateHygieneDraft'],
      '../pods/hygiene-preventive-draft/actions/consent': ['handleDeclareHygieneConsent'],
+     '../pods/hygiene-preventive-draft/actions/procedures': ['handleCreateHygieneProcedure', 'handleUpdateHygieneProcedure', 'handleDeleteHygieneProcedure'],
     };
     return new vm.SyntheticModule(exports[specifier], function () { for (const n of exports[specifier]) this.setExport(n, ['ORAL_SURGERY_FORM_FIELDS', 'OPERATIVE_REPORT_FORM_FIELDS', 'PRACTICAL_EVALUATION_FORM_FIELDS', 'HYGIENE_FORM_FIELDS', 'HYGIENE_MARK_FIELDS'].includes(n) ? [] : () => undefined); }, { context: sandbox });
    }
