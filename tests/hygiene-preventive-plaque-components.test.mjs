@@ -141,6 +141,15 @@ test('D1 the editor is script-free and its styles keep narrow screens from widen
 	assert.match(source, /overflow-x:\s*auto/);
 });
 
+test('the plaque table keeps readable cells and exposes a keyboard-accessible scroll region', async () => {
+	const out = await renderEditor({ values: {}, stored: plaqueStored, editable: true });
+	assert.match(out, /role="region"[^>]*aria-labelledby="plaque-loe-title"[^>]*tabindex="0"/);
+	assert.match(out, /Desplazá la tabla horizontalmente para ver todos los sitios\./);
+	const source = await readFile(new URL(editorPage, root), 'utf8');
+	assert.match(source, /table\s*\{[^}]*inline-size:\s*max-content/);
+	assert.match(source, /th, td\s*\{[^}]*white-space:\s*nowrap/);
+});
+
 // D8 pattern read-only plaque section after Índices (D4 teacher and admin view).
 
 test('the read-only plaque section follows Índices and lists recorded Löe-Silness teeth with their graded sites and the average', async () => {

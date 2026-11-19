@@ -8,7 +8,9 @@ import { ApiError } from '../../../shared/apiClient';
 import { parseClinicalContext, teacherGrant, type ClinicalContext } from '../../../pods/teacher-clinical/api';
 import { getHygieneConsent, getHygieneDraft, listHygieneProcedures, validId, type HygieneConsentHistory as ConsentHistory, type HygieneDraft, type HygieneProcedure } from '../../../pods/hygiene-preventive-draft/api';
 import { hygieneTimestampLabel } from '../../../pods/hygiene-preventive-draft/labels';
-import { assignmentListQuery, parseAssignmentListCoordinates } from '../../../pods/patient-assignment/list-coordinates';
+import { assignmentListCarrier, assignmentListQuery, parseAssignmentListCoordinates } from '../../../pods/patient-assignment/list-coordinates';
+import { actionHrefWithContext } from '../../../pods/kinesiology-evaluation/api';
+import { actions, isInputError } from 'astro:actions';
 
 Astro.response.headers.set('Cache-Control', 'no-store');
 const UNAVAILABLE = 'El borrador no está disponible en este contexto de origen.';
@@ -21,6 +23,45 @@ let consent: ConsentHistory | null = null;
 let consentError = '';
 let procedures: HygieneProcedure[] | null = null;
 let procedureError = '';
+// Approval copy (D5), page-side. The action owns the typed outcomes; these are the page's own states.
+const APPROVAL_FORM_INPUT = 'Revisá los datos de la aprobación.';
+const APPROVAL_UNCERTAIN = 'No se pudo confirmar la aprobación. Recargá la página y revisá el registro antes de volver a intentarlo.';
+const loginRedirect = `/auth/login?returnTo=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`;
+// The assignment choice and the list state of this page, carried through an approval so its redirect keeps them.
+function pageCarriers(): [string, string][] {
+ const carried: [string, string][] = [];
+ const choices = Astro.url.searchParams.getAll('assignment_id');
+ if (choices.length === 1 && /^[1-9]\d{0,18}$/.test(choices[0])) carried.push(['assignment_id', choices[0]]);
+ if ([...Astro.url.searchParams.keys()].some((key) => key.startsWith('list_'))) {
+  try {
+   carried.push(...Object.entries(assignmentListCarrier(parseAssignmentListCoordinates(Astro.url.searchParams, true))));
+  } catch {
+   // An invalid list state is not carried; the detail keeps the origin context alone.
+  }
+ }
+ return carried;
+}
+// Approval result (S5): success redirects with the origin context and approved=1 before any read.
+const approvalResult = Astro.getActionResult(actions.approveHygieneProcedure);
+const approvalData = approvalResult?.data;
+if (approvalData?.success) {
+ const returnParams = new URLSearchParams({ patient_id: approvalData.patient_id, subject_id: approvalData.subject_id, academic_group_id: approvalData.academic_group_id });
+ for (const [key, value] of pageCarriers()) returnParams.set(key, value);
+ returnParams.set('approved', '1');
+ return Astro.redirect(`/teacher-clinical/hygiene-preventive/${encodeURIComponent(approvalData.id)}?${returnParams}`);
+}
+const approvalFailure = approvalData?.success === false ? approvalData : undefined;
+let approvalError = approvalFailure?.error ?? '';
+// An uncertain approval may have been stored: no approve form until a reload shows the entry as it is.
+let approvalUncertain = approvalFailure?.uncertain ?? false;
+if (approvalResult?.error) {
+ approvalUncertain = !isInputError(approvalResult.error);
+ approvalError = approvalUncertain ? APPROVAL_UNCERTAIN : APPROVAL_FORM_INPUT;
+}
+if (/sesión venció/i.test(approvalError)) return Astro.redirect(loginRedirect);
+// Presentation hint only: the backend checks the approve grant on every request.
+const canApprove = teacherGrant(Astro.cookies, 'hygiene-preventive-drafts:approve');
+
 // Origin guard first: an invalid or foreign context never renders the draft.
 let selected: ClinicalContext | null = null;
 try { selected = parseClinicalContext(Astro.url.searchParams); } catch { selected = null; }
@@ -55,6 +96,13 @@ if (draft) {
   procedureError = 'No se pudo cargar el registro de procedimientos. El borrador se muestra igual; intentá recargar la página.';
  }
 }
+// Approval controls (D5): only with the approve grant, for a loaded draft and log, and not after an uncertain outcome.
+const approval = draft && procedures && canApprove && !approvalUncertain ? {
+ href: actionHrefWithContext(actions.approveHygieneProcedure.toString(), { patient_id: draft.patient_id, subject_id: draft.origin_subject_id, academic_group_id: draft.origin_group_id }, Astro.url.href),
+ carriers: [['id', draft.id], ['patient_id', draft.patient_id], ['subject_id', draft.origin_subject_id], ['academic_group_id', draft.origin_group_id], ...pageCarriers()] as [string, string][],
+} : undefined;
+const approvalHint = !!draft && !!procedures && !canApprove && procedures.some((item) => item.status === 'pending');
+const approvedNotice = Astro.url.searchParams.get('approved') === '1';
 // Back link keeps the list coordinates and the selected assignment, like the Oral Surgery detail.
 let returnToList = '/teacher-clinical';
 try {
@@ -86,10 +134,32 @@ try {
    </section>
    <section aria-labelledby="procedures-title">
     <h2 id="procedures-title">Registro de procedimientos</h2>
-    {procedureError ? <p role="alert">{procedureError}</p> : procedures && <HygieneProcedureLog procedures={procedures} />}
+    {approvedNotice && <p role="status">Procedimiento aprobado.</p>}
+    {approvalError && <p role="alert">{approvalError}</p>}
+    {procedureError ? <p role="alert">{procedureError}</p> : procedures && <>
+     {approvalHint && <p role="status">Tu sesión no tiene permiso para aprobar procedimientos. Si el permiso se otorgó hace poco, cerrá sesión y volvé a ingresar.</p>}
+     <HygieneProcedureLog procedures={procedures} approval={approval} />
+    </>}
    </section>
   </>}
  </main>
+ <script>
+  // Each approval posts once: a second submit is ignored while the first is in flight (D5).
+  for (const approvalForm of document.querySelectorAll<HTMLFormElement>('[data-approval-form]')) {
+   approvalForm.addEventListener('submit', (event) => {
+    if (approvalForm.dataset.submitting === 'true') {
+     event.preventDefault();
+     return;
+    }
+    approvalForm.dataset.submitting = 'true';
+    const button = approvalForm.querySelector<HTMLButtonElement>('button');
+    if (button) {
+     button.disabled = true;
+     button.textContent = 'Aprobando…';
+    }
+   });
+  }
+ </script>
 </Layout>
 <style>
  main { max-width: 58rem; margin: auto; padding: 1.5rem 0 3rem; overflow-wrap: anywhere; color: var(--ink); }

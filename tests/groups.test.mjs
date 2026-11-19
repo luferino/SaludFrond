@@ -126,6 +126,7 @@ async function evaluateRegistry() {
 		'../pods/hygiene-preventive-draft/actions/drafts': ['HYGIENE_FORM_FIELDS', 'HYGIENE_MARK_FIELDS', 'handleCreateHygieneDraft', 'handleUpdateHygieneDraft'],
 		'../pods/hygiene-preventive-draft/actions/consent': ['handleDeclareHygieneConsent'],
 		'../pods/hygiene-preventive-draft/actions/procedures': ['handleCreateHygieneProcedure', 'handleUpdateHygieneProcedure', 'handleDeleteHygieneProcedure'],
+		'../pods/hygiene-preventive-draft/actions/approval': ['handleApproveHygieneProcedure'],
 		'../pods/kinesiology-evaluation/actions/evaluations': ['handleCreateKinesiologyEvaluation', 'handleUpdateKinesiologyEvaluation', 'handleSubmitKinesiologyEvaluation', 'handleCreateKinesiologyAmendment'],
 	};
 	const sandbox = vm.createContext({});

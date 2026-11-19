@@ -38,7 +38,8 @@ const olearyResult = oleary ? (oleary.percentage === null || oleary.percentage =
 	<p class="hint">Löe-Silness: calificá cada sitio de 0 a 3; un sitio sin calificar no cuenta. O'Leary: marcá la pieza como evaluada y sus superficies teñidas.</p>
 	<section class="index" aria-labelledby="plaque-loe-title">
 		<h3 id="plaque-loe-title">{HYGIENE_PLAQUE_SECTION_LABELS.loe_silness}</h3>
-		<div class="table-wrap">
+		<p class="table-hint" id="plaque-scroll-hint">Desplazá la tabla horizontalmente para ver todos los sitios.</p>
+		<div class="table-wrap" role="region" aria-labelledby="plaque-loe-title" tabindex="0" aria-describedby="plaque-scroll-hint">
 			<table>
 				<thead>
 					<tr>
@@ -91,8 +92,12 @@ const olearyResult = oleary ? (oleary.percentage === null || oleary.percentage =
 	.index h3 { margin: 0.5rem 0 0.25rem; }
 	.index h4 { margin: 0.6rem 0 0.25rem; font-size: 0.85rem; color: var(--muted); }
 	.table-wrap { min-inline-size: 0; max-inline-size: 100%; overflow-x: auto; }
-	table { border-collapse: collapse; }
-	th, td { padding: 0.25rem 0.5rem; text-align: start; vertical-align: middle; }
+	/* Keep tooth numbers and site headings readable; overflow belongs to the region, not the page. */
+	table { border-collapse: collapse; inline-size: max-content; }
+	th, td { padding: 0.25rem 0.5rem; text-align: start; vertical-align: middle; white-space: nowrap; }
+	.table-wrap:focus-visible { outline: 2px solid var(--rust); outline-offset: 2px; }
+	.table-hint { display: none; color: var(--muted); font-size: 0.85rem; }
+	@media (max-width: 600px) { .table-hint { display: block; } }
 	select { inline-size: auto; }
 	.teeth { display: grid; grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr)); gap: 0.5rem; min-inline-size: 0; }
 	.tooth { min-inline-size: 0; margin: 0; padding: 0.4rem 0.6rem; border: 1px solid var(--field-line); border-radius: 8px; }
