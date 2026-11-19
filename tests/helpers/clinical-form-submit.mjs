@@ -54,6 +54,7 @@ const stubbedModules = {
   '../pods/oral-surgery-draft/actions/authorizations': ['handleAuthorizeOralSurgeryDraft'],
   '../pods/oral-surgery-draft/actions/operative-report': ['OPERATIVE_REPORT_FORM_FIELDS','handleCloseOperativeReport','handleSaveOperativeReport'],
   '../pods/oral-surgery-draft/actions/practical-evaluation': ['PRACTICAL_EVALUATION_FORM_FIELDS','handleCorrectPracticalEvaluation','handleGradePracticalEvaluation'],
+  '../pods/hygiene-preventive-draft/actions/subjects': ['handleEnableHygieneSubject'],
 };
 
 export async function loadRegisteredActions(fetchImpl) {

@@ -29,6 +29,7 @@ import { ORAL_SURGERY_FORM_FIELDS, handleCreateOralSurgeryDraft, handleDeclareOr
 import { handleAuthorizeOralSurgeryDraft } from '../pods/oral-surgery-draft/actions/authorizations';
 import { OPERATIVE_REPORT_FORM_FIELDS, handleCloseOperativeReport, handleSaveOperativeReport } from '../pods/oral-surgery-draft/actions/operative-report';
 import { PRACTICAL_EVALUATION_FORM_FIELDS, handleCorrectPracticalEvaluation, handleGradePracticalEvaluation } from '../pods/oral-surgery-draft/actions/practical-evaluation';
+import { handleEnableHygieneSubject } from '../pods/hygiene-preventive-draft/actions/subjects';
 
 const UUID_INPUT = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
 const ID_INPUT = z.string().regex(/^[1-9]\d{0,18}$/);
@@ -281,6 +282,11 @@ export const server = {
 			...Object.fromEntries(PRACTICAL_EVALUATION_FORM_FIELDS.map((name) => [name, z.string().optional()])),
 		}).strict(),
 		handler: handleCorrectPracticalEvaluation,
+	}),
+	enableHygieneSubject: defineAction({
+		accept: 'form',
+		input: z.object({ subject_id: UUID_INPUT, irreversible_confirmed: z.literal('on') }).strict(),
+		handler: handleEnableHygieneSubject,
 	}),
 	createPatient: defineAction({
 		accept: 'form',
