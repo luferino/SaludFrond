@@ -1,0 +1,70 @@
+---
+export const prerender = false;
+import Layout from '../../../layouts/Layout.astro';
+import HygieneReadOnly from '../../../components/clinical/HygieneReadOnly.astro';
+import { ApiError } from '../../../shared/apiClient';
+import { parseClinicalContext, teacherGrant, type ClinicalContext } from '../../../pods/teacher-clinical/api';
+import { getHygieneDraft, validId, type HygieneDraft } from '../../../pods/hygiene-preventive-draft/api';
+import { hygieneTimestampLabel } from '../../../pods/hygiene-preventive-draft/labels';
+import { assignmentListQuery, parseAssignmentListCoordinates } from '../../../pods/patient-assignment/list-coordinates';
+
+Astro.response.headers.set('Cache-Control', 'no-store');
+const UNAVAILABLE = 'El borrador no está disponible en este contexto de origen.';
+// Presentation hint only: the backend checks the read grant on every request. Teachers never write.
+const allowed = teacherGrant(Astro.cookies, 'hygiene-preventive-drafts:read');
+const id = Astro.params.id ?? '';
+let draft: HygieneDraft | null = null;
+let error = '';
+// Origin guard first: an invalid or foreign context never renders the draft.
+let selected: ClinicalContext | null = null;
+try { selected = parseClinicalContext(Astro.url.searchParams); } catch { selected = null; }
+if (allowed) {
+ if (!selected || !validId(id)) {
+  error = UNAVAILABLE;
+ } else {
+  try {
+   const loaded = await getHygieneDraft(id, Astro.cookies);
+   if (loaded.patient_id === selected.patient_id && loaded.origin_subject_id === selected.subject_id && loaded.origin_group_id === selected.academic_group_id) draft = loaded;
+   else error = UNAVAILABLE;
+  } catch (failure) {
+   if (failure instanceof ApiError && failure.status === 401) return Astro.redirect(`/auth/login?returnTo=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`);
+   error = failure instanceof ApiError && failure.status === 404 ? UNAVAILABLE
+    : failure instanceof ApiError && failure.status === 403 ? 'No tenés permiso vigente para consultar este borrador.'
+    : 'No se pudo cargar el borrador en este contexto de origen.';
+  }
+ }
+}
+// Back link keeps the list coordinates and the selected assignment, like the Oral Surgery detail.
+let returnToList = '/teacher-clinical';
+try {
+ const returnParams = new URLSearchParams(assignmentListQuery(parseAssignmentListCoordinates(Astro.url.searchParams, true)));
+ const choices = Astro.url.searchParams.getAll('assignment_id');
+ if (choices.length === 1 && /^[1-9]\d{0,18}$/.test(choices[0])) returnParams.set('assignment_id', choices[0]);
+ returnToList = `/teacher-clinical?${returnParams}`;
+} catch {
+ // An invalid list coordinate falls back to the first page of the teacher access.
+}
+---
+<Layout>
+ <main aria-labelledby="title">
+  <a href={returnToList}>Volver al acceso clínico docente</a>
+  <h1 id="title">Higiene y Preventiva II · consulta docente</h1>
+  {!allowed ? <p role="alert">No tenés permiso para consultar este borrador como docente.</p>
+  : error ? <p role="alert">{error}</p>
+  : draft && <>
+   <p>Consulta de solo lectura. Los docentes no editan borradores.</p>
+   <p>Paciente: {draft.patient_id}<br />Asignatura de origen: {draft.origin_subject_id}<br />Grupo de origen: {draft.origin_group_id}</p>
+   <p>Versión actual: {draft.version} · actualizado <time datetime={draft.updated_at}>{hygieneTimestampLabel(draft.updated_at)}</time></p>
+   <section aria-labelledby="content-title">
+    <h2 id="content-title">Contenido del borrador</h2>
+    <HygieneReadOnly content={draft.content} />
+   </section>
+  </>}
+ </main>
+</Layout>
+<style>
+ main { max-width: 58rem; margin: auto; padding: 1.5rem 0 3rem; overflow-wrap: anywhere; color: var(--ink); }
+ section { margin: 1rem 0; padding: 1rem; background: var(--paper); border: 1px solid var(--line); border-radius: 0.65rem; }
+ a { color: var(--rust-deep); text-decoration: underline; }
+ [role="alert"] { border: 1px solid var(--rust-line); padding: 1rem; background: var(--rust-soft); border-radius: 0.65rem; }
+</style>

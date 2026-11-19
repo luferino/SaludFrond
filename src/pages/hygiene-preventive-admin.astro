@@ -1,0 +1,74 @@
+---
+export const prerender = false;
+import Layout from '../layouts/Layout.astro';
+import type { HygieneDraft } from '../pods/hygiene-preventive-draft/api';
+import type { HygieneAdminListing } from '../pods/hygiene-preventive-draft/admin';
+import { ApiError } from '../shared/apiClient';
+import { listAllHygieneDrafts } from '../pods/hygiene-preventive-draft/api';
+import { hygieneAdminGrant, hygieneAdminPagination, hygieneAdminQuery, parseHygieneAdminListing } from '../pods/hygiene-preventive-draft/admin';
+import { hygieneTimestampLabel } from '../pods/hygiene-preventive-draft/labels';
+
+Astro.response.headers.set('Cache-Control', 'no-store');
+// Presentation hint: the backend re-checks the administrator grant on every read.
+const allowed = hygieneAdminGrant(Astro.cookies);
+let listing: HygieneAdminListing = { limit: 50, offset: 0 };
+let items: HygieneDraft[] = [];
+let error = '';
+let forbidden = false;
+let loaded = false;
+if (allowed) {
+	try {
+		listing = parseHygieneAdminListing(Astro.url.searchParams);
+	} catch {
+		error = 'La paginación no es válida.';
+	}
+	if (!error) {
+		try {
+			items = await listAllHygieneDrafts(Astro.cookies, listing);
+			loaded = true;
+		} catch (failure) {
+			if (failure instanceof ApiError && failure.status === 401) {
+				return Astro.redirect(`/auth/login?returnTo=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`);
+			}
+			if (failure instanceof ApiError && failure.status === 403) forbidden = true;
+			else error = 'No se pudieron cargar los borradores de Higiene y Preventiva II. Probá de nuevo más tarde.';
+		}
+	}
+}
+const { previousOffset, nextOffset } = hygieneAdminPagination(listing, loaded ? items.length : 0);
+const listQuery = hygieneAdminQuery(listing);
+---
+<Layout>
+	<main aria-labelledby="title">
+		<header>
+			<p class="eyebrow">Atención clínica / Consulta</p>
+			<h1 id="title">Higiene y Preventiva II · borradores</h1>
+			<p>Consulta de solo lectura de todos los borradores, del más reciente al más antiguo. Los administradores no editan borradores.</p>
+		</header>
+		{!allowed ? <p role="alert">No tenés permiso para consultar los borradores de Higiene y Preventiva II.</p> : <>
+			{forbidden && <p role="alert">No tenés permiso vigente para consultar los borradores de Higiene y Preventiva II.</p>}
+			{error && <p role="alert">{error}</p>}
+			{loaded && (items.length === 0 ? <p>No hay borradores de Higiene y Preventiva II para esta página.</p> : <ul class="drafts">
+				{items.map((item) => <li>
+					<p><strong>Borrador {item.id}</strong> · versión clínica {item.version} · actualizado <time datetime={item.updated_at}>{hygieneTimestampLabel(item.updated_at)}</time></p>
+					<p class="identifier">Paciente {item.patient_id}<br />Asignatura de origen {item.origin_subject_id}<br />Grupo de origen {item.origin_group_id}</p>
+					<a href={`/hygiene-preventive-admin/${encodeURIComponent(item.id)}?${listQuery}`}>Ver borrador</a>
+				</li>)}
+			</ul>)}
+			{loaded && <nav class="pager" aria-label="Paginación de borradores">
+				{previousOffset !== null && <a href={`?${hygieneAdminQuery(listing, previousOffset)}`}>Anteriores</a>}
+				{nextOffset !== null && <a href={`?${hygieneAdminQuery(listing, nextOffset)}`}>Siguientes</a>}
+			</nav>}
+		</>}
+	</main>
+</Layout>
+<style>
+	main { max-width: 58rem; margin: auto; padding: 1.5rem 0 3rem; overflow-wrap: anywhere; color: var(--ink); }
+	.eyebrow { color: var(--rust-deep); font-weight: 700; }
+	.drafts { list-style: none; padding: 0; display: grid; gap: 0.75rem; }
+	.drafts li { padding: 1rem; border: 1px solid var(--line); border-radius: 0.65rem; background: var(--paper); }
+	.drafts p { margin: 0 0 0.5rem; }
+	.pager { display: flex; gap: 1rem; margin: 1rem 0; }
+	a { color: var(--rust-deep); text-decoration: underline; }
+	[role="alert"] { border: 1px solid var(--rust-line); padding: 1rem; background: var(--rust-soft); border-radius: 0.65rem; }
+</style>

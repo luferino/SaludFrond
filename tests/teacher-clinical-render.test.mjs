@@ -35,7 +35,7 @@ async function render(path, options = {}) {
  const mocks = {
   Layout: null, Fragment: null, EvaluationReadOnly: null, ApiError: class ApiError extends Error { constructor(status) { super('api'); this.status = status; } },
   actions: { recordTeacherConsent: 'record', validateTeacherSubmission: 'validate', requestTeacherCorrection: 'correct' }, isInputError: () => false,
-  teacherGrant: (_cookies, grant) => options.denied ? false : grant === 'kinesiology-evaluations:verify-consent' ? !!options.verify : grant === 'kinesiology-evaluations:review' ? options.review !== false : grant === 'oral-surgery-drafts:read' ? !!options.oralSurgeryRead : grant === 'kinesiology-evolutions:read' ? !!options.evolutions : true,
+  teacherGrant: (_cookies, grant) => options.denied ? false : grant === 'kinesiology-evaluations:verify-consent' ? !!options.verify : grant === 'kinesiology-evaluations:review' ? options.review !== false : grant === 'oral-surgery-drafts:read' ? !!options.oralSurgeryRead : grant === 'kinesiology-evolutions:read' ? !!options.evolutions : grant === 'hygiene-preventive-drafts:read' ? !!options.hygiene : true,
   parseTeacherPagination: (params) => ({ limit: Number(params.get('limit') ?? 50), offset: Number(params.get('offset') ?? options.offset ?? 0) }),
    parseTeacherAssignmentFilters: (params) => Object.fromEntries(['patient_id','student_id','subject_id','academic_group_id'].filter((key) => params.has(key)).map((key) => [key,params.get(key)])),
   parseAssignmentListCoordinates: (params, namespaced = false) => { const prefix = namespaced ? 'list_' : ''; const filters = Object.fromEntries(['patient_id','student_id','subject_id','academic_group_id'].filter((key) => params.has(`${prefix}${key}`)).map((key) => [key,params.get(`${prefix}${key}`)])); return { filters, limit: Number(params.get(namespaced && params.has('list_limit') ? 'list_limit' : 'limit') ?? 50), offset: Number(params.get(namespaced && params.has('list_offset') ? 'list_offset' : 'offset') ?? 0) }; },
@@ -64,6 +64,10 @@ async function render(path, options = {}) {
   getConsent: async () => { requests.push('consent'); if (options.consentFailure) throw new Error('failed'); return { evaluation_id: id, status: 'pending', evidence: null }; },
   listTeacherSubmissions: async () => { requests.push('history'); if (options.historyFailure) throw new Error('failed'); return { evaluation_id: id, items: options.submissions ?? [] }; },
   listTeacherCorrections: async () => { requests.push('corrections'); if (options.correctionsFailure) throw new Error('failed'); return { evaluation_id: id, items: options.corrections ?? [] }; },
+  // Hygiene reads exist only for the hygiene grant (off by default), so the Oral Surgery and Kinesiology renders are unchanged.
+  listHygieneContexts: async () => { requests.push('hygiene-discovery'); if (options.hygieneDiscoveryFailure) throw new Error('offline'); return { status: 'ok', items: options.hygieneContexts ?? [] }; },
+  isHygieneContext: (contexts, subjectId, groupId) => contexts.some((item) => item.subject_id === subjectId && item.academic_group_id === groupId),
+  listHygieneDrafts: async () => { requests.push('hygiene-list'); return []; },
   actionHrefWithContext: (action) => action,
   $$createAstro: () => ({}), $$createComponent: (component) => component,
   $$render: async (strings, ...values) => { let output = ''; for (let i = 0; i < strings.length; i++) output += strings[i] + await html(values[i]); return output; },
@@ -532,4 +536,11 @@ test('RED (c) teacher other-context «Volver» restores clinical filters beside 
 test('no-filter teacher other-context «Volver» keeps the exact list URL', async () => {
  const result = await render('src/pages/teacher-clinical/other-contexts/[id].astro', { query: `${selectedContext}&list_limit=7&list_offset=14` });
  assert.ok(result.html.includes(`href="/teacher-clinical?limit=7&offset=14&assignment_id=${id}"`));
+});
+
+test('teacher list without the hygiene grant makes no hygiene discovery or read and keeps its Kinesiology sections', async () => {
+ const result = await render('src/pages/teacher-clinical.astro', { query: `assignment_id=${id}` });
+ assert.equal(result.requests.some((request) => String(request).startsWith('hygiene')), false);
+ assert.match(result.html, /Fichas de Prueba, Ana/);
+ assert.doesNotMatch(result.html, /Higiene y Preventiva II/);
 });

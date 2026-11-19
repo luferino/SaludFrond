@@ -1,0 +1,121 @@
+---
+export const prerender = false;
+import { actions, isInputError } from 'astro:actions';
+import Layout from '../layouts/Layout.astro';
+import { ApiError } from '../shared/apiClient';
+import { listHygieneSubjects, type HygieneSubjectLink } from '../pods/hygiene-preventive-draft/api';
+import { hygienePermissionGrant } from '../pods/hygiene-preventive-draft/admin';
+import { hygieneTimestampLabel } from '../pods/hygiene-preventive-draft/labels';
+import { listSubjects, type SubjectSummary } from '../pods/subject/api';
+import { academicPaginationNavigation, parseAcademicPagination, type AcademicPagination } from '../shared/academic-api';
+
+Astro.response.headers.set('Cache-Control', 'no-store');
+// Presentation hints only: the backend checks each permission on every request.
+const canRead = hygienePermissionGrant(Astro.cookies, 'hygiene-preventive-subjects:read');
+const canWrite = hygienePermissionGrant(Astro.cookies, 'hygiene-preventive-subjects:write');
+
+// Outcome of the enable action: success moves to the list with the flag; the handler owns the copy of every failure.
+const result = Astro.getActionResult(actions.enableHygieneSubject);
+const data = result?.data;
+const actionError = result?.error
+	? (isInputError(result.error) ? 'Revisá la asignatura y la confirmación.' : 'No se pudo confirmar la habilitación. Recargá la lista antes de volver a intentarlo.')
+	: data?.success === false ? data.error : '';
+if (data?.success) return Astro.redirect('/hygiene-preventive-subjects?enabled=1');
+if (data?.success === false && /sesión venció/i.test(data.error)) return Astro.redirect(`/auth/login?returnTo=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`);
+
+let pagination: AcademicPagination = { limit: 50, offset: 0 };
+let pageError = '';
+let enabled: HygieneSubjectLink[] = [];
+let enabledError = '';
+let subjects: SubjectSummary[] = [];
+let subjectsError = '';
+let previousOffset: number | null = null;
+let nextOffset: number | null = null;
+if (canRead || canWrite) {
+	try {
+		pagination = parseAcademicPagination(Astro.url.searchParams);
+	} catch {
+		pageError = 'Revisá los parámetros de paginación.';
+	}
+}
+if (!pageError && canRead) {
+	try {
+		enabled = await listHygieneSubjects(Astro.cookies);
+	} catch (failure) {
+		if (failure instanceof ApiError && failure.status === 401) return Astro.redirect(`/auth/login?returnTo=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`);
+		enabledError = 'No se pudieron cargar las asignaturas habilitadas. Probá de nuevo más tarde.';
+	}
+}
+if (!pageError && (canRead || canWrite)) {
+	try {
+		const page = await listSubjects(pagination, Astro.cookies);
+		if (page.state === 'success') {
+			subjects = page.page.items;
+			({ previousOffset, nextOffset } = academicPaginationNavigation({ ...pagination, itemsLength: subjects.length }));
+		} else if (page.state === 'denied') {
+			subjectsError = 'No tenés permiso para consultar el catálogo de asignaturas.';
+		} else {
+			subjectsError = 'No se pudo cargar el catálogo de asignaturas. Probá de nuevo más tarde.';
+		}
+	} catch (failure) {
+		if (failure instanceof ApiError && failure.status === 401) return Astro.redirect(`/auth/login?returnTo=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`);
+		subjectsError = 'No se pudo cargar el catálogo de asignaturas. Probá de nuevo más tarde.';
+	}
+}
+const names = new Map(subjects.map((subject) => [subject.id, subject.name]));
+const enabledIds = new Set(enabled.map((link) => link.subject_id));
+// Only subjects not enabled yet are offered; a duplicate that slips through is a 409 from the backend.
+const choices = subjects.filter((subject) => !enabledIds.has(subject.id));
+const pageQuery = (offset: number) => new URLSearchParams({ limit: String(pagination.limit), offset: String(offset) }).toString();
+---
+<Layout>
+	<main aria-labelledby="title">
+		<header>
+			<p class="eyebrow">Administración / Asignaturas</p>
+			<h1 id="title">Higiene y Preventiva II · asignaturas</h1>
+			<p>Cada asignatura de Odontología se habilita explícitamente para este formulario. La habilitación no se puede deshacer desde el sistema.</p>
+		</header>
+		{!canRead && !canWrite ? <p role="alert">No tenés permiso para consultar las asignaturas habilitadas de Higiene y Preventiva II.</p> : <>
+			{Astro.url.searchParams.get('enabled') === '1' && <p role="status">Asignatura habilitada para Higiene y Preventiva II.</p>}
+			{actionError && <p role="alert">{actionError}</p>}
+			{pageError && <p role="alert">{pageError}</p>}
+			{canRead && <section aria-labelledby="enabled-title">
+				<h2 id="enabled-title">Asignaturas habilitadas</h2>
+				{enabledError ? <p role="alert">{enabledError}</p> : enabled.length === 0 ? <p>Todavía no hay asignaturas habilitadas para Higiene y Preventiva II.</p> : <ul>
+					{enabled.map((link) => <li>Asignatura {names.get(link.subject_id) ?? link.subject_id} · habilitada <time datetime={link.created_at}>{hygieneTimestampLabel(link.created_at)}</time></li>)}
+				</ul>}
+			</section>}
+			{canWrite && <section aria-labelledby="enable-title">
+				<h2 id="enable-title">Habilitar una asignatura</h2>
+				{subjectsError ? <p role="alert">{subjectsError}</p> : choices.length === 0 ? <p>No hay asignaturas para habilitar en esta página.</p> : <form method="POST" action={actions.enableHygieneSubject}>
+					<label>Asignatura
+						<select name="subject_id" required>
+							<option value="">Elegí una asignatura</option>
+							{choices.map((subject) => <option value={subject.id}>{subject.name}</option>)}
+						</select>
+					</label>
+					<label class="confirm"><input type="checkbox" name="irreversible_confirmed" value="on" required /> Entiendo que la habilitación no se puede deshacer desde el sistema.</label>
+					<button type="submit">Habilitar para Higiene y Preventiva II</button>
+				</form>}
+				{!subjectsError && (previousOffset !== null || nextOffset !== null) && <nav class="pager" aria-label="Paginación de asignaturas">
+					{previousOffset !== null && <a href={`?${pageQuery(previousOffset)}`}>Anteriores</a>}
+					{nextOffset !== null && <a href={`?${pageQuery(nextOffset)}`}>Siguientes</a>}
+				</nav>}
+			</section>}
+		</>}
+	</main>
+</Layout>
+<style>
+	main { max-width: 58rem; margin: auto; padding: 1.5rem 0 3rem; overflow-wrap: anywhere; color: var(--ink); }
+	.eyebrow { color: var(--rust-deep); font-weight: 700; }
+	section { margin: 1rem 0; padding: 1rem; background: var(--paper); border: 1px solid var(--line); border-radius: 0.65rem; }
+	label { display: grid; gap: 0.35rem; font-weight: 600; margin: 0.75rem 0; }
+	label.confirm { display: flex; gap: 0.5rem; align-items: center; font-weight: 400; }
+	select { padding: 0.6rem; border: 1px solid var(--field-line); border-radius: 0.35rem; background: var(--field); color: var(--ink); font: inherit; max-width: 100%; }
+	button { padding: 0.65rem 0.95rem; background: var(--rust); color: white; border: 1px solid var(--rust-deep); border-radius: 0.4rem; font: inherit; font-weight: 700; cursor: pointer; }
+	ul { padding-left: 1.2rem; }
+	li { padding: 0.25rem 0; }
+	.pager { display: flex; gap: 1rem; margin-top: 1rem; }
+	a { color: var(--rust-deep); text-decoration: underline; }
+	[role="alert"] { border: 1px solid var(--rust-line); padding: 1rem; background: var(--rust-soft); border-radius: 0.65rem; }
+</style>

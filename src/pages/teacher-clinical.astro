@@ -10,6 +10,8 @@ import type { ClinicalListFilters } from '../pods/kinesiology-evaluation/list-fi
 import { clinicalFilterCarrier, listKinesiologyEvolutions, parseEvolutionListFilters, type EvolutionFilters, type KinesiologyEvolutionListItem } from '../pods/kinesiology-evolution/listing';
 import { listOralSurgeryDrafts, type OralSurgeryDraft } from '../pods/oral-surgery-draft/api';
 import { isOralSurgeryContext, listOralSurgeryContexts } from '../pods/oral-surgery-draft/discovery';
+import { listHygieneDrafts, type HygieneDraft } from '../pods/hygiene-preventive-draft/api';
+import { isHygieneContext, listHygieneContexts } from '../pods/hygiene-preventive-draft/discovery';
 Astro.response.headers.set('Cache-Control', 'no-store');
 const allowed = teacherGrant(Astro.cookies, 'patient-assignments:read') && teacherGrant(Astro.cookies, 'kinesiology-evaluations:read');
 let pagination = { limit: 50, offset: 0 };
@@ -29,6 +31,9 @@ let filterError = '';
 let oralSurgeryEnabled = false;
 let oralSurgeryForbidden = false;
 let oralSurgeryDrafts: OralSurgeryDraft[] = [];
+let hygieneEnabled = false;
+let hygieneError = false;
+let hygieneDrafts: HygieneDraft[] = [];
 let error = '';
 let filters: ReturnType<typeof parseTeacherAssignmentFilters> = {};
 const searchParams = Astro.url.searchParams;
@@ -54,9 +59,30 @@ try {
       discoveryFailed = true;
      }
     }
+    if (teacherGrant(Astro.cookies, 'hygiene-preventive-drafts:read')) {
+     try {
+      // A forbidden discovery hides this form for the caller; it is not a failure and not a Kinesiology context.
+      const contexts = await listHygieneContexts(Astro.cookies);
+      if (contexts.status === 'ok') hygieneEnabled = isHygieneContext(contexts.items, selected.subject_id, selected.academic_group_id);
+     } catch (failure) {
+      if (failure instanceof ApiError && failure.status === 401) throw failure;
+      discoveryFailed = true;
+     }
+    }
     if (discoveryFailed) error = 'No se pudo determinar qué ficha clínica corresponde a este contexto.';
     else {
-     try {
+     // A hygiene-only context replaces the Kinesiology lists; with Oral Surgery both forms show in their own sections.
+     const hygieneOnly = hygieneEnabled && !oralSurgeryEnabled;
+     if (hygieneEnabled) {
+      // Isolated: a hygiene read failure never hides the Oral Surgery or Kinesiology lists.
+      try {
+       hygieneDrafts = await listHygieneDrafts({ patient_id: selected.patient_id, subject_id: selected.subject_id, academic_group_id: selected.academic_group_id }, Astro.cookies, { limit: 50, offset: 0 });
+      } catch (failure) {
+       if (failure instanceof ApiError && failure.status === 401) throw failure;
+       hygieneError = true;
+      }
+     }
+     if (!hygieneOnly) try {
       evolutionFilters = parseEvolutionListFilters(searchParams);
       clinicalFilters = { status: evolutionFilters.status, date_from: evolutionFilters.date_from, date_to: evolutionFilters.date_to };
       for (const key of Object.keys(clinicalFilters) as Array<keyof ClinicalListFilters>) if (clinicalFilters[key] === undefined) delete clinicalFilters[key];
@@ -65,7 +91,7 @@ try {
       filterError = failure instanceof Error ? failure.message : 'Los filtros clínicos no son válidos.';
      }
      if (oralSurgeryEnabled && !filterError && (searchParams.has('status') || searchParams.has('evaluation_id'))) filterError = 'Cirugía Oral solo admite filtros de fecha.';
-     if (!filterError) {
+     if (!filterError && !hygieneOnly) {
       const context = { patient_id: selected.patient_id, subject_id: selected.subject_id, academic_group_id: selected.academic_group_id };
       if (oralSurgeryEnabled) oralSurgeryDrafts = await listOralSurgeryDrafts(context, Astro.cookies, { limit: 50, offset: 0 }, clinicalFilters);
       else {
@@ -149,7 +175,7 @@ const clinicalCarrier = clinicalFilterCarrier(searchParams);
     {previous !== null && <a href={link(previous)}>Anterior</a>}
     {next !== null && <a href={link(next)}>Siguiente</a>}
    </nav>}
-   {selected && !error && !oralSurgeryEnabled && <form method="GET" class="clinical-filters" aria-label="Filtrar listas clínicas">
+   {selected && !error && !oralSurgeryEnabled && !hygieneEnabled && <form method="GET" class="clinical-filters" aria-label="Filtrar listas clínicas">
     <input type="hidden" name="assignment_id" value={selected.id} /><input type="hidden" name="limit" value={pagination.limit} /><input type="hidden" name="offset" value={pagination.offset} />{Object.entries(filters).map(([key,value]) => <input type="hidden" name={key} value={value} />)}
     <label for="clinical-status">Estado</label><select id="clinical-status" name="status"><option value="">Todos</option><option value="draft" selected={shownFilters.status === 'draft'}>Borrador</option><option value="submitted" selected={shownFilters.status === 'submitted'}>Enviada</option><option value="validated" selected={shownFilters.status === 'validated'}>Validada</option></select>
     <label for="clinical-date-from">Desde</label><input id="clinical-date-from" type="date" name="date_from" value={shownFilters.date_from} /><label for="clinical-date-to">Hasta</label><input id="clinical-date-to" type="date" name="date_to" value={shownFilters.date_to} /><label for="evolution-evaluation">Evaluación</label><input id="evolution-evaluation" name="evaluation_id" inputmode="numeric" value={shownFilters.evaluation_id} /><button type="submit">Aplicar filtros clínicos</button>
@@ -166,7 +192,15 @@ const clinicalCarrier = clinicalFilterCarrier(searchParams);
     </li>)}</ul> : <p>No hay borradores de Cirugía Oral I para este paciente y contexto de origen.</p>}
     {oralSurgeryDrafts.length === 50 && <p>Se muestran los 50 borradores más recientes.</p>}
    </section>}
-   {selected && !error && !filterError && !oralSurgeryEnabled && <section aria-labelledby="records-title">
+   {selected && !error && hygieneEnabled && <section aria-labelledby="hygiene-records-title">
+    <h2 id="hygiene-records-title">Borradores de Higiene y Preventiva II de {selected.apellidos}, {selected.nombres}</h2>
+    <p>Asignatura: {selected.subject_id}<br />Grupo: {selected.academic_group_id}</p>
+    {hygieneError ? <p role="alert">No se pudieron cargar los borradores de Higiene y Preventiva II. Probá de nuevo más tarde.</p> : hygieneDrafts.length ? <ul>{hygieneDrafts.map((draft) => <li>
+     <a href={`/teacher-clinical/hygiene-preventive/${draft.id}?${new URLSearchParams({ patient_id: selected!.patient_id, subject_id: selected!.subject_id, academic_group_id: selected!.academic_group_id, assignment_id: selected!.id, ...listCarrier })}`}>Abrir borrador de Higiene y Preventiva II · versión {draft.version}</a>
+    </li>)}</ul> : <p>No hay borradores de Higiene y Preventiva II para este paciente y contexto de origen.</p>}
+    {hygieneDrafts.length === 50 && <p>Se muestran los 50 borradores más recientes.</p>}
+   </section>}
+   {selected && !error && !filterError && !oralSurgeryEnabled && !hygieneEnabled && <section aria-labelledby="records-title">
     <h2 id="records-title">Fichas de {selected.apellidos}, {selected.nombres}</h2>
     <p>Asignatura: {selected.subject_id}<br />Grupo: {selected.academic_group_id}</p>
     {oralSurgeryForbidden && <p role="status">No tenés permiso para consultar si este contexto usa Cirugía Oral I. No se muestran acciones de Cirugía Oral.</p>}
@@ -175,7 +209,7 @@ const clinicalCarrier = clinicalFilterCarrier(searchParams);
     </li>)}</ul> : <p>No hay fichas para este paciente y contexto de origen.</p>}
     {teacherGrant(Astro.cookies, 'kinesiology-evolutions:read') && <section aria-labelledby="teacher-evolutions-title"><h3 id="teacher-evolutions-title">Evoluciones kinésicas</h3>{evolutionError ? <p role="alert">No se pudieron cargar las evoluciones kinésicas. Las fichas de este contexto siguen disponibles.</p> : evolutions.length ? <ul>{evolutions.map((item) => <li><span>Evaluación {item.evaluation_id} · {item.status === 'draft' ? 'Borrador' : item.status === 'submitted' ? 'Enviada' : 'Validada'} · {new Date(item.created_at).toLocaleDateString('es')}</span>{item.pending_correction && <span> · Corrección solicitada: {item.pending_correction.reason}</span>}</li>)}</ul> : <p>No hay evoluciones visibles para este paciente y contexto de origen.</p>}</section>}
    </section>}
-   {selected && !error && !filterError && !oralSurgeryEnabled && <section aria-labelledby="other-contexts-title">
+   {selected && !error && !filterError && !oralSurgeryEnabled && !hygieneEnabled && <section aria-labelledby="other-contexts-title">
     <h2 id="other-contexts-title">De otros contextos</h2>
     <p>Últimas versiones enviadas o validadas · solo lectura.</p>
     {crossError ? <p role="alert">No se pudieron cargar las fichas de otros contextos.</p> : crossEvaluations.length ? <ul>{crossEvaluations.map((item) => <li>

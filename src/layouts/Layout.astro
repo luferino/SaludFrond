@@ -25,6 +25,11 @@ const canReadClinical = isLoggedIn && ['teacher', 'docente'].includes(String(pay
 const canConsultOralSurgery = isLoggedIn && isAdmin && Array.isArray(payload?.permissions)
 	&& payload.permissions.every((permission) => typeof permission === 'string')
 	&& payload.permissions.includes('oral-surgery-drafts:read');
+// Administrators' Higiene y Preventiva II consultation and subject enabling (D9); presentation hints only.
+const adminGrants = isLoggedIn && isAdmin && Array.isArray(payload?.permissions)
+	&& payload.permissions.every((permission) => typeof permission === 'string') ? payload.permissions : [];
+const canConsultHygiene = adminGrants.includes('hygiene-preventive-drafts:read');
+const canManageHygieneSubjects = adminGrants.includes('hygiene-preventive-subjects:read') || adminGrants.includes('hygiene-preventive-subjects:write');
 const currentPath = Astro.url?.pathname.replace(/\/$/, '') || '/';
 const pageTitles: Record<string, string> = {
 	'/': 'Inicio', '/students': 'Estudiantes', '/teachers': 'Profesores',
@@ -40,6 +45,7 @@ const pageTitles: Record<string, string> = {
 const pageTitle = currentPath.startsWith('/my-patients') ? 'Mis pacientes asignados'
 	: currentPath.startsWith('/kinesiology-evaluations') ? 'Evaluaciones kinésicas'
 	: currentPath.startsWith('/teacher-clinical') ? 'Acceso clínico docente'
+	: currentPath.startsWith('/hygiene-preventive') ? 'Higiene y Preventiva II'
 	: currentPath.startsWith('/oral-surgery-admin') ? 'Cirugía Oral I'
 	: pageTitles[currentPath] ?? 'Salud';
 const peopleLinks = isLoggedIn && isAdmin ? [
@@ -49,10 +55,16 @@ const peopleLinks = isLoggedIn && isAdmin ? [
 	{ href: '/teachers', label: 'Profesores' },
 	{ href: '/reception-accounts', label: 'Cuentas de recepción' },
 ] : [];
+// Oral Surgery I stays first; the hygiene consultation and subject enabling sit next to it.
+const adminClinicalLinks = [
+	...(canConsultOralSurgery ? [{ href: '/oral-surgery-admin', label: 'Cirugía Oral I' }] : []),
+	...(canConsultHygiene ? [{ href: '/hygiene-preventive-admin', label: 'Higiene y Preventiva II' }] : []),
+	...(canManageHygieneSubjects ? [{ href: '/hygiene-preventive-subjects', label: 'Habilitar Higiene y Preventiva II' }] : []),
+];
 const clinicalLinks = isLoggedIn && ['estudiante', 'student'].includes(String(payload?.role).toLowerCase())
 	? [{ href: '/my-patients', label: 'Mis pacientes asignados' }]
 	: canReadClinical ? [{ href: '/teacher-clinical', label: 'Acceso clínico docente' }]
-	: canConsultOralSurgery ? [{ href: '/oral-surgery-admin', label: 'Cirugía Oral I' }] : [];
+	: adminClinicalLinks;
 // Reception works only through its career-scoped pages; academic catalogs are not part of its role.
 const receptionLinks = isReception ? [
 	{ href: '/reception/patients', label: 'Pacientes' },
