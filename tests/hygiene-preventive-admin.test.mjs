@@ -56,11 +56,14 @@ const apiShim = { apiFetch: fakeApiFetch, ApiError: FixtureApiError };
 async function loadCjs(path, shims = {}) {
  const output = ts.transpileModule(await readFile(new URL(path, root), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
  const exports = {};
- new Function('exports', 'require', output)(exports, (name) => { if (!(name in shims)) throw new Error(`unshimmed ${name}`); return shims[name]; });
+ // The env stands in for Astro's import.meta.env, which a CommonJS load cannot parse; apiClient itself is shimmed.
+ new Function('exports', 'require', '__env', output.replaceAll('import.meta.env', '__env'))(exports, (name) => { if (!(name in shims)) throw new Error(`unshimmed ${name}`); return shims[name]; }, { PUBLIC_API_URL: 'https://backend.invalid' });
  return exports;
 }
 const jwtModule = await loadCjs('src/shared/jwt.ts');
-const hygieneApi = await loadCjs('src/pods/hygiene-preventive-draft/api.ts', { '../../shared/apiClient': apiShim });
+// api.ts reads the session cookie itself for the one request apiClient cannot answer (an empty 204 delete).
+const sessionShim = { getSession: (jar) => jar.get('session')?.value ?? null, clearSession: () => undefined };
+const hygieneApi = await loadCjs('src/pods/hygiene-preventive-draft/api.ts', { '../../shared/apiClient': apiShim, '../../shared/session': sessionShim });
 const labels = await loadCjs('src/pods/hygiene-preventive-draft/labels.ts');
 const odontogram = await loadCjs('src/pods/hygiene-preventive-draft/odontogram.ts');
 // A missing module fails only the tests that call into it.
@@ -266,4 +269,15 @@ test('A5 the navigation shows the hygiene admin and subject links only to admini
  }
  const teacher = await shell({ role: 'teacher', permissions: ['patient-assignments:read', 'kinesiology-evaluations:read', readGrant] });
  assert.deepEqual(teacher.clinicalLinks, [{ href: '/teacher-clinical', label: 'Acceso clínico docente' }]);
+});
+
+test('A3 a draft with stored plaque renders read-only without a load error', async () => {
+	const plaqueStored = {
+		loe_silness: { teeth: { 16: { distal: 2, vestibular: 2, mesial: 2, lingual: 1 } }, average: 1.75, category: 'abundant' },
+		oleary: { teeth: { 11: { mesial: true, distal: false, vestibular: false, lingual: false } }, stained_surfaces: 1, present_surfaces: 4, percentage: 25, category: 'good' },
+	};
+	const page = await renderAdmin(detailPage, { responses: { [`GET /hygiene-preventive-drafts/${id}`]: { body: draft({ content: { ...content, plaque: plaqueStored } }) } } });
+	assert.match(page.html, /Losartán/);
+	assert.doesNotMatch(page.html, /No se pudo cargar el borrador/);
+	assert.doesNotMatch(page.html, /<form|method="POST"|<button/);
 });

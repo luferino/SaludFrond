@@ -6,8 +6,8 @@ import { ApiError } from '../../shared/apiClient';
 import { listAssignedPatients } from '../../pods/patient-assignment/api';
 import { assignmentListCarrier, assignmentListQuery, parseAssignmentListCoordinates } from '../../pods/patient-assignment/list-coordinates';
 import { clinicalFilterCarrier } from '../../pods/kinesiology-evolution/listing';
-import { FDI_TEETH, getHygieneDraft, HYGIENE_INDICES, HYGIENE_MEDICAL_QUESTIONS, HYGIENE_MEDICAL_TEXTS, TOOTH_FACES, validId, type HygieneDraft } from '../../pods/hygiene-preventive-draft/api';
-import { formValuesFromHygieneContent, HYGIENE_COPY, hygieneTextareaText, type FormValues } from '../../pods/hygiene-preventive-draft/actions/drafts';
+import { getHygieneDraft, HYGIENE_INDICES, HYGIENE_MEDICAL_QUESTIONS, HYGIENE_MEDICAL_TEXTS, TOOTH_FACES, validId, type HygieneDraft } from '../../pods/hygiene-preventive-draft/api';
+import { formValuesFromHygieneContent, HYGIENE_COPY, hygieneTextareaText, hygieneUnsavedEntries, type FormValues } from '../../pods/hygiene-preventive-draft/actions/drafts';
 import { CHART_ORDER, isUpperTooth } from '../../pods/hygiene-preventive-draft/odontogram';
 import {
 	FACE_MARK_LABELS, HYGIENE_COMPONENT_LABELS, HYGIENE_DETAIL_LABEL, HYGIENE_INDEX_LABELS, HYGIENE_QUESTION_LABELS, HYGIENE_TEXT_LABELS,
@@ -15,8 +15,7 @@ import {
 } from '../../pods/hygiene-preventive-draft/labels';
 import { decodeJwt } from '../../shared/jwt';
 import { actionHrefWithContext } from '../../pods/kinesiology-evaluation/api';
-
-type Unsaved = { label: string; value: string };
+import HygienePlaqueFields from '../../components/clinical/HygienePlaqueFields.astro';
 
 const id = Astro.params.id ?? '';
 const search = Astro.url.searchParams;
@@ -24,36 +23,6 @@ const assignmentParams = search.getAll('assignment_id');
 const assignmentId = assignmentParams.length === 1 ? assignmentParams[0] : '';
 let listFilters: ReturnType<typeof parseAssignmentListCoordinates>['filters'] = {};
 const loginRedirect = `/auth/login?returnTo=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`;
-
-/** Labels of every control, so a retained value can be listed with its question or tooth. */
-const CONTROL_LABELS = new Map<string, string>();
-for (const question of HYGIENE_MEDICAL_QUESTIONS) {
-	CONTROL_LABELS.set(`medical_history.${question}`, HYGIENE_QUESTION_LABELS[question]);
-	CONTROL_LABELS.set(`medical_history.${question}_detail`, `${HYGIENE_QUESTION_LABELS[question]} · ${HYGIENE_DETAIL_LABEL}`);
-}
-for (const field of HYGIENE_MEDICAL_TEXTS) CONTROL_LABELS.set(`medical_history.${field}`, HYGIENE_TEXT_LABELS[field]);
-for (const code of FDI_TEETH) {
-	CONTROL_LABELS.set(`odontogram.${code}.state`, `Pieza ${code} · Estado`);
-	for (const face of TOOTH_FACES) CONTROL_LABELS.set(`odontogram.${code}.${face}`, `Pieza ${code} · ${TOOTH_FACE_LABELS[face]}`);
-}
-for (const [name, { components }] of Object.entries(HYGIENE_INDICES)) {
-	for (const component of components) CONTROL_LABELS.set(`indices.${name}.${component}`, `${HYGIENE_INDEX_LABELS[name as keyof typeof HYGIENE_INDEX_LABELS]} · ${HYGIENE_COMPONENT_LABELS[component]}`);
-}
-
-/** Answered controls only: an empty control has nothing to copy. */
-function unsavedAnswers(values: FormValues | undefined): Unsaved[] {
-	return Object.entries(values ?? {}).flatMap(([name, value]) => {
-		const label = CONTROL_LABELS.get(name);
-		if (!label) return [];
-		let shown: string;
-		if (Array.isArray(value)) shown = value.map((mark) => FACE_MARK_LABELS[mark as keyof typeof FACE_MARK_LABELS]).join(', ');
-		else if (name.endsWith('.state')) shown = value === '' ? '' : TOOTH_STATE_LABELS[value as keyof typeof TOOTH_STATE_LABELS];
-		else if (value === 'true') shown = 'Sí';
-		else if (value === 'false') shown = 'No';
-		else shown = value;
-		return shown === '' ? [] : [{ label, value: shown }];
-	});
-}
 
 function actionReturnParams(data: { assignment_id: string; limit: string; offset: string; list_filters?: ReturnType<typeof parseAssignmentListCoordinates>['filters'] }) {
 	const params = new URLSearchParams({ assignment_id: data.assignment_id });
@@ -143,7 +112,7 @@ const marked = (name: string): string[] => {
 const editable = eligible;
 const editHint = eligible ? HYGIENE_COPY.editable : HYGIENE_COPY.readOnly;
 const saved = search.get('saved') === '1';
-const unsaved: Unsaved[] = draft && !saveFailure?.conflict ? [] : unsavedAnswers(retainedValues);
+const unsaved = draft && !saveFailure?.conflict ? [] : hygieneUnsavedEntries(retainedValues);
 const coordinates = { limit, offset, filters: listFilters };
 const listCarrier = assignmentListCarrier(coordinates);
 const clinicalCarrier = clinicalFilterCarrier(search);
@@ -232,6 +201,7 @@ const STATE_OPTIONS = ['', 'present', 'absent', 'to_extract'] as const;
 						</div>;
 					})}
 				</fieldset>
+				<HygienePlaqueFields values={fields} stored={draft.content.plaque} editable={editable} />
 				{editable && <button class="button" type="submit">Guardar borrador</button>}
 			</form>}
 		</> : <section class="notice error" role="alert">

@@ -71,9 +71,11 @@ async function renderEditor(options = {}) {
 		request: new Request('https://fixture.invalid/'), response: { headers: new Headers() },
 		redirect: (location) => `REDIRECT:${location}`,
 	};
+	const plaqueProps = [];
 	const mocks = {
 		...hygieneApi, ...drafts, ...labels, ...odontogram,
 		actions: { updateHygieneDraft: actionStub },
+		HygienePlaqueFields: (_astro, props) => { plaqueProps.push(props); return '<div data-plaque-fields></div>'; },
 		isInputError: () => false,
 		ApiError: apiClient.ApiError,
 		Layout: null, Fragment: null,
@@ -106,7 +108,7 @@ async function renderEditor(options = {}) {
 	new Function('exports', ...Object.keys(mocks), output)(exports, ...Object.values(mocks));
 	// The compiler adds a scoped `astro-*` class to styled elements; assertions read the page's own classes and attributes.
 	const rendered = (await html(exports.default({ createAstro: () => Astro }, {}, {}))).replace(/ class="astro-[a-z0-9]+"/g, '').replace(/ astro-[a-z0-9]+(?=")/g, '');
-	return { html: rendered, reads, server, importModule };
+	return { html: rendered, reads, server, importModule, plaqueProps };
 }
 
 const count = (text, pattern) => (text.match(pattern) ?? []).length;
@@ -278,4 +280,30 @@ test('odontogram chart styles reach the nodes the client script creates, which c
 	for (const selector of ['.chart', '.pick', 'svg.t .face.caries', 'svg.t .face.filled', 'svg.t .face.both', 'svg.t .mark.absent', '.inspector']) {
 		assert.match(styles, new RegExp(String.raw`\.odontogram\[data-astro-cid[^\]]*\] ` + selector.replaceAll('.', String.raw`\.`)), selector);
 	}
+});
+
+// S1: the plaque fields component receives the stored plaque and the editability, and renders after Índices inside the form.
+const plaqueStored = {
+	loe_silness: { teeth: { 16: { distal: 2, vestibular: 2, mesial: 2, lingual: 1 } }, average: 1.75, category: 'abundant' },
+	oleary: { teeth: { 11: { mesial: true, distal: false, vestibular: false, lingual: false } }, stained_surfaces: 1, present_surfaces: 4, percentage: 25, category: 'good' },
+};
+
+test('D2 the plaque fields receive the stored plaque and editability, and render inside the form after the indices', async () => {
+	const page = await renderEditor({ draft: { content: { ...served, plaque: plaqueStored } } });
+	assert.equal(page.plaqueProps.length, 1);
+	assert.deepEqual(page.plaqueProps[0].stored, plaqueStored);
+	assert.equal(page.plaqueProps[0].editable, true);
+	assert.equal(typeof page.plaqueProps[0].values, 'object');
+	const form = page.html.indexOf('id="draft-form"');
+	const indices = page.html.indexOf('class="indices"');
+	const plaqueFields = page.html.indexOf('data-plaque-fields');
+	assert.ok(form < indices && indices < plaqueFields && plaqueFields < page.html.indexOf('</form>', form));
+});
+
+test('D2 a draft without plaque passes an undefined stored plaque, and a read-only user gets editable false', async () => {
+	const page = await renderEditor();
+	assert.equal(page.plaqueProps[0].stored, undefined);
+	const readOnly = await renderEditor({ actor: student({ permissions: ['hygiene-preventive-drafts:read'] }), draft: { content: { ...served, plaque: plaqueStored } } });
+	assert.equal(readOnly.plaqueProps[0].editable, false);
+	assert.deepEqual(readOnly.plaqueProps[0].stored, plaqueStored);
 });
