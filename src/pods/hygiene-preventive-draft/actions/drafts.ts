@@ -9,6 +9,9 @@ import {
 	HYGIENE_INDICES,
 	HYGIENE_MEDICAL_QUESTIONS,
 	HYGIENE_MEDICAL_TEXTS,
+	LOE_SILNESS_SITES,
+	LOE_SILNESS_TEETH,
+	OLEARY_SURFACES,
 	TOOTH_FACES,
 	TOOTH_STATES,
 	FACE_MARKS,
@@ -22,12 +25,16 @@ import {
 	type HygieneDraft,
 	type HygieneIndex,
 	type HygieneIndexName,
+	type HygienePlaque,
+	type LoeSilnessSection,
+	type LoeSilnessSite,
+	type OlearySection,
 	type ToothFace,
 	type ToothRecord,
 	type ToothState,
 } from '../api';
 import {
-	FACE_MARK_LABELS, HYGIENE_COMPONENT_LABELS, HYGIENE_DETAIL_LABEL, HYGIENE_INDEX_LABELS, HYGIENE_QUESTION_LABELS, HYGIENE_TEXT_LABELS,
+	FACE_MARK_LABELS, HYGIENE_COMPONENT_LABELS, HYGIENE_PLAQUE_SECTION_LABELS, LOE_SILNESS_SITE_LABELS, OLEARY_SURFACE_LABELS, HYGIENE_DETAIL_LABEL, HYGIENE_INDEX_LABELS, HYGIENE_QUESTION_LABELS, HYGIENE_TEXT_LABELS,
 	TOOTH_FACE_LABELS, TOOTH_STATE_LABELS,
 } from '../labels';
 
@@ -58,12 +65,16 @@ export const HYGIENE_COPY = {
 	absentWithMarks: (code: string) => `La pieza ${code} está ausente y no puede tener caras marcadas. Desmarcá sus caras o cambiá el estado.`,
 	indexPartial: (label: string) => `Completá los tres valores del índice ${label} o dejalos vacíos.`,
 	indexNumber: (label: string, component: string) => `${label}: ${component} debe ser un número entero mayor o igual a 0.`,
+	stainedWithoutEvaluation: (code: string) => `La pieza ${code} tiene superficies teñidas y no está marcada como evaluada. Marcala como evaluada o desmarcá sus superficies.`,
 } as const;
 
 const HIDDEN_FIELDS = ['id', 'expected_version', 'assignment_id', 'limit', 'offset', 'list_limit', 'list_offset', 'list_patient_id', 'list_student_id', 'list_subject_id', 'list_academic_group_id'];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MEDICAL_ANSWERS: readonly string[] = ['', 'true', 'false'];
 const STATE_CONTROLS: readonly string[] = ['', ...TOOTH_STATES];
+/** Löe-Silness grade controls: an unrecorded site or a grade 0 to 3. O'Leary checkboxes post `on` when checked. */
+const PLAQUE_GRADES: readonly string[] = ['', '0', '1', '2', '3'];
+const PLAQUE_CHECKS: readonly string[] = ['', 'on'];
 
 /** Medical history controls in form order: each answer, then its `<name>_detail` text; then the free-text fields. */
 const MEDICAL_FIELDS = [
@@ -74,9 +85,15 @@ const MEDICAL_FIELDS = [
 export const HYGIENE_MARK_FIELDS: string[] = FDI_TEETH.flatMap((code) => TOOTH_FACES.map((face) => `odontogram.${code}.${face}`));
 const TOOTH_FIELDS = FDI_TEETH.flatMap((code) => [`odontogram.${code}.state`, ...TOOTH_FACES.map((face) => `odontogram.${code}.${face}`)]);
 const INDEX_FIELDS = Object.entries(HYGIENE_INDICES).flatMap(([name, { components }]) => components.map((component) => `indices.${name}.${component}`));
+/** Löe-Silness: a grade select per index tooth and site. */
+const LOE_FIELDS = LOE_SILNESS_TEETH.flatMap((code) => LOE_SILNESS_SITES.map((site) => `plaque.loe_silness.${code}.${site}`));
+/** O'Leary: an evaluated checkbox and one stained checkbox per surface, for every FDI tooth. */
+const OLEARY_FIELDS = FDI_TEETH.flatMap((code) => ['evaluated', ...OLEARY_SURFACES].map((key) => `plaque.oleary.${code}.${key}`));
 /** Every editable control name. The registry builds its schema from this list and from HYGIENE_MARK_FIELDS. */
-export const HYGIENE_FORM_FIELDS: string[] = [...MEDICAL_FIELDS, ...TOOTH_FIELDS, ...INDEX_FIELDS];
+export const HYGIENE_FORM_FIELDS: string[] = [...MEDICAL_FIELDS, ...TOOTH_FIELDS, ...INDEX_FIELDS, ...LOE_FIELDS, ...OLEARY_FIELDS];
 const FORM_FIELD_SET = new Set(HYGIENE_FORM_FIELDS);
+const PLAQUE_GRADE_FIELD_SET = new Set(LOE_FIELDS);
+const PLAQUE_CHECK_FIELD_SET = new Set(OLEARY_FIELDS);
 const MARK_FIELD_SET = new Set(HYGIENE_MARK_FIELDS);
 const ANSWER_FIELD_SET = new Set(HYGIENE_MEDICAL_QUESTIONS.map((question) => `medical_history.${question}`));
 const STATE_FIELD_SET = new Set(FDI_TEETH.map((code) => `odontogram.${code}.state`));
@@ -98,6 +115,14 @@ for (const [name, { components }] of Object.entries(HYGIENE_INDICES)) {
 	}
 }
 
+for (const code of LOE_SILNESS_TEETH) {
+	for (const site of LOE_SILNESS_SITES) HYGIENE_CONTROL_LABELS.set(`plaque.loe_silness.${code}.${site}`, `${HYGIENE_PLAQUE_SECTION_LABELS.loe_silness} · Pieza ${code} · ${LOE_SILNESS_SITE_LABELS[site]}`);
+}
+for (const code of FDI_TEETH) {
+	HYGIENE_CONTROL_LABELS.set(`plaque.oleary.${code}.evaluated`, `${HYGIENE_PLAQUE_SECTION_LABELS.oleary} · Pieza ${code} · Evaluada`);
+	for (const surface of OLEARY_SURFACES) HYGIENE_CONTROL_LABELS.set(`plaque.oleary.${code}.${surface}`, `${HYGIENE_PLAQUE_SECTION_LABELS.oleary} · Pieza ${code} · ${OLEARY_SURFACE_LABELS[surface]} teñida`);
+}
+
 /** Answered controls only: an empty control has nothing to copy. */
 export function hygieneUnsavedEntries(values: FormValues | undefined): { label: string; value: string }[] {
 	return Object.entries(values ?? {}).flatMap(([name, value]) => {
@@ -106,7 +131,7 @@ export function hygieneUnsavedEntries(values: FormValues | undefined): { label: 
 		let shown: string;
 		if (Array.isArray(value)) shown = value.map((mark) => FACE_MARK_LABELS[mark as keyof typeof FACE_MARK_LABELS]).join(', ');
 		else if (name.endsWith('.state')) shown = value === '' ? '' : TOOTH_STATE_LABELS[value as keyof typeof TOOTH_STATE_LABELS];
-		else if (value === 'true') shown = 'Sí';
+		else if (value === 'true' || value === 'on') shown = 'Sí';
 		else if (value === 'false') shown = 'No';
 		else shown = value;
 		return shown === '' ? [] : [{ label, value: shown }];
@@ -148,6 +173,17 @@ export function formValuesFromHygieneContent(content: HygieneContent): FormValue
 	for (const [name, { components }] of Object.entries(HYGIENE_INDICES)) {
 		const index = content.indices?.[name as HygieneIndexName];
 		for (const component of components) values[`indices.${name}.${component}`] = index ? String(index[component]) : '';
+	}
+	for (const code of LOE_SILNESS_TEETH) {
+		for (const site of LOE_SILNESS_SITES) {
+			const grade = content.plaque?.loe_silness?.teeth[code]?.[site];
+			values[`plaque.loe_silness.${code}.${site}`] = grade === undefined ? '' : String(grade);
+		}
+	}
+	for (const code of FDI_TEETH) {
+		const tooth = content.plaque?.oleary?.teeth[code];
+		values[`plaque.oleary.${code}.evaluated`] = tooth ? 'on' : '';
+		for (const surface of OLEARY_SURFACES) values[`plaque.oleary.${code}.${surface}`] = tooth?.[surface] ? 'on' : '';
 	}
 	return values;
 }
@@ -237,6 +273,53 @@ function indicesFromForm(values: FormValues, stored: HygieneContent['indices']):
 	return stored === undefined && Object.keys(output).length === 0 ? undefined : output;
 }
 
+/** A section with teeth is sent. Without teeth: an absent section stays absent, null stays null, {teeth: {}} stays, and loaded teeth are cleared to null. */
+function plaqueSectionOutcome<T extends { teeth: object }>(teeth: T['teeth'], stored: T | null | undefined): T | null | undefined {
+	if (Object.keys(teeth).length > 0) return { teeth } as T;
+	if (stored === undefined || stored === null) return stored;
+	return Object.keys(stored.teeth).length === 0 ? ({ teeth: {} } as T) : null;
+}
+
+/** Löe-Silness (D2): a site is sent when graded; a tooth with no graded site is sent only when it is stored as {}. */
+function loeSilnessFromForm(values: FormValues, stored: LoeSilnessSection | null | undefined): LoeSilnessSection | null | undefined {
+	const teeth: LoeSilnessSection['teeth'] = {};
+	for (const code of LOE_SILNESS_TEETH) {
+		const sites: Partial<Record<LoeSilnessSite, number>> = {};
+		for (const site of LOE_SILNESS_SITES) {
+			const grade = raw(values, `plaque.loe_silness.${code}.${site}`);
+			if (grade !== '') sites[site] = Number(grade);
+		}
+		const storedTooth = stored?.teeth[code];
+		if (Object.keys(sites).length > 0 || (storedTooth && Object.keys(storedTooth).length === 0)) teeth[code] = sites;
+	}
+	return plaqueSectionOutcome(teeth, stored);
+}
+
+/** O'Leary (D2): an evaluated tooth sends its four booleans; a stained surface on a tooth not evaluated is refused. */
+function olearyFromForm(values: FormValues, stored: OlearySection | null | undefined): OlearySection | null | undefined {
+	const teeth: OlearySection['teeth'] = {};
+	for (const code of FDI_TEETH) {
+		const surfaces = Object.fromEntries(OLEARY_SURFACES.map((surface) => [surface, raw(values, `plaque.oleary.${code}.${surface}`) === 'on'])) as OlearySection['teeth'][string];
+		if (raw(values, `plaque.oleary.${code}.evaluated`) !== 'on') {
+			if (Object.values(surfaces).includes(true)) throw new Error(HYGIENE_COPY.stainedWithoutEvaluation(code));
+			continue;
+		}
+		teeth[code] = surfaces;
+	}
+	return plaqueSectionOutcome(teeth, stored);
+}
+
+/** The plaque key stays absent while nothing is stored or entered; otherwise it keeps only the sections that exist. */
+function plaqueFromForm(values: FormValues, stored: HygienePlaque | undefined): HygienePlaque | undefined {
+	const loe = loeSilnessFromForm(values, stored?.loe_silness);
+	const oleary = olearyFromForm(values, stored?.oleary);
+	if (stored === undefined && loe === undefined && oleary === undefined) return undefined;
+	const plaque: HygienePlaque = {};
+	if (loe !== undefined) plaque.loe_silness = loe;
+	if (oleary !== undefined) plaque.oleary = oleary;
+	return plaque;
+}
+
 /**
  * Replacement content from the submitted controls, mapped against the stored draft (D3). Totals never appear: the
  * baseline comes from writableHygieneContent, and the mapping only writes components.
@@ -249,8 +332,8 @@ export function hygieneContentFromForm(values: FormValues, stored: HygieneConten
 	if (odontogram !== undefined) content.odontogram = odontogram;
 	const indices = indicesFromForm(values, stored.indices);
 	if (indices !== undefined) content.indices = indices;
-	// The form has no plaque controls yet: the stored plaque is carried over exactly as it was read, and an absent one stays absent.
-	if (stored.plaque !== undefined) content.plaque = stored.plaque;
+	const plaque = plaqueFromForm(values, stored.plaque);
+	if (plaque !== undefined) content.plaque = plaque;
 	return validateHygieneContent(content);
 }
 
@@ -279,6 +362,8 @@ function controlValues(input: Record<string, unknown>): FormValues {
 		const text = value ?? '';
 		if (ANSWER_FIELD_SET.has(name) && !MEDICAL_ANSWERS.includes(text)) throw new FormInputError(HYGIENE_COPY.formInput);
 		if (STATE_FIELD_SET.has(name) && !STATE_CONTROLS.includes(text)) throw new FormInputError(HYGIENE_COPY.formInput);
+		if (PLAQUE_GRADE_FIELD_SET.has(name) && !PLAQUE_GRADES.includes(text)) throw new FormInputError(HYGIENE_COPY.formInput);
+		if (PLAQUE_CHECK_FIELD_SET.has(name) && !PLAQUE_CHECKS.includes(text)) throw new FormInputError(HYGIENE_COPY.formInput);
 		values[name] = text;
 	}
 	return values;

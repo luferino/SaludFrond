@@ -418,13 +418,15 @@ test('create maps a typed rejection to the patient copy and an untyped failure t
 	assert.equal(posts(offline.requests).length, 1);
 });
 
-// S1: plaque is kept exactly as stored (the form has no plaque controls yet) and never sends computed results.
+// S1: an untouched plaque is saved exactly as stored and never sends computed results.
 const plaqueServed = {
 	loe_silness: { teeth: { 16: { distal: 2, vestibular: 2, mesial: 2, lingual: 1 } }, average: 1.75, category: 'abundant' },
 	oleary: { teeth: { 11: { mesial: true, distal: false, vestibular: false, lingual: false } }, stained_surfaces: 1, present_surfaces: 4, percentage: 25, category: 'good' },
 };
 const plaqueWritten = { loe_silness: { teeth: plaqueServed.loe_silness.teeth }, oleary: { teeth: plaqueServed.oleary.teeth } };
 /** A PATCH answer as the server returns it: the saved content with its computed plaque results. */
+/** The plaque controls the editor renders for a stored plaque, as the browser submits them. */
+const plaqueControls = (env, plaque) => Object.fromEntries(Object.entries(env.drafts.formValuesFromHygieneContent({ plaque })).filter(([name]) => name.startsWith('plaque.')));
 const echoWithPlaque = (results) => ({ body }) => ({ body: draft({ version: String(BigInt(body.expected_version) + 1n), content: { ...withTotals(body.content), plaque: results } }) });
 
 test('D3 a stored plaque is sent with the save as its stored teeth, without any computed result', async () => {
@@ -432,7 +434,7 @@ test('D3 a stored plaque is sent with the save as its stored teeth, without any 
 		[`GET ${draftPath}`]: readDraft({ ...served, plaque: plaqueServed }),
 		[`PATCH ${draftPath}`]: echoWithPlaque(plaqueServed),
 	}));
-	const result = await env.drafts.handleUpdateHygieneDraft(saveInput(env, served), { cookies: env.cookies });
+	const result = await env.drafts.handleUpdateHygieneDraft(saveInput(env, served, plaqueControls(env, plaqueWritten)), { cookies: env.cookies });
 	assert.equal(result.success, true);
 	assert.deepEqual(sentContent(env.requests).plaque, plaqueWritten);
 	assert.equal(JSON.stringify(patches(env.requests)[0].body).includes('average'), false);
@@ -456,9 +458,9 @@ test('D3 a stored draft without plaque is saved without a plaque key', async () 
 	assert.equal(Object.hasOwn(sentContent(env.requests), 'plaque'), false);
 });
 
-test('D3 hygieneContentFromForm copies the stored plaque when present and leaves an absent one absent', async () => {
+test('D3 hygieneContentFromForm keeps an untouched stored plaque and leaves an absent one absent', async () => {
 	const env = await environment();
-	assert.deepEqual(plain(env.drafts.hygieneContentFromForm(browserForm(env, served), { ...writable, plaque: plaqueWritten })).plaque, plaqueWritten);
+	assert.deepEqual(plain(env.drafts.hygieneContentFromForm(browserForm(env, served, plaqueControls(env, plaqueWritten)), { ...writable, plaque: plaqueWritten })).plaque, plaqueWritten);
 	assert.equal(Object.hasOwn(env.drafts.hygieneContentFromForm(browserForm(env, served), writable), 'plaque'), false);
 });
 

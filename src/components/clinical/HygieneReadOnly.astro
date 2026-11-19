@@ -1,7 +1,7 @@
 ---
-import { FDI_TEETH, HYGIENE_INDICES, HYGIENE_MEDICAL_QUESTIONS, HYGIENE_MEDICAL_TEXTS, TOOTH_FACES, type HygieneContent, type HygieneIndexName, type ToothFace } from '../../pods/hygiene-preventive-draft/api';
+import { FDI_TEETH, HYGIENE_INDICES, HYGIENE_MEDICAL_QUESTIONS, HYGIENE_MEDICAL_TEXTS, LOE_SILNESS_SITES, LOE_SILNESS_TEETH, OLEARY_SURFACES, TOOTH_FACES, type HygieneContent, type HygieneIndexName, type LoeSilnessSection, type OlearySection, type ToothFace } from '../../pods/hygiene-preventive-draft/api';
 import { CHART_ROWS, FACE_POLYGONS, FACE_POSITIONS, faceAt, type FacePosition } from '../../pods/hygiene-preventive-draft/odontogram';
-import { FACE_MARK_LABELS, HYGIENE_COMPONENT_LABELS, HYGIENE_DETAIL_LABEL, HYGIENE_INDEX_LABELS, HYGIENE_QUESTION_LABELS, HYGIENE_SECTION_LABELS, HYGIENE_TEXT_LABELS, TOOTH_FACE_LABELS, TOOTH_STATE_LABELS, UNRECORDED_TOOTH_LABEL, hygieneAnswerLabel } from '../../pods/hygiene-preventive-draft/labels';
+import { FACE_MARK_LABELS, HYGIENE_COMPONENT_LABELS, HYGIENE_PLAQUE_SECTION_LABELS, LOE_SILNESS_CATEGORY_LABELS, LOE_SILNESS_SITE_LABELS, OLEARY_CATEGORY_LABELS, OLEARY_SURFACE_LABELS, HYGIENE_DETAIL_LABEL, HYGIENE_INDEX_LABELS, HYGIENE_QUESTION_LABELS, HYGIENE_SECTION_LABELS, HYGIENE_TEXT_LABELS, TOOTH_FACE_LABELS, TOOTH_STATE_LABELS, UNRECORDED_TOOTH_LABEL, hygieneAnswerLabel } from '../../pods/hygiene-preventive-draft/labels';
 
 // Read-only view for teachers and administrators (D8). Server-rendered: no form, no script, no action.
 interface Props { content: HygieneContent }
@@ -25,6 +25,26 @@ const faceClass = (code: string, position: FacePosition): string => {
 };
 const crossed = (code: string): 'absent' | 'extract' | null => (teeth[code]?.state === 'absent' ? 'absent' : teeth[code]?.state === 'to_extract' ? 'extract' : null);
 const textValue = (value: unknown): string => (typeof value === 'string' && value !== '' ? value : 'Sin responder');
+// Plaque (D8 pattern): the server's counts and categories are shown as stored; Spanish decimal comma for the averages.
+const loe = content.plaque?.loe_silness;
+const oleary = content.plaque?.oleary;
+const loeTeeth = loe ? LOE_SILNESS_TEETH.filter((code) => Object.hasOwn(loe.teeth, code)) : [];
+const olearyTeeth = oleary ? FDI_TEETH.filter((code) => Object.hasOwn(oleary.teeth, code)) : [];
+const loeSummary = (code: string): string => {
+	const tooth = loe?.teeth[code] ?? {};
+	const sites = LOE_SILNESS_SITES.filter((site) => tooth[site] !== undefined).map((site) => `${LOE_SILNESS_SITE_LABELS[site]}: ${tooth[site]}`);
+	return `Pieza ${code} · ${sites.length ? sites.join(' · ') : 'sin sitios calificados'}`;
+};
+const olearySummary = (code: string): string => {
+	const stained = OLEARY_SURFACES.filter((surface) => oleary?.teeth[code][surface]);
+	return `Pieza ${code} · ${stained.length ? `teñidas: ${stained.map((surface) => OLEARY_SURFACE_LABELS[surface].toLowerCase()).join(', ')}` : 'sin superficies teñidas'}`;
+};
+const loeAverageText = (section: LoeSilnessSection): string => (section.average === null || section.average === undefined
+	? 'Sin datos'
+	: [section.average.toFixed(2).replace('.', ','), section.category ? LOE_SILNESS_CATEGORY_LABELS[section.category] : ''].filter(Boolean).join(' · '));
+const olearyResultText = (section: OlearySection): string => (section.percentage === null || section.percentage === undefined
+	? 'Sin datos'
+	: [`${section.stained_surfaces} de ${section.present_surfaces} superficies teñidas`, `${String(section.percentage).replace('.', ',')} %`, section.category ? OLEARY_CATEGORY_LABELS[section.category] : ''].filter(Boolean).join(' · '));
 ---
 <div class="hygiene-readonly">
 	<section aria-labelledby="hygiene-medical-title">
@@ -97,6 +117,23 @@ const textValue = (value: unknown): string => (typeof value === 'string' && valu
 				</> : <p>No cargado</p>}
 			</div>;
 		})}
+	</section>
+	<section aria-labelledby="hygiene-plaque-title">
+		<h3 id="hygiene-plaque-title">{HYGIENE_SECTION_LABELS.plaque}</h3>
+		<div class="index">
+			<h4>{HYGIENE_PLAQUE_SECTION_LABELS.loe_silness}</h4>
+			{loe ? <>
+				{loeTeeth.length ? <ul>{loeTeeth.map((code) => <li>{loeSummary(code)}</li>)}</ul> : <p>No hay piezas registradas.</p>}
+				<p>Promedio: {loeAverageText(loe)}</p>
+			</> : <p>No cargado</p>}
+		</div>
+		<div class="index">
+			<h4>{HYGIENE_PLAQUE_SECTION_LABELS.oleary}</h4>
+			{oleary ? <>
+				{olearyTeeth.length ? <ul>{olearyTeeth.map((code) => <li>{olearySummary(code)}</li>)}</ul> : <p>No hay piezas evaluadas.</p>}
+				<p>{olearyResultText(oleary)}</p>
+			</> : <p>No cargado</p>}
+		</div>
 	</section>
 </div>
 <style>
