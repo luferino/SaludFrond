@@ -2,8 +2,9 @@ import type { AstroCookies } from 'astro';
 import { apiFetch } from '../../shared/apiClient';
 import { parseAcademicPagination } from '../../shared/academic-api';
 import type { AcademicPagination } from '../../shared/academic-api';
+import { hasPatientResponseKeys, type PatientPersonalDataResponse } from './personal-data';
 
-export interface PatientListItem {
+export type PatientListItem = PatientPersonalDataResponse & {
 	id: string;
 	documento: string;
 	nombres: string;
@@ -13,7 +14,7 @@ export interface PatientListItem {
 	celular: string;
 	sexo: string;
 	direccion: string;
-}
+};
 export interface PatientListing extends AcademicPagination { items: PatientListItem[] }
 
 const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
@@ -23,7 +24,7 @@ const exactKeys = (value: Record<string, unknown>, keys: string[]) => {
 	return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
 };
 function isPatient(value: unknown): value is PatientListItem {
-	return isRecord(value) && exactKeys(value, [
+	return isRecord(value) && hasPatientResponseKeys(value, [
 		'id', 'documento', 'nombres', 'apellidos', 'fecha_nacimiento', 'email', 'celular', 'sexo', 'direccion',
 	])
 		&& typeof value.id === 'string' && typeof value.documento === 'string'

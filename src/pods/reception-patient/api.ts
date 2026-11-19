@@ -1,11 +1,12 @@
 import type { AstroCookies } from 'astro';
 import { apiFetch } from '../../shared/apiClient';
 import type { ReceptionCareer } from '../reception/careers';
+import { hasPatientResponseKeys, type PatientPersonalDataResponse } from '../paciente/personal-data';
 
-export interface ReceptionPatient {
+export type ReceptionPatient = PatientPersonalDataResponse & {
 	id: string; documento: string; nombres: string; apellidos: string; fecha_nacimiento: string | null;
 	email: string; celular: string; sexo: string; direccion: string;
-}
+};
 export type PatientMatch = { match: false } | { match: true; patient_id: string };
 export interface PatientEnrollment { patient_id: string; career: ReceptionCareer; enrolled: true }
 export interface RegisterPatientInput {
@@ -36,7 +37,7 @@ function isIsoDate(value: unknown): value is string {
 }
 
 export function isReceptionPatient(value: unknown): value is ReceptionPatient {
-	return record(value) && hasExactKeys(value, PATIENT_KEYS) && isUuid(value.id)
+	return record(value) && hasPatientResponseKeys(value, PATIENT_KEYS) && isUuid(value.id)
 		&& text(value.documento) && text(value.nombres) && text(value.apellidos)
 		&& (value.fecha_nacimiento === null || isIsoDate(value.fecha_nacimiento))
 		&& text(value.email) && text(value.celular) && text(value.sexo) && text(value.direccion);
