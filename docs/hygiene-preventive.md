@@ -54,7 +54,7 @@ The read-only view shows medical history, the odontogram and recorded teeth, car
 
 The student editor includes **Índices de placa**:
 
-- **Löe-Silness**: teeth 16, 21, 24, 36, 41 and 44; distal, vestibular, mesial and lingual/palatal sites, graded 0–3. *No presente* excludes the site from the calculation; zero is a recorded grade.
+- **Löe-Silness**: teeth 16, 21, 24, 36, 41 and 44; distal, vestibular, mesial and lingual/palatal sites, graded 0–3. *No presente* excludes the site from the calculation; zero is a recorded grade. On narrow screens, scroll the table horizontally to reach every site; keyboard users can focus the labelled table region and scroll it with the arrow keys. Headings and tooth numbers stay on one line.
 - **O'Leary**: mark each evaluated tooth, then its stained surfaces (mesial, distal, vestibular, lingual). An evaluated tooth with no stained surface still contributes four surfaces. A stained surface without *Evaluada* is rejected instead of silently discarded.
 - Results (average, percentage and category) are calculated by the server and shown read-only. Saving strips all computed plaque results and caries-index totals. Unchanged plaque controls preserve recorded teeth, including empty Löe-Silness teeth. Clearing a loaded section stores `null`.
 
