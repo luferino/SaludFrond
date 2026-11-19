@@ -1,11 +1,104 @@
 ---
 import type { FormValues } from '../../pods/hygiene-preventive-draft/actions/drafts';
-import type { HygienePlaque } from '../../pods/hygiene-preventive-draft/api';
+import { LOE_SILNESS_SITES, LOE_SILNESS_TEETH, OLEARY_SURFACES, type HygienePlaque } from '../../pods/hygiene-preventive-draft/api';
+import {
+	HYGIENE_PLAQUE_SECTION_LABELS, LOE_SILNESS_CATEGORY_LABELS, LOE_SILNESS_SITE_LABELS, OLEARY_CATEGORY_LABELS, OLEARY_SURFACE_LABELS,
+} from '../../pods/hygiene-preventive-draft/labels';
+import { CHART_ROWS } from '../../pods/hygiene-preventive-draft/odontogram';
 
-// Placeholder: the plaque controls and their server results arrive in a later slice. Renders nothing for now.
+// Plaque editor (D1). Controls are plain form fields: the page's #draft-form submits them with the rest of the draft.
+// Server results are shown only for loaded stored sections; they are never form controls.
 interface Props {
 	values: FormValues;
 	stored: HygienePlaque | undefined;
 	editable: boolean;
 }
+const { values, stored, editable } = Astro.props;
+const GRADES = ['', '0', '1', '2', '3'];
+const SURFACE_LETTERS: Record<(typeof OLEARY_SURFACES)[number], string> = { mesial: 'M', distal: 'D', vestibular: 'V', lingual: 'L' };
+const value = (name: string): string => {
+	const submitted = values[name];
+	return typeof submitted === 'string' ? submitted : '';
+};
+const loe = stored?.loe_silness;
+const oleary = stored?.oleary;
+const loeResult = loe ? (loe.average === null || loe.average === undefined
+	? 'Sin datos'
+	: [`promedio ${loe.average.toFixed(2).replace('.', ',')}`, loe.category ? LOE_SILNESS_CATEGORY_LABELS[loe.category] : ''].filter(Boolean).join(' · ')) : null;
+const olearyResult = oleary ? (oleary.percentage === null || oleary.percentage === undefined
+	? 'Sin datos'
+	: [
+		`${oleary.stained_surfaces} de ${oleary.present_surfaces} superficies teñidas`,
+		`${String(oleary.percentage).replace('.', ',')} %`,
+		oleary.category ? OLEARY_CATEGORY_LABELS[oleary.category] : '',
+	].filter(Boolean).join(' · ')) : null;
 ---
+<fieldset disabled={!editable} class="plaque">
+	<legend>Índices de placa</legend>
+	<p class="hint">Löe-Silness: calificá cada sitio de 0 a 3; un sitio sin calificar no cuenta. O'Leary: marcá la pieza como evaluada y sus superficies teñidas.</p>
+	<section class="index" aria-labelledby="plaque-loe-title">
+		<h3 id="plaque-loe-title">{HYGIENE_PLAQUE_SECTION_LABELS.loe_silness}</h3>
+		<div class="table-wrap">
+			<table>
+				<thead>
+					<tr>
+						<th scope="col">Pieza</th>
+						{LOE_SILNESS_SITES.map((site) => <th scope="col">{LOE_SILNESS_SITE_LABELS[site]}</th>)}
+					</tr>
+				</thead>
+				<tbody>
+					{LOE_SILNESS_TEETH.map((code) => <tr>
+						<th scope="row">{code}</th>
+						{LOE_SILNESS_SITES.map((site) => {
+							const name = `plaque.loe_silness.${code}.${site}`;
+							return <td>
+								<select name={name} aria-label={`Pieza ${code} · ${LOE_SILNESS_SITE_LABELS[site]}`}>
+									{GRADES.map((grade) => <option value={grade} selected={value(name) === grade}>{grade === '' ? 'No presente' : grade}</option>)}
+								</select>
+							</td>;
+						})}
+					</tr>)}
+				</tbody>
+			</table>
+		</div>
+		{loeResult && <p class="result">Calculado por el servidor: {loeResult}</p>}
+	</section>
+	<section class="index" aria-labelledby="plaque-oleary-title">
+		<h3 id="plaque-oleary-title">{HYGIENE_PLAQUE_SECTION_LABELS.oleary}</h3>
+		{CHART_ROWS.map((row) => <div class="chart-row">
+			<h4>{row.label}</h4>
+			<div class="teeth">
+				{[...row.left, ...row.right].map((code) => <fieldset class="tooth">
+					<legend>Pieza {code}</legend>
+					<label class="evaluated"><input type="checkbox" name={`plaque.oleary.${code}.evaluated`} value="on" checked={value(`plaque.oleary.${code}.evaluated`) === 'on'} /> Evaluada</label>
+					<div class="surfaces">
+						{OLEARY_SURFACES.map((surface) => <label>
+							<input type="checkbox" name={`plaque.oleary.${code}.${surface}`} value="on" checked={value(`plaque.oleary.${code}.${surface}`) === 'on'} />
+							<span aria-hidden="true">{SURFACE_LETTERS[surface]}</span>
+							<span class="sr-only">{`Pieza ${code} · ${OLEARY_SURFACE_LABELS[surface]} teñida`}</span>
+						</label>)}
+					</div>
+				</fieldset>)}
+			</div>
+		</div>)}
+		{olearyResult && <p class="result">Calculado por el servidor: {olearyResult}</p>}
+	</section>
+</fieldset>
+<style>
+	.plaque { min-inline-size: 0; max-inline-size: 100%; }
+	.hint { color: var(--muted); font-size: 0.85rem; }
+	.index { min-inline-size: 0; margin: 0.75rem 0; }
+	.index h3 { margin: 0.5rem 0 0.25rem; }
+	.index h4 { margin: 0.6rem 0 0.25rem; font-size: 0.85rem; color: var(--muted); }
+	.table-wrap { min-inline-size: 0; max-inline-size: 100%; overflow-x: auto; }
+	table { border-collapse: collapse; }
+	th, td { padding: 0.25rem 0.5rem; text-align: start; vertical-align: middle; }
+	select { inline-size: auto; }
+	.teeth { display: grid; grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr)); gap: 0.5rem; min-inline-size: 0; }
+	.tooth { min-inline-size: 0; margin: 0; padding: 0.4rem 0.6rem; border: 1px solid var(--field-line); border-radius: 8px; }
+	.tooth legend { padding: 0 0.25rem; font-weight: 600; }
+	.evaluated, .surfaces label { display: inline-flex; gap: 0.3rem; align-items: center; }
+	.surfaces { display: flex; flex-wrap: wrap; gap: 0.4rem 0.6rem; margin-top: 0.3rem; }
+	.result { font-weight: 600; overflow-wrap: anywhere; }
+	.sr-only { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+</style>
