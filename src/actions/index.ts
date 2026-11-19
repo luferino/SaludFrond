@@ -31,6 +31,7 @@ import { OPERATIVE_REPORT_FORM_FIELDS, handleCloseOperativeReport, handleSaveOpe
 import { PRACTICAL_EVALUATION_FORM_FIELDS, handleCorrectPracticalEvaluation, handleGradePracticalEvaluation } from '../pods/oral-surgery-draft/actions/practical-evaluation';
 import { handleEnableHygieneSubject } from '../pods/hygiene-preventive-draft/actions/subjects';
 import { HYGIENE_FORM_FIELDS, HYGIENE_MARK_FIELDS, handleCreateHygieneDraft, handleUpdateHygieneDraft } from '../pods/hygiene-preventive-draft/actions/drafts';
+import { handleDeclareHygieneConsent } from '../pods/hygiene-preventive-draft/actions/consent';
 
 const UUID_INPUT = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
 const ID_INPUT = z.string().regex(/^[1-9]\d{0,18}$/);
@@ -305,6 +306,17 @@ export const server = {
 			...Object.fromEntries(HYGIENE_FORM_FIELDS.map((name) => [name, HYGIENE_MARK_FIELDS.includes(name) ? z.array(z.enum(['caries', 'filled'])).optional() : z.string().optional()])),
 		}).strict(),
 		handler: handleUpdateHygieneDraft,
+	}),
+	declareHygieneConsent: defineAction({
+		accept: 'form',
+		input: z.object({
+			id: ID_INPUT, assignment_id: z.string(), limit: z.string(), offset: z.string(), ...LIST_COORDINATE_INPUTS,
+			paper_signed: z.literal('on'),
+			signer: z.enum(['patient', 'parent']),
+			signer_name: z.string().optional(),
+			signer_document: z.string().optional(),
+		}).strict(),
+		handler: handleDeclareHygieneConsent,
 	}),
 	createPatient: defineAction({
 		accept: 'form',

@@ -1,0 +1,30 @@
+---
+import type { HygieneConsentHistory as ConsentHistory } from '../../pods/hygiene-preventive-draft/api';
+import { HYGIENE_SIGNER_LABELS, hygieneTimestampLabel } from '../../pods/hygiene-preventive-draft/labels';
+
+// Paper consent history (S3), oldest first. Shared by the student editor and the teacher and admin detail pages: no form, no action, no script.
+interface Props { consent: ConsentHistory }
+const { consent } = Astro.props;
+---
+<div class="hygiene-consent">
+	{consent.declarations.length === 0 ? <p>No hay consentimiento declarado para este borrador.</p> : <ol class="declarations">
+		{consent.declarations.map((item) => <li>
+			<p><strong>{HYGIENE_SIGNER_LABELS[item.signer]}</strong>{item.id === consent.current_declaration_id && <span class="current"> · vigente</span>}</p>
+			<dl>
+				<div><dt>Nombre del firmante</dt><dd>{item.signer_name}</dd></div>
+				<div><dt>Documento del firmante</dt><dd>{item.signer_document}</dd></div>
+				<div><dt>Declarado</dt><dd><time datetime={item.declared_at}>{hygieneTimestampLabel(item.declared_at)}</time></dd></div>
+			</dl>
+		</li>)}
+	</ol>}
+</div>
+<style>
+	.declarations { display: grid; gap: 0.75rem; margin: 0; padding: 0; list-style: none; }
+	.declarations li { padding: 0.75rem; border: 1px solid var(--line); border-radius: 0.5rem; }
+	.declarations p { margin: 0 0 0.35rem; }
+	.current { color: var(--sage-deep); font-weight: 700; }
+	dl { display: grid; gap: 0.25rem; margin: 0; }
+	dl div { display: grid; grid-template-columns: minmax(0, 12rem) minmax(0, 1fr); gap: 0.5rem; }
+	dt { color: var(--muted); }
+	dd { margin: 0; overflow-wrap: anywhere; }
+</style>

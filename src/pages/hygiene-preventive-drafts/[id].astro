@@ -6,16 +6,18 @@ import { ApiError } from '../../shared/apiClient';
 import { listAssignedPatients } from '../../pods/patient-assignment/api';
 import { assignmentListCarrier, assignmentListQuery, parseAssignmentListCoordinates } from '../../pods/patient-assignment/list-coordinates';
 import { clinicalFilterCarrier } from '../../pods/kinesiology-evolution/listing';
-import { getHygieneDraft, HYGIENE_INDICES, HYGIENE_MEDICAL_QUESTIONS, HYGIENE_MEDICAL_TEXTS, TOOTH_FACES, validId, type HygieneDraft } from '../../pods/hygiene-preventive-draft/api';
+import { getHygieneConsent, getHygieneDraft, HYGIENE_INDICES, HYGIENE_MEDICAL_QUESTIONS, HYGIENE_MEDICAL_TEXTS, TOOTH_FACES, validId, type HygieneConsentHistory as ConsentHistory, type HygieneDraft } from '../../pods/hygiene-preventive-draft/api';
 import { formValuesFromHygieneContent, HYGIENE_COPY, hygieneTextareaText, hygieneUnsavedEntries, type FormValues } from '../../pods/hygiene-preventive-draft/actions/drafts';
+import { HYGIENE_CONSENT_COPY } from '../../pods/hygiene-preventive-draft/actions/consent';
 import { CHART_ORDER, isUpperTooth } from '../../pods/hygiene-preventive-draft/odontogram';
 import {
 	FACE_MARK_LABELS, HYGIENE_COMPONENT_LABELS, HYGIENE_DETAIL_LABEL, HYGIENE_INDEX_LABELS, HYGIENE_QUESTION_LABELS, HYGIENE_TEXT_LABELS,
-	TOOTH_FACE_LABELS, TOOTH_STATE_LABELS, UNRECORDED_TOOTH_LABEL,
+	HYGIENE_SIGNER_LABELS, TOOTH_FACE_LABELS, TOOTH_STATE_LABELS, UNRECORDED_TOOTH_LABEL,
 } from '../../pods/hygiene-preventive-draft/labels';
 import { decodeJwt } from '../../shared/jwt';
 import { actionHrefWithContext } from '../../pods/kinesiology-evaluation/api';
 import HygienePlaqueFields from '../../components/clinical/HygienePlaqueFields.astro';
+import HygieneConsentHistory from '../../components/clinical/HygieneConsentHistory.astro';
 
 const id = Astro.params.id ?? '';
 const search = Astro.url.searchParams;
@@ -24,7 +26,7 @@ const assignmentId = assignmentParams.length === 1 ? assignmentParams[0] : '';
 let listFilters: ReturnType<typeof parseAssignmentListCoordinates>['filters'] = {};
 const loginRedirect = `/auth/login?returnTo=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`;
 
-function actionReturnParams(data: { assignment_id: string; limit: string; offset: string; list_filters?: ReturnType<typeof parseAssignmentListCoordinates>['filters'] }) {
+function actionReturnParams(data: { assignment_id: string; limit: string; offset: string; list_filters?: ReturnType<typeof parseAssignmentListCoordinates>['filters'] }, flag = 'saved') {
 	const params = new URLSearchParams({ assignment_id: data.assignment_id });
 	if (data.list_filters !== undefined) {
 		for (const [key, value] of Object.entries(assignmentListCarrier({ limit: Number(data.limit), offset: Number(data.offset), filters: data.list_filters }))) params.set(key, value);
@@ -33,7 +35,7 @@ function actionReturnParams(data: { assignment_id: string; limit: string; offset
 		params.set('offset', data.offset);
 	}
 	for (const [key, value] of Object.entries(clinicalFilterCarrier(search))) params.set(key, value);
-	params.set('saved', '1');
+	params.set(flag, '1');
 	return params;
 }
 
@@ -48,6 +50,24 @@ let saveError = saveFailure?.error ?? '';
 if (saveResult?.error) saveError = isInputError(saveResult.error) ? HYGIENE_COPY.formInput : HYGIENE_COPY.saveUncertain;
 if (/sesión venció/i.test(saveError)) return Astro.redirect(loginRedirect);
 
+const consentResult = Astro.getActionResult(actions.declareHygieneConsent);
+const consentData = consentResult?.data;
+if (consentData?.success) {
+	// Same redirect rule as the save: the validated context decides the return URL before any read.
+	return Astro.redirect(`/hygiene-preventive-drafts/${encodeURIComponent(consentData.id)}?${actionReturnParams(consentData, 'consent_saved')}`);
+}
+const consentFailure = consentData?.success === false ? consentData : undefined;
+let consentError = consentFailure?.error ?? '';
+// An uncertain declaration may have been stored: the form stays closed until a reload shows the history.
+let consentUncertain = consentFailure?.uncertain ?? false;
+if (consentResult?.error) {
+	consentUncertain = !isInputError(consentResult.error);
+	consentError = consentUncertain ? HYGIENE_CONSENT_COPY.uncertain : HYGIENE_CONSENT_COPY.consentInput;
+}
+if (/sesión venció/i.test(consentError)) return Astro.redirect(loginRedirect);
+// The signer values the student typed, kept when a declaration is rejected.
+const consentFields = consentFailure?.values ?? { signer: '', signer_name: '', signer_document: '' };
+
 // Values the student submitted and the browser never saved; they are never sent again with the current version.
 const retainedValues = saveFailure?.values;
 let limit = 50;
@@ -58,6 +78,8 @@ let unavailable = false;
 let loadError = '';
 let formValues: FormValues | undefined;
 let formVersion = '';
+let consent: ConsentHistory | null = null;
+let consentLoadError = '';
 try {
 	const coordinates = parseAssignmentListCoordinates(search, true);
 	limit = coordinates.limit;
@@ -89,6 +111,13 @@ try {
 					formValues = formValuesFromHygieneContent(record.content);
 					formVersion = record.version;
 				}
+				try {
+					// Read after the draft: a failure here replaces only the consent section, never the editable draft.
+					consent = await getHygieneConsent(id, Astro.cookies);
+				} catch (consentReadFailure) {
+					if (consentReadFailure instanceof ApiError && consentReadFailure.status === 401) throw consentReadFailure;
+					consentLoadError = 'No se pudo cargar el consentimiento. El borrador se muestra igual; intentá recargar la página.';
+				}
 			}
 		}
 	}
@@ -112,6 +141,10 @@ const marked = (name: string): string[] => {
 const editable = eligible;
 const editHint = eligible ? HYGIENE_COPY.editable : HYGIENE_COPY.readOnly;
 const saved = search.get('saved') === '1';
+const consentSaved = search.get('consent_saved') === '1';
+const hasCurrentDeclaration = consent !== null && consent.current_declaration_id !== null;
+// Declaring needs the history: without it the button copy and the duplicate guard are unknown, so the form stays closed.
+const canDeclare = eligible && consent !== null && !consentLoadError && !consentUncertain;
 const unsaved = draft && !saveFailure?.conflict ? [] : hygieneUnsavedEntries(retainedValues);
 const coordinates = { limit, offset, filters: listFilters };
 const listCarrier = assignmentListCarrier(coordinates);
@@ -122,6 +155,7 @@ const contextHref = `/my-patients/${encodeURIComponent(assignmentId)}?${contextP
 // Keep the validated assignment-list coordinates on the form post, separate from clinical context.
 const actionContext = { assignment_id: assignmentId, ...listCarrier, ...clinicalCarrier };
 const saveHref = actionHrefWithContext(actions.updateHygieneDraft.toString(), actionContext, Astro.url.href);
+const consentHref = actionHrefWithContext(actions.declareHygieneConsent.toString(), actionContext, Astro.url.href);
 const STATE_OPTIONS = ['', 'present', 'absent', 'to_extract'] as const;
 ---
 <Layout>
@@ -204,6 +238,34 @@ const STATE_OPTIONS = ['', 'present', 'absent', 'to_extract'] as const;
 				<HygienePlaqueFields values={fields} stored={draft.content.plaque} editable={editable} />
 				{editable && <button class="button" type="submit">Guardar borrador</button>}
 			</form>}
+			<section class="consent" aria-labelledby="consent-title">
+				<h2 id="consent-title">Consentimiento informado en papel</h2>
+				{consentSaved && <p class="success" role="status">Consentimiento declarado.</p>}
+				{consentError && <p class="notice error" role="alert">{consentError}</p>}
+				{consentLoadError ? <p class="notice error" role="alert">{consentLoadError}</p> : consent && <>
+					<HygieneConsentHistory consent={consent} />
+					{canDeclare && <form method="POST" action={consentHref} id="consent-form">
+						<input type="hidden" name="id" value={draft.id} />
+						<input type="hidden" name="assignment_id" value={assignmentId} />
+						<input type="hidden" name="limit" value={limit} />
+						<input type="hidden" name="offset" value={offset} />
+						<input type="hidden" name="list_limit" value={limit} />
+						<input type="hidden" name="list_offset" value={offset} />
+						{Object.entries(listFilters).map(([key, value]) => <input type="hidden" name={`list_${key}`} value={value} />)}
+						<label class="confirm"><input type="checkbox" name="paper_signed" value="on" required /> Confirmo que existe el consentimiento firmado en papel. No es una firma electrónica y no se adjunta el documento.</label>
+						<fieldset class="signer">
+							<legend>Firmante</legend>
+							<label class="choice"><input type="radio" name="signer" value="patient" checked={consentFields.signer === 'patient'} required /> {HYGIENE_SIGNER_LABELS.patient}</label>
+							<label class="choice"><input type="radio" name="signer" value="parent" checked={consentFields.signer === 'parent'} required /> {HYGIENE_SIGNER_LABELS.parent}</label>
+							<label>Nombre del firmante <input type="text" name="signer_name" value={consentFields.signer_name} autocomplete="off" /></label>
+							<label>Documento del firmante <input type="text" name="signer_document" value={consentFields.signer_document} inputmode="numeric" autocomplete="off" /></label>
+							<p class="hint">Solo si firma la madre, el padre o el tutor. Si firma el paciente, dejá estos campos vacíos.</p>
+						</fieldset>
+						<p id="dirty-notice" class="notice error" role="status" hidden>{HYGIENE_CONSENT_COPY.unsavedDraft}</p>
+						<button id="consent-button" class="button" type="submit">{hasCurrentDeclaration ? 'Declarar nuevamente (corrige la declaración vigente)' : 'Declarar consentimiento en papel'}</button>
+					</form>}
+				</>}
+			</section>
 		</> : <section class="notice error" role="alert">
 			<h1 id="title">No se pudo cargar el borrador</h1>
 			<p>Volvé a la asignación e intentá nuevamente.</p>
@@ -229,6 +291,31 @@ const STATE_OPTIONS = ['', 'present', 'absent', 'to_extract'] as const;
 				return;
 			}
 			form.dataset.submitting = 'true';
+		});
+
+		// Unsaved draft edits block the consent declaration (D4). Presentation only: the backend re-checks every write.
+		const consentForm = document.querySelector<HTMLFormElement>('#consent-form');
+		const consentButton = document.querySelector<HTMLButtonElement>('#consent-button');
+		const dirtyNotice = document.querySelector<HTMLElement>('#dirty-notice');
+		let dirty = false;
+		const markDirty = () => {
+			dirty = true;
+			if (consentButton) consentButton.disabled = true;
+			if (dirtyNotice) dirtyNotice.hidden = false;
+		};
+		form?.addEventListener('input', markDirty);
+		form?.addEventListener('change', markDirty);
+		// One declaration per submit: a second submit is ignored.
+		consentForm?.addEventListener('submit', (event) => {
+			if (dirty || consentForm.dataset.submitting === 'true') {
+				event.preventDefault();
+				return;
+			}
+			consentForm.dataset.submitting = 'true';
+			if (consentButton) {
+				consentButton.disabled = true;
+				consentButton.textContent = 'Declarando…';
+			}
 		});
 
 		const root = document.querySelector<HTMLElement>('[data-odontogram]');
@@ -486,6 +573,10 @@ const STATE_OPTIONS = ['', 'present', 'absent', 'to_extract'] as const;
 		cursor: pointer;
 	}
 	.button.secondary { border-color: var(--sage-deep); background: var(--sage-soft); color: var(--ink); }
+	.consent { margin: 1rem 0; padding: 1.25rem; border: 1px solid var(--line); border-radius: 0.75rem; background: var(--paper); }
+	.consent h2 { margin: 0 0 0.5rem; font-size: 1.1rem; }
+	.consent .confirm, .consent .choice { display: inline-flex; gap: 0.35rem; align-items: center; font-weight: 400; }
+	.consent .signer { margin: 1rem 0 0; }
 	/* Enhanced chart: the no-JS list stays the form's source; the chart and inspector only present it. */
 	.odontogram[data-enhanced] .tooth { display: none; }
 	.odontogram[data-enhanced] .tooth[data-selected] { display: grid; }
