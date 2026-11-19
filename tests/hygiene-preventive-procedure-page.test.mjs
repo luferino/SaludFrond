@@ -133,6 +133,7 @@ async function renderEditor(options = {}) {
 			updateHygieneDraft: saveStub, declareHygieneConsent: consentStub,
 			createHygieneProcedure: createStub, updateHygieneProcedure: updateStub, deleteHygieneProcedure: deleteStub,
 		},
+		HygienePatientHeader: () => '',
 		HygienePlaqueFields: () => '<div data-plaque-fields></div>',
 		HygieneConsentHistory: () => '<div data-consent-history></div>',
 		// The real log component, compiled with the page's helpers, so the forms it renders are the ones under test.

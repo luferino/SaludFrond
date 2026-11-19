@@ -85,6 +85,7 @@ async function renderEditor(options = {}) {
 			updateHygieneProcedure: Object.assign(() => undefined, { toString: () => '/_actions/updateHygieneProcedure' }),
 			deleteHygieneProcedure: Object.assign(() => undefined, { toString: () => '/_actions/deleteHygieneProcedure' }),
 		},
+		HygienePatientHeader: (_astro, props) => `<p data-header-patient="${props.patientId}">Datos personales del paciente no disponibles.</p>`,
 		HygienePlaqueFields: (_astro, props) => { plaqueProps.push(props); return '<div data-plaque-fields></div>'; },
 		HygieneConsentHistory: () => '<div data-consent-history></div>',
 		HygieneProcedureLog: () => '<ol data-procedure-log></ol>',
@@ -130,7 +131,7 @@ async function renderEditor(options = {}) {
 	new Function('exports', ...Object.keys(mocks), output)(exports, ...Object.values(mocks));
 	// The compiler adds a scoped `astro-*` class to styled elements; assertions read the page's own classes and attributes.
 	const rendered = (await html(exports.default({ createAstro: () => Astro }, {}, {}))).replace(/ class="astro-[a-z0-9]+"/g, '').replace(/ astro-[a-z0-9]+(?=")/g, '');
-	return { html: rendered, reads, consentReads, procedureReads, server, importModule, plaqueProps };
+	return { html: rendered, cacheControl: Astro.response.headers.get('Cache-Control'), reads, consentReads, procedureReads, server, importModule, plaqueProps };
 }
 
 const count = (text, pattern) => (text.match(pattern) ?? []).length;
@@ -147,7 +148,7 @@ test('D1 a draft whose patient or origin differs from the assignment is unavaila
 	for (const draft of [{ patient_id: '22222222-3333-4444-8555-666666666666' }, { origin_subject_id: '22222222-3333-4444-8555-666666666666' }, { origin_group_id: '22222222-3333-4444-8555-666666666666' }]) {
 		const page = await renderEditor({ draft });
 		assert.match(page.html, /Borrador no disponible/, JSON.stringify(draft));
-		assert.doesNotMatch(page.html, /id="draft-form"/, JSON.stringify(draft));
+		assert.doesNotMatch(page.html, /id="draft-form"|data-header-patient/, JSON.stringify(draft));
 		assert.equal(page.reads.length, 1);
 	}
 });
@@ -155,6 +156,8 @@ test('D1 a draft whose patient or origin differs from the assignment is unavaila
 test('D1 the author with the write permission sees an editable form with a submit button', async () => {
 	const page = await renderEditor();
 	assert.match(page.html, /<form method="POST" action="\/_actions\/updateHygieneDraft\?/);
+	assert.ok(page.html.includes(`data-header-patient="${patientId}">Datos personales del paciente no disponibles.`));
+	assert.equal(page.cacheControl, 'no-store');
 	assert.match(page.html, /id="draft-form"/);
 	assert.match(page.html, /<button class="button" type="submit">Guardar borrador<\/button>/);
 	assert.doesNotMatch(page.html, /<fieldset disabled/);

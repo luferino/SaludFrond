@@ -88,6 +88,7 @@ async function renderEditor(options = {}) {
 		},
 		HygieneProcedureLog: () => '<ol data-procedure-log></ol>',
 		listHygieneProcedures: async () => [],
+		HygienePatientHeader: () => '',
 		HygienePlaqueFields: () => '<div data-plaque-fields></div>',
 		HygieneConsentHistory: (_astro, props) => `<ol data-consent-history data-declarations="${props.consent.declarations.length}" data-current="${props.consent.current_declaration_id ?? ''}"></ol>`,
 		isInputError: (error) => error?.input === true,

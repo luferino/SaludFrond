@@ -2,7 +2,7 @@
 
 Hygiene and Preventive Dentistry II (*Higiene y Preventiva II*) is an Odontology form with its own backend API (`/hygiene-preventive-drafts`). Its clinical content is independent of Kinesiology and Oral Surgery I. It covers subject enabling, student drafts (medical history, FDI odontogram, caries and plaque indices), paper-consent declarations, a procedure log and teacher approval. Administrators consult these records read-only.
 
-Not delivered: marital status and medical insurance.
+The student and teacher draft headers show the patient's name, marital status and medical insurance read-only. After validating the draft's origin, the page can request `GET /patients/:id/personal-data` without query parameters with `patient-personal-data:read`; the backend checks current access. A missing grant, rejected request or invalid response shows a generic message without hiding the draft. `No registrado` is distinct from `Sin seguro`. These fields are not part of the draft or its save request; this header is not shown in the administrator view.
 
 ## Enabling subjects (administrator)
 

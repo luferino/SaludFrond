@@ -1,6 +1,7 @@
 ---
 export const prerender = false;
 import Layout from '../../../layouts/Layout.astro';
+import HygienePatientHeader from '../../../components/clinical/HygienePatientHeader.astro';
 import HygieneReadOnly from '../../../components/clinical/HygieneReadOnly.astro';
 import HygieneConsentHistory from '../../../components/clinical/HygieneConsentHistory.astro';
 import HygieneProcedureLog from '../../../components/clinical/HygieneProcedureLog.astro';
@@ -122,6 +123,7 @@ try {
   : error ? <p role="alert">{error}</p>
   : draft && <>
    <p>Consulta de solo lectura. Los docentes no editan borradores.</p>
+   <HygienePatientHeader patientId={draft.patient_id} />
    <p>Paciente: {draft.patient_id}<br />Asignatura de origen: {draft.origin_subject_id}<br />Grupo de origen: {draft.origin_group_id}</p>
    <p>Versión actual: {draft.version} · actualizado <time datetime={draft.updated_at}>{hygieneTimestampLabel(draft.updated_at)}</time></p>
    <section aria-labelledby="content-title">

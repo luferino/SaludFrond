@@ -1,5 +1,6 @@
 ---
 export const prerender = false;
+import HygienePatientHeader from '../../components/clinical/HygienePatientHeader.astro';
 import { actions, isInputError } from 'astro:actions';
 import Layout from '../../layouts/Layout.astro';
 import { ApiError } from '../../shared/apiClient';
@@ -26,6 +27,7 @@ const search = Astro.url.searchParams;
 const assignmentParams = search.getAll('assignment_id');
 const assignmentId = assignmentParams.length === 1 ? assignmentParams[0] : '';
 let listFilters: ReturnType<typeof parseAssignmentListCoordinates>['filters'] = {};
+Astro.response.headers.set('Cache-Control', 'no-store');
 const loginRedirect = `/auth/login?returnTo=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`;
 
 function actionReturnParams(data: { assignment_id: string; limit: string; offset: string; list_filters?: ReturnType<typeof parseAssignmentListCoordinates>['filters'] }, flag = 'saved') {
@@ -221,6 +223,7 @@ const STATE_OPTIONS = ['', 'present', 'absent', 'to_extract'] as const;
 		</section> : draft ? <>
 			<header>
 				<h1 id="title">Borrador de Higiene y Preventiva II</h1>
+				<HygienePatientHeader patientId={draft.patient_id} />
 				<p class="context">Asignatura · <span class="identifier">{draft.origin_subject_id}</span><br />Grupo académico · <span class="identifier">{draft.origin_group_id}</span></p>
 				<p>Versión guardada: <strong>{draft.version}</strong></p>
 			</header>
