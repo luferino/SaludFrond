@@ -124,6 +124,7 @@ async function renderDetail({ grants = [readGrant, approveGrant], routeOverrides
 	const mocks = {
 		...helpers, Layout: null, Fragment: null, ApiError: FixtureApiError,
 		HygieneReadOnly: readOnlyComponent, HygieneConsentHistory: consentComponent, HygieneProcedureLog: procedureComponent,
+		HygienePatientHeader: () => '',
 		$$renderComponent: renderComponent,
 		teacherGrant: (_cookies, permission) => grants.includes(permission),
 		parseClinicalContext: (params) => {

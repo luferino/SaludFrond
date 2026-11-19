@@ -1,0 +1,21 @@
+---
+import { readHygienePatientHeader } from '../../pods/paciente/clinical-header';
+
+interface Props { patientId: string }
+const { patientId } = Astro.props;
+const patient = await readHygienePatientHeader(patientId, Astro.cookies);
+---
+{patient ? (
+	<dl class="patient-details" aria-label="Datos personales del paciente">
+		<div><dt>Paciente</dt><dd>{patient.name}</dd></div>
+		<div><dt>Estado civil</dt><dd>{patient.maritalStatus}</dd></div>
+		<div><dt>Seguro médico</dt><dd>{patient.insurance}</dd></div>
+	</dl>
+) : <p>Datos personales del paciente no disponibles.</p>}
+
+<style>
+	.patient-details { display: flex; gap: 0.75rem 1.5rem; flex-wrap: wrap; }
+	.patient-details > div { min-width: 0; }
+	dt { font-weight: 600; }
+	dd { margin: 0; overflow-wrap: anywhere; }
+</style>

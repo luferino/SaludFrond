@@ -170,6 +170,7 @@ async function renderDetail({ grants = [readGrant], hygieneRoutes = {}, search =
  };
  const mocks = {
   ...helpers, Layout: null, Fragment: null, ApiError: FixtureApiError, HygieneReadOnly: readOnlyComponent, $$renderComponent: renderComponent,
+  HygienePatientHeader: (_astro, props) => `<p data-header-patient="${props.patientId}">Datos personales del paciente no disponibles.</p>`,
   teacherGrant: (_cookies, permission) => grants.includes(permission),
   parseClinicalContext: (params) => {
    const get = (key) => { const values = params.getAll(key); if (values.length !== 1 || !/^[0-9a-f-]{36}$/i.test(values[0])) throw new Error('El contexto clínico no es válido.'); return values[0]; };
@@ -275,6 +276,7 @@ test('T4 a 401 from hygiene discovery redirects to login', async () => {
 test('D7 a matching origin renders the read-only draft with no-store and no form', async () => {
  const result = await renderDetail({ hygieneRoutes: { [`GET /hygiene-preventive-drafts/${id}`]: { body: draft() } } });
  assert.equal(result.cacheControl, 'no-store');
+ assert.ok(result.html.includes(`data-header-patient="${patient}">Datos personales del paciente no disponibles.`));
  assert.deepEqual(result.calls.map((call) => call.method), ['GET', 'GET', 'GET']);
  assert.match(result.html, /Higiene y Preventiva II · consulta docente/);
  assert.match(result.html, /Losartán/);
@@ -290,7 +292,7 @@ test('D7 an origin mismatch on patient, subject or group is unavailable and rend
  for (const [field, overrides] of mismatches) {
   const result = await renderDetail({ hygieneRoutes: { [`GET /hygiene-preventive-drafts/${id}`]: { body: draft(overrides) } } });
   assert.match(result.html, new RegExp(UNAVAILABLE), field);
-  assert.doesNotMatch(result.html, /Losartán|Sin novedades/, field);
+  assert.doesNotMatch(result.html, /Losartán|Sin novedades|data-header-patient/, field);
  }
 });
 
