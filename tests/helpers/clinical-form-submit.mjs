@@ -55,9 +55,11 @@ const stubbedModules = {
   '../pods/oral-surgery-draft/actions/operative-report': ['OPERATIVE_REPORT_FORM_FIELDS','handleCloseOperativeReport','handleSaveOperativeReport'],
   '../pods/oral-surgery-draft/actions/practical-evaluation': ['PRACTICAL_EVALUATION_FORM_FIELDS','handleCorrectPracticalEvaluation','handleGradePracticalEvaluation'],
   '../pods/hygiene-preventive-draft/actions/subjects': ['handleEnableHygieneSubject'],
+  '../pods/hygiene-preventive-draft/actions/drafts': ['HYGIENE_FORM_FIELDS','HYGIENE_MARK_FIELDS','handleCreateHygieneDraft','handleUpdateHygieneDraft'],
 };
 
-export async function loadRegisteredActions(fetchImpl) {
+/** `realModules` names stubbed specifiers the caller needs compiled for real (the Astro schema tests). */
+export async function loadRegisteredActions(fetchImpl, { realModules = [] } = {}) {
   const requests = [];
   const sandbox = vm.createContext({ URL, URLSearchParams, Response, Error, Date, BigInt, atob, fetch: async (url, init = {}) => {
     requests.push({ url, ...init, body: typeof init.body === 'string' ? JSON.parse(init.body) : init.body });
@@ -74,9 +76,9 @@ export async function loadRegisteredActions(fetchImpl) {
       if (specifier === 'astro/zod') return new vm.SyntheticModule(['z'], function () { this.setExport('z', z); }, { context: sandbox });
       if (specifier === 'astro') return new vm.SyntheticModule([], function () {}, { context: sandbox });
       if (specifier === './session') return new vm.SyntheticModule(['getSession','clearSession'], function () { this.setExport('getSession', (jar) => jar.get('session')?.value ?? null); this.setExport('clearSession', () => {}); }, { context: sandbox });
-      if (parent.identifier.endsWith(registryPath) && stubbedModules[specifier]) {
+      if (parent.identifier.endsWith(registryPath) && stubbedModules[specifier] && !realModules.includes(specifier)) {
         const names = stubbedModules[specifier];
-        return new vm.SyntheticModule(names, function () { for (const name of names) this.setExport(name, ['OPERATIVE_REPORT_FORM_FIELDS', 'PRACTICAL_EVALUATION_FORM_FIELDS'].includes(name) ? [] : () => undefined); }, { context: sandbox });
+        return new vm.SyntheticModule(names, function () { for (const name of names) this.setExport(name, ['OPERATIVE_REPORT_FORM_FIELDS', 'PRACTICAL_EVALUATION_FORM_FIELDS', 'HYGIENE_FORM_FIELDS', 'HYGIENE_MARK_FIELDS'].includes(name) ? [] : () => undefined); }, { context: sandbox });
       }
       const target = new URL(specifier.endsWith('.ts') ? specifier : `${specifier}.ts`, parent.identifier);
       return compile(await readFile(target, 'utf8'), target.href);

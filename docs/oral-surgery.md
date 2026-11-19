@@ -14,6 +14,8 @@ Oral Surgery I is an Odontology form with its own backend API (`/oral-surgery-dr
 | 401 | Redirect to login. |
 | Any other failure or a malformed response | An alert and no clinical actions at all, to avoid creating the wrong form. |
 
+When the same subject and group are also enabled for Hygiene and Preventive Dentistry II, both forms are shown in separate sections; see [Hygiene and Preventive Dentistry II](hygiene-preventive.md).
+
 Subjects are never inferred from their names and no subject ID is hardcoded. Each page lists at most the 50 most recent drafts of the context and says so when the limit is reached.
 
 ## Student draft editor

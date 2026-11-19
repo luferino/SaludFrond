@@ -11,6 +11,8 @@ import { listOralSurgeryDrafts, type OralSurgeryDraft } from '../../pods/oral-su
 import type { ClinicalListFilters } from '../../pods/kinesiology-evaluation/list-filters';
 import { clinicalFilterCarrier, listKinesiologyEvolutions, parseEvolutionListFilters, type EvolutionFilters, type KinesiologyEvolutionListItem } from '../../pods/kinesiology-evolution/listing';
 import { isOralSurgeryContext, listOralSurgeryContexts } from '../../pods/oral-surgery-draft/discovery';
+import { listHygieneDrafts, type HygieneDraft } from '../../pods/hygiene-preventive-draft/api';
+import { isHygieneContext, listHygieneContexts } from '../../pods/hygiene-preventive-draft/discovery';
 
 const assignmentId = Astro.params.assignmentId ?? '';
 const decimalId = /^[1-9]\d{0,18}$/.test(assignmentId) && BigInt(assignmentId) <= 9223372036854775807n;
@@ -32,6 +34,10 @@ let evolutionFilters: EvolutionFilters = {};
 let evolutions: KinesiologyEvolutionListItem[] = [];
 let evolutionError = false;
 const oralSurgeryPage = { limit: 50, offset: 0 };
+const hygieneListPage = { limit: 50, offset: 0 };
+let hygieneEnabled = false;
+let hygieneDrafts: HygieneDraft[] = [];
+let hygieneForbidden = false;
 const result = Astro.getActionResult(actions.createKinesiologyEvaluation);
 if (result?.data?.success === false && /sesión venció/i.test(result.data.error)) {
 	return Astro.redirect(`/auth/login?returnTo=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`);
@@ -41,6 +47,7 @@ const token = Astro.cookies.get('session')?.value;
 const actor = token ? decodeJwt(token) : null;
 const permissions = actor?.permissions;
 const mayReadOralSurgery = Array.isArray(permissions) && permissions.includes('oral-surgery-drafts:read');
+const mayReadHygiene = Array.isArray(permissions) && permissions.includes('hygiene-preventive-drafts:read');
 try {
 	const coordinates = parseAssignmentListCoordinates(query);
 	pagination = { limit: coordinates.limit, offset: coordinates.offset };
@@ -74,10 +81,23 @@ try {
 					discoveryError = true;
 				}
 			}
-			if (oralSurgeryEnabled && (query.has('status') || query.has('evaluation_id'))) filterError = 'Los filtros de Cirugía Oral solo admiten fechas.';
-			else if (oralSurgeryEnabled) {
+			if (mayReadHygiene && !discoveryError) {
+				try {
+					const contexts = await listHygieneContexts(Astro.cookies);
+					if (contexts.status === 'forbidden') hygieneForbidden = true;
+					else hygieneEnabled = isHygieneContext(contexts.items, assignment.subject_id, assignment.academic_group_id);
+				} catch (error) {
+					if (error instanceof ApiError && error.status === 401) throw error;
+					discoveryError = true;
+				}
+			}
+			// A discovery failure for either form hides both forms and both lists, so no list loads after one.
+			if (oralSurgeryEnabled && !discoveryError && (query.has('status') || query.has('evaluation_id'))) filterError = 'Los filtros de Cirugía Oral solo admiten fechas.';
+			else if (oralSurgeryEnabled && !discoveryError) {
 				oralSurgeryDrafts = await listOralSurgeryDrafts(context, Astro.cookies, oralSurgeryPage, clinicalFilters);
-			} else if (!discoveryError) {
+			}
+			if (hygieneEnabled && !discoveryError) hygieneDrafts = await listHygieneDrafts(context, Astro.cookies, hygieneListPage);
+			if (!oralSurgeryEnabled && !hygieneEnabled && !discoveryError) {
 				const hasFilters = Object.keys(clinicalFilters).length > 0;
 				[drafts, submitted] = await Promise.all([
 					hasFilters ? listEvaluations(context, Astro.cookies, clinicalFilters) : listEvaluations(context, Astro.cookies),
@@ -104,12 +124,25 @@ try {
 // Submitted values are shown as typed, so an invalid filter stays editable in the form.
 const shownFilters = { status: query.get('status') ?? '', date_from: query.get('date_from') ?? '', date_to: query.get('date_to') ?? '', evaluation_id: query.get('evaluation_id') ?? '' };
 // Read only after discovery: the action is registered by the Oral Surgery integration, not needed for Kinesiology.
-const oralSurgeryResult = oralSurgeryEnabled ? Astro.getActionResult(actions.createOralSurgeryDraft) : undefined;
+// Presentation flags after discovery: a discovery failure for either form hides both forms and both lists.
+const showOral = oralSurgeryEnabled && !discoveryError;
+const showHygiene = hygieneEnabled && !discoveryError;
+const showKinesiology = !oralSurgeryEnabled && !hygieneEnabled && !discoveryError;
+// Both forms render two sections; a single form keeps its create form in the header, as it always has.
+const stacked = showOral && showHygiene;
+const oralSurgeryResult = showOral ? Astro.getActionResult(actions.createOralSurgeryDraft) : undefined;
+const hygieneResult = showHygiene ? Astro.getActionResult(actions.createHygieneDraft) : undefined;
+if (hygieneResult?.data?.success === false && /sesión venció/i.test(hygieneResult.data.error)) {
+	return Astro.redirect(`/auth/login?returnTo=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`);
+}
 if (oralSurgeryResult?.data?.success === false && /sesión venció/i.test(oralSurgeryResult.data.error)) {
 	return Astro.redirect(`/auth/login?returnTo=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`);
 }
 if (result?.data?.success && assignment && decimalId) {
 	return Astro.redirect(`/kinesiology-evaluations/${result.data.evaluation.id}?${new URLSearchParams({ assignment_id: assignment.id, ...assignmentListCarrier({ ...pagination, filters: listFilters }), ...clinicalFilterCarrier(query) })}`);
+}
+if (hygieneResult?.data?.success && showHygiene && assignment && decimalId) {
+	return Astro.redirect(`/hygiene-preventive-drafts/${hygieneResult.data.draft.id}?${new URLSearchParams({ assignment_id: assignment.id, ...assignmentListCarrier({ ...pagination, filters: listFilters }), ...clinicalFilterCarrier(query) })}`);
 }
 if (oralSurgeryResult?.data?.success && oralSurgeryEnabled && assignment && decimalId) {
 	return Astro.redirect(`/oral-surgery-drafts/${oralSurgeryResult.data.draft.id}?${new URLSearchParams({ assignment_id: assignment.id, ...assignmentListCarrier({ ...pagination, filters: listFilters }), ...clinicalFilterCarrier(query) })}`);
@@ -127,11 +160,15 @@ const createOralSurgeryHref = oralSurgeryEnabled ? actionHrefWithContext(actions
 	assignment_id: assignmentId,
 	...actionListContext,
 }, Astro.url.href) : '';
+const createHygieneHref = showHygiene ? actionHrefWithContext(actions.createHygieneDraft.toString(), {
+	assignment_id: assignmentId,
+	...actionListContext,
+}, Astro.url.href) : '';
 ---
 <Layout>
 	<main class="clinical-page" aria-labelledby="title">
 		{filterError && <p class="notice error" role="alert">{filterError}</p>}
-		<p class="eyebrow"><a href={`/my-patients?${listQuery}`}>Mis pacientes asignados</a> / {oralSurgeryEnabled ? 'Cirugía Oral I' : discoveryError ? 'Ficha clínica' : 'Ficha kinésica inicial'}</p>
+		<p class="eyebrow"><a href={`/my-patients?${listQuery}`}>Mis pacientes asignados</a> / {discoveryError ? 'Ficha clínica' : stacked ? 'Odontología' : showOral ? 'Cirugía Oral I' : showHygiene ? 'Higiene y Preventiva II' : 'Ficha kinésica inicial'}</p>
 		{unavailable ? <section class="notice" role="status">
 			<h1 id="title">Asignación no disponible</h1>
 			<p>No se encontró esa asignación en esta página. Volvé a la lista para elegir el contexto vigente.</p>
@@ -147,7 +184,7 @@ const createOralSurgeryHref = oralSurgeryEnabled ? actionHrefWithContext(actions
 					<p>Documento: {assignment.documento}</p>
 					<p>Asignatura · <span class="identifier">{assignment.subject_id}</span><br />Grupo académico · <span class="identifier">{assignment.academic_group_id}</span></p>
 				</div>
-				{oralSurgeryEnabled ? <form method="POST" action={createOralSurgeryHref} id="new-draft">
+				{showOral && !stacked ? <form method="POST" action={createOralSurgeryHref} id="new-draft">
 					<input type="hidden" name="patient_id" value={assignment.patient_id} />
 					<input type="hidden" name="subject_id" value={assignment.subject_id} />
 					<input type="hidden" name="academic_group_id" value={assignment.academic_group_id} />
@@ -158,7 +195,18 @@ const createOralSurgeryHref = oralSurgeryEnabled ? actionHrefWithContext(actions
 					<button class="button" type="submit">Crear nuevo borrador de Cirugía Oral I</button>
 					<p class="hint">Cada creación inicia un encuentro clínico nuevo. Para continuar uno existente, abrilo desde la lista.</p>
 				</form> : null}
-				{!oralSurgeryEnabled && !discoveryError ? <form method="POST" action={createHref} id="new-draft">
+				{showHygiene && !stacked ? <form method="POST" action={createHygieneHref} id="new-hygiene-draft">
+					<input type="hidden" name="patient_id" value={assignment.patient_id} />
+					<input type="hidden" name="subject_id" value={assignment.subject_id} />
+					<input type="hidden" name="academic_group_id" value={assignment.academic_group_id} />
+					<input type="hidden" name="assignment_id" value={assignment.id} />
+					<input type="hidden" name="limit" value={pagination.limit} />
+					<input type="hidden" name="offset" value={pagination.offset} />
+					{Object.entries(listCarrier).map(([key, value]) => <input type="hidden" name={key} value={value} />)}
+					<button class="button" type="submit">Crear nuevo borrador de Higiene y Preventiva II</button>
+					<p class="hint">Cada creación inicia un encuentro clínico nuevo. Para continuar uno existente, abrilo desde la lista.</p>
+				</form> : null}
+				{showKinesiology ? <form method="POST" action={createHref} id="new-draft">
 					<input type="hidden" name="patient_id" value={assignment.patient_id} />
 					<input type="hidden" name="subject_id" value={assignment.subject_id} />
 					<input type="hidden" name="academic_group_id" value={assignment.academic_group_id} />
@@ -171,7 +219,7 @@ const createOralSurgeryHref = oralSurgeryEnabled ? actionHrefWithContext(actions
 					<p class="hint">Cada creación inicia un borrador nuevo y vacío.</p>
 				</form> : null}
 			</header>
-			{!discoveryError && <form method="GET" class="clinical-filters" aria-label="Filtrar listas clínicas">
+			{!discoveryError && (oralSurgeryEnabled || !hygieneEnabled) && <form method="GET" class="clinical-filters" aria-label="Filtrar listas clínicas">
 				<input type="hidden" name="limit" value={pagination.limit} />
 				<input type="hidden" name="offset" value={pagination.offset} />
 				{Object.entries(listFilters).map(([key, value]) => <input type="hidden" name={key} value={value} />)}
@@ -188,10 +236,22 @@ const createOralSurgeryHref = oralSurgeryEnabled ? actionHrefWithContext(actions
 				</>}
 			</form>}
 			{discoveryForbidden && <p class="notice" role="status">No tenés permiso para consultar si esta asignatura usa Cirugía Oral I. No se muestran acciones de Cirugía Oral.</p>}
+			{hygieneForbidden && <p class="notice" role="status">No tenés permiso para consultar si esta asignatura usa Higiene y Preventiva II. No se muestran acciones de Higiene y Preventiva II.</p>}
 			{discoveryError && <p class="error" role="alert">No se pudo determinar qué ficha clínica corresponde a esta asignatura. No se muestran acciones para evitar crear la ficha equivocada.</p>}
-			{oralSurgeryEnabled && oralSurgeryResult?.data?.success === false && <p class="error" role="alert">{oralSurgeryResult.data.error}</p>}
-			{oralSurgeryEnabled && !filterError ? <section aria-labelledby="oral-drafts-title">
+			{showOral && oralSurgeryResult?.data?.success === false && <p class="error" role="alert">{oralSurgeryResult.data.error}</p>}
+			{showOral && !filterError ? <section aria-labelledby="oral-drafts-title">
 				<h2 id="oral-drafts-title">Borradores de Cirugía Oral I</h2>
+				{stacked && <form method="POST" action={createOralSurgeryHref} id="new-draft">
+					<input type="hidden" name="patient_id" value={assignment.patient_id} />
+					<input type="hidden" name="subject_id" value={assignment.subject_id} />
+					<input type="hidden" name="academic_group_id" value={assignment.academic_group_id} />
+					<input type="hidden" name="assignment_id" value={assignment.id} />
+					<input type="hidden" name="limit" value={pagination.limit} />
+					<input type="hidden" name="offset" value={pagination.offset} />
+					{Object.entries(listCarrier).map(([key, value]) => <input type="hidden" name={key} value={value} />)}
+					<button class="button" type="submit">Crear nuevo borrador de Cirugía Oral I</button>
+					<p class="hint">Cada creación inicia un encuentro clínico nuevo. Para continuar uno existente, abrilo desde la lista.</p>
+				</form>}
 				{oralSurgeryDrafts.length ? <ul class="draft-list">{oralSurgeryDrafts.map((draft) => <li>
 					<a href={`/oral-surgery-drafts/${draft.id}?${new URLSearchParams({ assignment_id: assignment.id, ...assignmentListCarrier(coordinates), ...clinicalCarrier })}`}>
 						Abrir borrador · versión {draft.version} · actualizado {new Date(draft.updated_at).toLocaleDateString('es')}
@@ -199,7 +259,28 @@ const createOralSurgeryHref = oralSurgeryEnabled ? actionHrefWithContext(actions
 				</li>)}</ul> : <p>Todavía no hay borradores de Cirugía Oral I para esta asignación.</p>}
 				{oralSurgeryDrafts.length === oralSurgeryPage.limit && <p class="hint">Se muestran los {oralSurgeryPage.limit} borradores más recientes.</p>}
 			</section> : null}
-			{!oralSurgeryEnabled && !discoveryError && !filterError ? <>
+			{showHygiene ? <section aria-labelledby="hygiene-drafts-title">
+				<h2 id="hygiene-drafts-title">Borradores de Higiene y Preventiva II</h2>
+				{hygieneResult?.data?.success === false && <p class="error" role="alert">{hygieneResult.data.error}</p>}
+				{stacked && <form method="POST" action={createHygieneHref} id="new-hygiene-draft">
+					<input type="hidden" name="patient_id" value={assignment.patient_id} />
+					<input type="hidden" name="subject_id" value={assignment.subject_id} />
+					<input type="hidden" name="academic_group_id" value={assignment.academic_group_id} />
+					<input type="hidden" name="assignment_id" value={assignment.id} />
+					<input type="hidden" name="limit" value={pagination.limit} />
+					<input type="hidden" name="offset" value={pagination.offset} />
+					{Object.entries(listCarrier).map(([key, value]) => <input type="hidden" name={key} value={value} />)}
+					<button class="button" type="submit">Crear nuevo borrador de Higiene y Preventiva II</button>
+					<p class="hint">Cada creación inicia un encuentro clínico nuevo. Para continuar uno existente, abrilo desde la lista.</p>
+				</form>}
+				{hygieneDrafts.length ? <ul class="draft-list">{hygieneDrafts.map((draft) => <li>
+					<a href={`/hygiene-preventive-drafts/${draft.id}?${new URLSearchParams({ assignment_id: assignment.id, ...assignmentListCarrier(coordinates), ...clinicalCarrier })}`}>
+						Abrir borrador · versión {draft.version} · actualizado {new Date(draft.updated_at).toLocaleDateString('es')}
+					</a>
+				</li>)}</ul> : <p>Todavía no hay borradores de Higiene y Preventiva II para esta asignación.</p>}
+				{hygieneDrafts.length === hygieneListPage.limit && <p class="hint">Se muestran los {hygieneListPage.limit} borradores más recientes.</p>}
+			</section> : null}
+			{showKinesiology && !filterError ? <>
 				{result?.data?.success === false && <p class="error" role="alert">{result.data.error}</p>}
 				<section aria-labelledby="drafts-title">
 					<h2 id="drafts-title">Borradores de ficha inicial</h2>
@@ -239,14 +320,15 @@ const createOralSurgeryHref = oralSurgeryEnabled ? actionHrefWithContext(actions
 				for (const input of filterForm.querySelectorAll<HTMLInputElement | HTMLSelectElement>('input, select')) if (!input.value) input.disabled = true;
 			});
 		}
-		const form = document.querySelector<HTMLFormElement>('#new-draft');
-		form?.addEventListener('submit', () => {
-			const button = form.querySelector<HTMLButtonElement>('button[type="submit"]');
-			if (button) {
-				button.disabled = true;
-				button.textContent = 'Creando borrador…';
-			}
-		});
+		for (const createForm of document.querySelectorAll<HTMLFormElement>('#new-draft, #new-hygiene-draft')) {
+			createForm.addEventListener('submit', () => {
+				const button = createForm.querySelector<HTMLButtonElement>('button[type="submit"]');
+				if (button) {
+					button.disabled = true;
+					button.textContent = 'Creando borrador…';
+				}
+			});
+		}
 	</script>
 </Layout>
 
