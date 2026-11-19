@@ -36,11 +36,14 @@ const apiShim = { apiFetch: fakeApiFetch, ApiError: FixtureApiError };
 async function loadCjs(path, shims = {}) {
  const output = ts.transpileModule(await readFile(new URL(path, root), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
  const exports = {};
- new Function('exports', 'require', output)(exports, (name) => { if (!(name in shims)) throw new Error(`unshimmed ${name}`); return shims[name]; });
+ // The env stands in for Astro's import.meta.env, which a CommonJS load cannot parse; apiClient itself is shimmed.
+ new Function('exports', 'require', '__env', output.replaceAll('import.meta.env', '__env'))(exports, (name) => { if (!(name in shims)) throw new Error(`unshimmed ${name}`); return shims[name]; }, { PUBLIC_API_URL: 'https://backend.invalid' });
  return exports;
 }
 const jwtModule = await loadCjs('src/shared/jwt.ts');
-const hygieneApi = await loadCjs('src/pods/hygiene-preventive-draft/api.ts', { '../../shared/apiClient': apiShim });
+// api.ts reads the session cookie itself for the one request apiClient cannot answer (an empty 204 delete).
+const sessionShim = { getSession: (jar) => jar.get('session')?.value ?? null, clearSession: () => undefined };
+const hygieneApi = await loadCjs('src/pods/hygiene-preventive-draft/api.ts', { '../../shared/apiClient': apiShim, '../../shared/session': sessionShim });
 const labels = await loadCjs('src/pods/hygiene-preventive-draft/labels.ts');
 // A missing module fails only the tests that call into it.
 const admin = await loadCjs('src/pods/hygiene-preventive-draft/admin.ts', { '../../shared/jwt': jwtModule }).catch((error) => ({ loadError: error.message }));

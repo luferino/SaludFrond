@@ -1,4 +1,6 @@
-import type { FaceMark, HygieneIndexName, ToothFace, ToothState } from './api';
+import type {
+	FaceMark, HygieneIndexName, HygieneProcedureStatus, HygieneSigner, LoeSilnessCategory, LoeSilnessSite, OlearyCategory, OlearySurface, ToothFace, ToothState,
+} from './api';
 
 /** Spanish UI copy for Hygiene and Preventive Dentistry II; keys follow the backend contract. */
 export const HYGIENE_FORM_TITLE = 'Higiene y Preventiva II';
@@ -7,7 +9,23 @@ export const HYGIENE_SECTION_LABELS = {
 	medical_history: 'Antecedentes médicos',
 	odontogram: 'Odontograma',
 	indices: 'Índices',
+	plaque: 'Índices de placa',
 } as const;
+
+/** Plaque indices: the two sections, their site and surface copy, and the category copy of each result. */
+export const HYGIENE_PLAQUE_SECTION_LABELS: Record<'loe_silness' | 'oleary', string> = { loe_silness: 'Löe-Silness', oleary: "O'Leary" };
+export const LOE_SILNESS_SITE_LABELS: Record<LoeSilnessSite, string> = {
+	distal: 'Distal', vestibular: 'Vestibular', mesial: 'Mesial', lingual: 'Lingual / palatino',
+};
+export const OLEARY_SURFACE_LABELS: Record<OlearySurface, string> = {
+	mesial: 'Mesial', distal: 'Distal', vestibular: 'Vestibular', lingual: 'Lingual / palatino',
+};
+export const LOE_SILNESS_CATEGORY_LABELS: Record<LoeSilnessCategory, string> = { low: 'POCA', moderate: 'MODERADA', abundant: 'ABUNDANTE' };
+export const OLEARY_CATEGORY_LABELS: Record<OlearyCategory, string> = { good: 'BUENO', fair: 'REGULAR', poor: 'MALO' };
+
+/** Consent signer and procedure status copy. */
+export const HYGIENE_SIGNER_LABELS: Record<HygieneSigner, string> = { patient: 'Paciente', parent: 'Madre, padre o tutor' };
+export const HYGIENE_PROCEDURE_STATUS_LABELS: Record<HygieneProcedureStatus, string> = { pending: 'Pendiente', approved: 'Aprobado' };
 
 /** Question copy for each yes/no answer; its `<name>_detail` text uses HYGIENE_DETAIL_LABEL. */
 export const HYGIENE_QUESTION_LABELS: Record<string, string> = {

@@ -1,0 +1,11 @@
+---
+import type { FormValues } from '../../pods/hygiene-preventive-draft/actions/drafts';
+import type { HygienePlaque } from '../../pods/hygiene-preventive-draft/api';
+
+// Placeholder: the plaque controls and their server results arrive in a later slice. Renders nothing for now.
+interface Props {
+	values: FormValues;
+	stored: HygienePlaque | undefined;
+	editable: boolean;
+}
+---

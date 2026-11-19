@@ -417,3 +417,64 @@ test('create maps a typed rejection to the patient copy and an untyped failure t
 	assert.match(uncertain.error, /Revisá la lista de borradores antes de volver a intentarlo/);
 	assert.equal(posts(offline.requests).length, 1);
 });
+
+// S1: plaque is kept exactly as stored (the form has no plaque controls yet) and never sends computed results.
+const plaqueServed = {
+	loe_silness: { teeth: { 16: { distal: 2, vestibular: 2, mesial: 2, lingual: 1 } }, average: 1.75, category: 'abundant' },
+	oleary: { teeth: { 11: { mesial: true, distal: false, vestibular: false, lingual: false } }, stained_surfaces: 1, present_surfaces: 4, percentage: 25, category: 'good' },
+};
+const plaqueWritten = { loe_silness: { teeth: plaqueServed.loe_silness.teeth }, oleary: { teeth: plaqueServed.oleary.teeth } };
+/** A PATCH answer as the server returns it: the saved content with its computed plaque results. */
+const echoWithPlaque = (results) => ({ body }) => ({ body: draft({ version: String(BigInt(body.expected_version) + 1n), content: { ...withTotals(body.content), plaque: results } }) });
+
+test('D3 a stored plaque is sent with the save as its stored teeth, without any computed result', async () => {
+	const env = await environment(baseRoutes({
+		[`GET ${draftPath}`]: readDraft({ ...served, plaque: plaqueServed }),
+		[`PATCH ${draftPath}`]: echoWithPlaque(plaqueServed),
+	}));
+	const result = await env.drafts.handleUpdateHygieneDraft(saveInput(env, served), { cookies: env.cookies });
+	assert.equal(result.success, true);
+	assert.deepEqual(sentContent(env.requests).plaque, plaqueWritten);
+	assert.equal(JSON.stringify(patches(env.requests)[0].body).includes('average'), false);
+	assert.equal(JSON.stringify(patches(env.requests)[0].body).includes('percentage'), false);
+});
+
+test('D3 a stored plaque with null or empty sections keeps that shape in the save', async () => {
+	const stored = { loe_silness: null, oleary: { teeth: {}, stained_surfaces: 0, present_surfaces: 0, percentage: null, category: null } };
+	const env = await environment(baseRoutes({
+		[`GET ${draftPath}`]: readDraft({ ...served, plaque: stored }),
+		[`PATCH ${draftPath}`]: echoWithPlaque(stored),
+	}));
+	await env.drafts.handleUpdateHygieneDraft(saveInput(env, served), { cookies: env.cookies });
+	assert.deepEqual(sentContent(env.requests).plaque, { loe_silness: null, oleary: { teeth: {} } });
+});
+
+test('D3 a stored draft without plaque is saved without a plaque key', async () => {
+	const env = await environment();
+	const result = await env.drafts.handleUpdateHygieneDraft(saveInput(env, served), { cookies: env.cookies });
+	assert.equal(result.success, true);
+	assert.equal(Object.hasOwn(sentContent(env.requests), 'plaque'), false);
+});
+
+test('D3 hygieneContentFromForm copies the stored plaque when present and leaves an absent one absent', async () => {
+	const env = await environment();
+	assert.deepEqual(plain(env.drafts.hygieneContentFromForm(browserForm(env, served), { ...writable, plaque: plaqueWritten })).plaque, plaqueWritten);
+	assert.equal(Object.hasOwn(env.drafts.hygieneContentFromForm(browserForm(env, served), writable), 'plaque'), false);
+});
+
+// Shared control labels and unsaved values, moved out of the editor page without behavior change.
+test('the unsaved-value helper lists answered controls with their Spanish labels and skips empty and unknown ones', async () => {
+	const env = await environment();
+	const entries = env.drafts.hygieneUnsavedEntries({
+		'medical_history.diabetes': 'true', 'medical_history.observations': '', 'odontogram.16.state': 'present',
+		'odontogram.16.occlusal': ['caries', 'filled'], 'indices.ceo_d.c': '2', 'unknown.field': 'x', 'odontogram.18.state': '',
+	});
+	assert.deepEqual(plain(entries), [
+		{ label: 'Diabetes', value: 'Sí' },
+		{ label: 'Pieza 16 · Estado', value: 'Presente' },
+		{ label: 'Pieza 16 · Oclusal / incisal', value: 'Caries, Obturada' },
+		{ label: 'ceo-d (dentición temporal) · Cariadas', value: '2' },
+	]);
+	assert.deepEqual(plain(env.drafts.hygieneUnsavedEntries(undefined)), []);
+	assert.equal(env.drafts.HYGIENE_CONTROL_LABELS.get('medical_history.diabetes'), 'Diabetes');
+});

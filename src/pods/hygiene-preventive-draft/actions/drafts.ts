@@ -26,7 +26,10 @@ import {
 	type ToothRecord,
 	type ToothState,
 } from '../api';
-import { HYGIENE_COMPONENT_LABELS, HYGIENE_INDEX_LABELS } from '../labels';
+import {
+	FACE_MARK_LABELS, HYGIENE_COMPONENT_LABELS, HYGIENE_DETAIL_LABEL, HYGIENE_INDEX_LABELS, HYGIENE_QUESTION_LABELS, HYGIENE_TEXT_LABELS,
+	TOOTH_FACE_LABELS, TOOTH_STATE_LABELS,
+} from '../labels';
 
 /** Submitted controls: one string per select, radio, text or number control; one array of marks per face. */
 export type FormValues = Record<string, string | string[]>;
@@ -77,6 +80,38 @@ const FORM_FIELD_SET = new Set(HYGIENE_FORM_FIELDS);
 const MARK_FIELD_SET = new Set(HYGIENE_MARK_FIELDS);
 const ANSWER_FIELD_SET = new Set(HYGIENE_MEDICAL_QUESTIONS.map((question) => `medical_history.${question}`));
 const STATE_FIELD_SET = new Set(FDI_TEETH.map((code) => `odontogram.${code}.state`));
+
+/** Labels of every control, so a retained value can be listed with its question or tooth. */
+export const HYGIENE_CONTROL_LABELS = new Map<string, string>();
+for (const question of HYGIENE_MEDICAL_QUESTIONS) {
+	HYGIENE_CONTROL_LABELS.set(`medical_history.${question}`, HYGIENE_QUESTION_LABELS[question]);
+	HYGIENE_CONTROL_LABELS.set(`medical_history.${question}_detail`, `${HYGIENE_QUESTION_LABELS[question]} · ${HYGIENE_DETAIL_LABEL}`);
+}
+for (const field of HYGIENE_MEDICAL_TEXTS) HYGIENE_CONTROL_LABELS.set(`medical_history.${field}`, HYGIENE_TEXT_LABELS[field]);
+for (const code of FDI_TEETH) {
+	HYGIENE_CONTROL_LABELS.set(`odontogram.${code}.state`, `Pieza ${code} · Estado`);
+	for (const face of TOOTH_FACES) HYGIENE_CONTROL_LABELS.set(`odontogram.${code}.${face}`, `Pieza ${code} · ${TOOTH_FACE_LABELS[face]}`);
+}
+for (const [name, { components }] of Object.entries(HYGIENE_INDICES)) {
+	for (const component of components) {
+		HYGIENE_CONTROL_LABELS.set(`indices.${name}.${component}`, `${HYGIENE_INDEX_LABELS[name as keyof typeof HYGIENE_INDEX_LABELS]} · ${HYGIENE_COMPONENT_LABELS[component]}`);
+	}
+}
+
+/** Answered controls only: an empty control has nothing to copy. */
+export function hygieneUnsavedEntries(values: FormValues | undefined): { label: string; value: string }[] {
+	return Object.entries(values ?? {}).flatMap(([name, value]) => {
+		const label = HYGIENE_CONTROL_LABELS.get(name);
+		if (!label) return [];
+		let shown: string;
+		if (Array.isArray(value)) shown = value.map((mark) => FACE_MARK_LABELS[mark as keyof typeof FACE_MARK_LABELS]).join(', ');
+		else if (name.endsWith('.state')) shown = value === '' ? '' : TOOTH_STATE_LABELS[value as keyof typeof TOOTH_STATE_LABELS];
+		else if (value === 'true') shown = 'Sí';
+		else if (value === 'false') shown = 'No';
+		else shown = value;
+		return shown === '' ? [] : [{ label, value: shown }];
+	});
+}
 
 /** Textarea body for a stored text. The HTML parser drops one line break right after `<textarea>`, so one is added. */
 export function hygieneTextareaText(value: string): string {
@@ -214,6 +249,8 @@ export function hygieneContentFromForm(values: FormValues, stored: HygieneConten
 	if (odontogram !== undefined) content.odontogram = odontogram;
 	const indices = indicesFromForm(values, stored.indices);
 	if (indices !== undefined) content.indices = indices;
+	// The form has no plaque controls yet: the stored plaque is carried over exactly as it was read, and an absent one stays absent.
+	if (stored.plaque !== undefined) content.plaque = stored.plaque;
 	return validateHygieneContent(content);
 }
 
