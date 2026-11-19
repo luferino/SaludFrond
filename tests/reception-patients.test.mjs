@@ -167,6 +167,30 @@ test('GET /reception/patients is scoped by career and validates the exact DTO li
 	assert.equal(net.calls[0].body, undefined);
 });
 
+test('Reception preserves the personal-data pair on list, registration and contact responses without sending it', async () => {
+	const recorded = dto({ marital_status: 'widowed', medical_insurance: 'none' });
+	const unrecorded = dto({ id: ids.other, marital_status: null, medical_insurance: null });
+	const net = backend(({ method }) => ({ body: method === 'GET' ? { items: [recorded, unrecorded], limit: 100, offset: 0 } : recorded }));
+	const api = await compile(apiModule, net.fetch);
+	assert.deepEqual(plain(await api.listReceptionPatients('kinesiology', cookies())), [recorded, unrecorded]);
+
+	const { id, marital_status, medical_insurance, ...fields } = recorded;
+	const input = { career: 'kinesiology', ...fields };
+	assert.deepEqual(plain(await api.registerReceptionPatient({ ...input, marital_status, medical_insurance }, cookies())), recorded);
+	assert.deepEqual(net.calls[1].body, input);
+
+	const contact = { email: recorded.email, celular: recorded.celular, direccion: recorded.direccion };
+	assert.deepEqual(plain(await api.updateReceptionPatientContact(id, 'kinesiology', { ...contact, marital_status, medical_insurance }, cookies())), recorded);
+	assert.deepEqual(net.calls[2].body, contact);
+
+	for (const invalid of [
+		dto({ marital_status: 'unknown', medical_insurance: null }),
+		dto({ marital_status: 'single', medical_insurance: false }),
+		dto({ medical_insurance: null }),
+		dto({ marital_status: null, medical_insurance: null, created_by: ids.user }),
+	]) assert.equal(api.isReceptionPatient(invalid), false);
+});
+
 test('patient DTO rejects extra keys, missing keys and malformed values', async () => {
 	const bad = [
 		{ ...dto(), created_by: ids.user },

@@ -128,6 +128,24 @@ test('admin listing accepts the exact canonical nine-field patient DTO without r
 	assert.deepEqual(JSON.parse(JSON.stringify(result.items[0])), canonical);
 });
 
+test('admin listing accepts the additive personal-data pair and preserves null versus uninsured', async () => {
+	const recorded = { ...canonicalPatient, marital_status: 'civil_union', medical_insurance: 'none' };
+	const unrecorded = { ...canonicalPatient, marital_status: null, medical_insurance: null };
+	const input = { q: '', limit: 50, offset: 0 };
+	const api = await load('src/pods/paciente/listing.ts', backend({ items: [recorded, unrecorded], limit: 50, offset: 0 }).fetch);
+	assert.deepEqual(JSON.parse(JSON.stringify((await api.listPatients(input, cookies())).items)), [recorded, unrecorded]);
+
+	for (const item of [
+		{ ...recorded, medical_insurance: 'unknown' },
+		{ ...recorded, marital_status: false },
+		{ ...canonicalPatient, marital_status: null },
+		{ ...recorded, created_by: canonicalPatient.id },
+	]) {
+		const invalid = await load('src/pods/paciente/listing.ts', backend({ items: [item], limit: 50, offset: 0 }).fetch);
+		await assert.rejects(invalid.listPatients(input, cookies()), /Respuesta de pacientes inválida/);
+	}
+});
+
 test('compiled admin HTML renders search state, canonical DTO names, and q-preserving pager links', async () => {
 	const rows = Array.from({ length: 50 }, (_, index) => ({ ...canonicalPatient, id: `${String(index + 1).padStart(8, '0')}-1111-4111-8111-111111111111` }));
 	const result = await renderAstroPage('src/pages/patients.astro', { query: 'q=Ana%25&limit=50&offset=0', items: rows });
