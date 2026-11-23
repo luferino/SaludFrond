@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
@@ -68,7 +69,7 @@ async function evaluate(path, options = {}) {
 	if (path.endsWith('.astro')) {
 		const frontmatter = code.split('---')[1].replace(/^export const prerender[^\n]*\n/m, '');
 		const imports = frontmatter.match(/^import .*;\r?$/gm) ?? [];
-		code = `${imports.join('\n')}\nexport async function render() { ${frontmatter.replace(/^import .*;\r?$/gm, '')}\nreturn { state, items, limit, previousOffset, nextOffset, invalidMessage, actionResult }; }`;
+		code = `${imports.join('\n')}\nexport async function render() { ${frontmatter.replace(/^import .*;\r?$/gm, '')}\nreturn { state, items, limit, q, careerId, previousOffset, nextOffset, invalidMessage, actionResult }; }`;
 	}
 	const module = await compile(code, new URL(path, root).href);
 	await module.evaluate();
@@ -329,6 +330,107 @@ test('group listing searches literal names with career context and rejects inval
 		assert.equal(rejected.value.state, 'invalid-search', query);
 		assert.equal(rejected.requests.length, 0, query);
 	}
+});
+
+async function renderGroupList(props) {
+	const require = createRequire(import.meta.resolve('astro/package.json'));
+	const { transform } = require('@astrojs/compiler');
+	let code = (await transform(await source(componentPath), { filename: componentPath })).code;
+	const ast = ts.createSourceFile('group-list.ts', code, ts.ScriptTarget.Latest, true);
+	const removals = ast.statements.filter((statement) => ts.isImportDeclaration(statement)
+		|| statement.getText(ast).startsWith('export const $$metadata'))
+		.map((statement) => [statement.getFullStart(), statement.getEnd()]);
+	for (const [start, end] of removals.reverse()) code = code.slice(0, start) + code.slice(end);
+	const escape = (value) => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
+	async function html(value) {
+		value = await value;
+		if (value == null || value === false) return '';
+		if (Array.isArray(value)) return (await Promise.all(value.map(html))).join('');
+		return String(value);
+	}
+	const Astro = { props };
+	const mocks = {
+		$$createAstro: () => Astro,
+		$$createComponent: (component) => component,
+		$$render: async (strings, ...values) => {
+			let output = '';
+			for (let i = 0; i < strings.length; i++) output += strings[i] + await html(values[i]);
+			return output;
+		},
+		$$renderComponent: async (_result, _name, component, childProps, slots) => component({ createAstro: () => Astro }, childProps, slots),
+		$$addAttribute: (value, name) => value === false || value == null ? '' : value === true ? ` ${name}` : ` ${name}="${escape(value)}"`,
+		$$maybeRenderHead: () => '',
+	};
+	const output = ts.transpileModule(code, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+	const exports = {};
+	new Function('exports', ...Object.keys(mocks), output)(exports, ...Object.values(mocks));
+	return html(await exports.default({ createAstro: () => Astro }, props, {}));
+}
+
+const careerId = '11111111-1111-4111-8111-111111111111';
+const groupsUrl = 'https://frontend.invalid/groups';
+
+function groupLink(html, text) {
+	const href = html.match(new RegExp(`<a[^>]* href="([^"]+)"[^>]*>${text}</a>`))?.[1];
+	assert.ok(href, `missing link: ${text}`);
+	return new URL(href.replaceAll('&amp;', '&'), groupsUrl);
+}
+
+test('group search applies and clears from the first page, preserving career and page size', async () => {
+	const initial = await evaluate(pagePath, {
+		url: `${groupsUrl}?limit=1&offset=2&career_id=${careerId}&q=Cohorte%25`,
+		response: { items: [sample()], limit: 1, offset: 2 },
+	});
+	const html = await renderGroupList(initial.value);
+	const form = html.match(/<form[^>]*method="get"[^>]*action="\/groups"[^>]*>(.*?)<\/form>/s)?.[1];
+	assert.ok(form, 'a native GET search form is required');
+	assert.match(form, /<label[^>]*for="group-search"[^>]*>Buscar por nombre<\/label>/);
+	assert.match(form, /name="q"[^>]*maxlength="100"[^>]*value="Cohorte%"/);
+	const apply = new URL(groupsUrl);
+	for (const [, name, value] of form.matchAll(/<input[^>]*type="hidden"[^>]*name="([^"]+)"[^>]*value="([^"]+)"/g)) {
+		apply.searchParams.set(name, value);
+	}
+	apply.searchParams.set('q', '  Sur%_  ');
+	const checks = [
+		['Página anterior', '1', 'Cohorte%'], ['Página siguiente', '3', 'Cohorte%'],
+		['Limpiar búsqueda', null, null],
+	];
+	for (const [text, offset, q] of checks) {
+		const link = groupLink(html, text);
+		assert.equal(link.pathname, '/groups');
+		assert.equal(link.searchParams.get('limit'), '1');
+		assert.equal(link.searchParams.get('career_id'), careerId);
+		assert.equal(link.searchParams.get('offset'), offset);
+		assert.equal(link.searchParams.get('q'), q);
+	}
+	for (const [url, q] of [[apply, 'Sur%_'], [groupLink(html, 'Limpiar búsqueda'), null]]) {
+		const result = await evaluate(pagePath, { url, response: { items: [sample()], limit: 1, offset: 0 } });
+		assert.equal(result.value.state, 'success');
+		assert.deepEqual(Object.fromEntries(new URL(result.requests[0].url).searchParams), {
+			limit: '1', offset: '0', career_id: careerId, ...(q ? { q } : {}),
+		});
+	}
+});
+
+test('group list distinguishes a name-search miss from an unfiltered empty page and API failure', async () => {
+	const response = { items: [], limit: 50, offset: 0 };
+	const miss = await evaluate(pagePath, { url: `${groupsUrl}?q=Cohorte`, response });
+	const missHtml = await renderGroupList(miss.value);
+	assert.match(missHtml, /role="status"/);
+	assert.match(missHtml, /No se encontraron grupos con ese nombre en esta página/);
+	assert.doesNotMatch(missHtml, /No se pudo cargar el catálogo/);
+
+	const blank = await evaluate(pagePath, { url: `${groupsUrl}?q=%20%20`, response });
+	assert.equal(new URL(blank.requests[0].url).searchParams.has('q'), false);
+	const blankHtml = await renderGroupList(blank.value);
+	assert.match(blankHtml, /No hay grupos académicos en esta página/);
+	assert.doesNotMatch(blankHtml, /Limpiar búsqueda|No se encontraron grupos con ese nombre/);
+
+	const failed = await evaluate(pagePath, { url: `${groupsUrl}?q=Cohorte`, status: 500 });
+	const failedHtml = await renderGroupList(failed.value);
+	assert.match(failedHtml, /role="alert"/);
+	assert.match(failedHtml, /No se pudo cargar el catálogo/);
+	assert.doesNotMatch(failedHtml, /No se encontraron grupos con ese nombre/);
 });
 
 test('missing session redirects and invalid or repeated pagination never fetches', async () => {

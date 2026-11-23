@@ -19,6 +19,11 @@ const pageHref = (next: number) => {
 	if (q) params.set('q', q);
 	return `/groups?${params}`;
 };
+const clearSearchHref = () => {
+	const params = new URLSearchParams({ limit: String(limit) });
+	if (careerId) params.set('career_id', careerId);
+	return `/groups?${params}`;
+};
 ---
 
 {state === 'denied' ? (
@@ -49,8 +54,8 @@ const pageHref = (next: number) => {
 	</section>
 ) : items.length === 0 ? (
 	<section class="message empty" role="status" aria-labelledby="groups-state-title">
-		<h2 id="groups-state-title">No hay grupos académicos en esta página</h2>
-		<p>La consulta no devolvió grupos para esta página.</p>
+		<h2 id="groups-state-title">{q ? 'No se encontraron grupos con ese nombre en esta página' : 'No hay grupos académicos en esta página'}</h2>
+		<p>{q ? 'Probá con otro nombre o limpiá la búsqueda para volver a la primera página.' : 'La consulta no devolvió grupos para esta página.'}</p>
 	</section>
 ) : (
 	<section class="catalog" aria-label="Listado de grupos académicos">
@@ -74,6 +79,7 @@ const pageHref = (next: number) => {
 	<input type="hidden" name="limit" value={limit} />
 	{careerId && <input type="hidden" name="career_id" value={careerId} />}
 	<button type="submit">Buscar</button>
+	{q && <a href={clearSearchHref()}>Limpiar búsqueda</a>}
 </form>
 
 {state === 'success' && (previousOffset !== null || nextOffset !== null) && (
@@ -136,6 +142,7 @@ const pageHref = (next: number) => {
 	.listing-search label { flex-basis: 100%; font-weight: 600; }
 	.listing-search input { min-height: 2.5rem; padding: 0.45rem 0.6rem; }
 	.listing-search button { min-height: 2.5rem; padding: 0.45rem 0.9rem; border: 0; border-radius: 6px; background: var(--rust); color: var(--field); cursor: pointer; }
+	.listing-search a { align-self: center; text-decoration: underline; text-underline-offset: 4px; }
 	.pagination { display: flex; justify-content: space-between; gap: 1rem; margin-block-start: 1.5rem; }
 	.pagination a, .pagination span { padding: 0.6rem 0.9rem; border-radius: 6px; }
 	.pagination a { background: var(--rust); color: var(--field); }
