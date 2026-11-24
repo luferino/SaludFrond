@@ -1,0 +1,85 @@
+---
+export const prerender = false;
+
+import Layout from '../layouts/Layout.astro';
+import { ApiError } from '../shared/apiClient';
+import { getPermissionMatrix, type PermissionMatrix } from '../pods/permission-matrix/api';
+
+Astro.response.headers.set('Cache-Control', 'no-store');
+let state: 'success' | 'denied' | 'failed' = 'failed';
+let matrix: PermissionMatrix | null = null;
+try {
+	const result = await getPermissionMatrix(Astro.cookies);
+	if ('state' in result) state = result.state;
+	else {
+		state = 'success';
+		matrix = result;
+	}
+} catch (error) {
+	if (error instanceof ApiError && error.status === 401) {
+		const redirect = Astro.redirect('/auth/login?returnTo=%2Fpermission-matrix');
+		redirect.headers.set('Cache-Control', 'no-store');
+		return redirect;
+	}
+	state = 'failed';
+}
+const assigned = (rolePermissions: string[], permission: string) => rolePermissions.includes(permission);
+---
+
+<Layout>
+	<main aria-labelledby="permission-matrix-title">
+		<header class="intro">
+			<p class="eyebrow">Personas / Administración</p>
+			<h1 id="permission-matrix-title">Matriz de permisos</h1>
+			<p>Consultá el catálogo de permisos y su asignación por rol. La autorización se valida en el servidor.</p>
+		</header>
+		{state === 'success' && matrix ? (
+			<section aria-labelledby="matrix-heading">
+				<h2 id="matrix-heading">Asignación y aplicación de permisos</h2>
+				<p id="matrix-help">“Asignado” indica que el rol tiene el permiso. “Aplicación” indica si el servidor lo hace cumplir.</p>
+				<div class="table-scroll" role="region" aria-label="Matriz de permisos; desplazamiento horizontal disponible" tabindex="0">
+					<table aria-describedby="matrix-help">
+						<thead>
+							<tr>
+								<th scope="col">Permiso</th>
+								<th scope="col">Aplicación en servidor</th>
+								{matrix.roles.map(({ role }) => <th scope="col">{role}</th>)}
+							</tr>
+						</thead>
+						<tbody>
+							{matrix.permissions.map(({ permission, enforced }) => (
+								<tr>
+									<th scope="row">{permission}</th>
+									<td>{enforced ? 'Aplicado' : 'No aplicado'}</td>
+									{matrix.roles.map(({ permissions }) => <td>{assigned(permissions, permission) ? 'Asignado' : 'No asignado'}</td>)}
+								</tr>
+							))}
+						</tbody>
+					</table>
+				</div>
+				{matrix.permissions.length === 0 && <p role="status">No hay permisos registrados en el catálogo.</p>}
+				{matrix.roles.length === 0 && <p role="status">No hay roles con asignaciones registradas.</p>}
+			</section>
+		) : state === 'denied' ? (
+			<section class="notice" role="alert"><h2>No tenés acceso a esta información</h2><p>El servidor no autorizó la consulta. Tu sesión continúa activa.</p></section>
+		) : (
+			<section class="notice" role="alert"><h2>No se pudo cargar la matriz</h2><p>La información no está disponible. Intentá nuevamente más tarde.</p></section>
+		)}
+	</main>
+</Layout>
+
+<style>
+	main { max-width: 1280px; min-width: 0; margin: 0 auto; }
+	.intro { margin-bottom: 2rem; }
+	.intro p { margin: 0.75rem 0; color: var(--muted); }
+	.eyebrow { font: 0.65rem/1.6 Consolas, monospace; letter-spacing: 0.1em; text-transform: uppercase; }
+	h1 { margin: 0.5rem 0; font: 400 clamp(2rem, 3vw, 2.75rem)/1.15 var(--serif); }
+	h2 { font: 1.35rem/1.3 var(--serif); }
+	.table-scroll { max-width: 100%; overflow-x: auto; background: var(--paper); border: 1px solid var(--line); }
+	table { width: 100%; border-collapse: collapse; text-align: left; }
+	th, td { min-width: 9rem; padding: 0.75rem 1rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+	thead th { background: var(--sage-soft); }
+	tbody th { font-weight: 600; overflow-wrap: anywhere; }
+	.notice { padding: 1rem 1.25rem; background: var(--paper); border-left: 4px solid var(--rust); }
+	.notice h2 { margin-top: 0; }
+</style>

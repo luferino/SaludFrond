@@ -40,7 +40,7 @@ const pageTitles: Record<string, string> = {
 	'/subjects': 'Asignaturas', '/groups': 'Grupos académicos', '/subject-groups': 'Asignaturas y grupos',
 	'/teacher-habilitations': 'Habilitaciones docentes', '/student-habilitations': 'Habilitaciones de estudiantes',
 	'/reception/patients': 'Pacientes de recepción', '/reception/availability': 'Disponibilidad de recepción',
-	'/reception-accounts': 'Cuentas de recepción',
+	'/reception-accounts': 'Cuentas de recepción', '/permission-matrix': 'Matriz de permisos',
 };
 const pageTitle = currentPath.startsWith('/my-patients') ? 'Mis pacientes asignados'
 	: currentPath.startsWith('/kinesiology-evaluations') ? 'Evaluaciones kinésicas'
@@ -112,6 +112,7 @@ const academicLinks = isLoggedIn && !isReception ? [
 									{peopleLinks.map((link) => (
 										<a href={link.href} aria-current={currentPath === link.href ? 'page' : undefined}>{link.label} <span aria-hidden="true">↗</span></a>
 									))}
+									<a href="/permission-matrix" aria-current={currentPath === '/permission-matrix' ? 'page' : undefined}>Matriz de permisos <span aria-hidden="true">↗</span></a>
 								</nav>
 							</>}
 							{receptionLinks.length > 0 && <>
