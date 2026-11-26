@@ -116,7 +116,7 @@ function record(value: unknown): value is Record<string, unknown> {
 function exactKeys(value: Record<string, unknown>, keys: string[]): boolean {
 	return Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
 }
-function uuid(value: unknown): value is string { return typeof value === 'string' && UUID.test(value); }
+export function uuid(value: unknown): value is string { return typeof value === 'string' && UUID.test(value); }
 function iso(value: unknown): value is string {
 	return typeof value === 'string'
 		&& /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value)
@@ -401,10 +401,18 @@ export async function listHygieneDrafts(
 	return draftItems(response).map((item) => draftResponse(item, { context }));
 }
 
-/** Administrator consultation: one page of every visible draft, newest id first, with no origin context. */
-export async function listAllHygieneDrafts(cookies: AstroCookies, page: { limit: number; offset: number }): Promise<HygieneDraft[]> {
+export interface HygieneDraftAdminFilters { patient_id?: string; subject_id?: string; academic_group_id?: string }
+
+/** Administrator consultation: one page of visible drafts, newest id first, optionally filtered by academic origin. */
+export async function listAllHygieneDrafts(cookies: AstroCookies, page: { limit: number; offset: number } & HygieneDraftAdminFilters): Promise<HygieneDraft[]> {
 	validatePage(page);
 	const query = new URLSearchParams({ limit: String(page.limit), offset: String(page.offset) });
+	for (const key of ['patient_id', 'subject_id', 'academic_group_id'] as const) {
+		const value = page[key];
+		if (value === undefined) continue;
+		if (!uuid(value)) throw new Error('Invalid academic filter');
+		query.set(key, value);
+	}
 	const response = await apiFetch<unknown>(`/hygiene-preventive-drafts?${query}`, { cookies });
 	return draftItems(response).map((item) => draftResponse(item, {}));
 }

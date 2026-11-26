@@ -67,7 +67,7 @@ const hygieneApi = await loadCjs('src/pods/hygiene-preventive-draft/api.ts', { '
 const labels = await loadCjs('src/pods/hygiene-preventive-draft/labels.ts');
 const odontogram = await loadCjs('src/pods/hygiene-preventive-draft/odontogram.ts');
 // A missing module fails only the tests that call into it.
-const admin_ = await loadCjs('src/pods/hygiene-preventive-draft/admin.ts', { '../../shared/jwt': jwtModule }).catch((error) => ({ loadError: error.message }));
+const admin_ = await loadCjs('src/pods/hygiene-preventive-draft/admin.ts', { '../../shared/jwt': jwtModule, './api': hygieneApi }).catch((error) => ({ loadError: error.message }));
 
 async function html(value) {
  value = await value;
@@ -103,7 +103,7 @@ const procedureComponentPath = 'src/components/clinical/HygieneProcedureLog.astr
 const procedureComponent = (...args) => compileAstro(procedureComponentPath, { ...labels, ...helpers, Fragment: null, $$renderComponent: renderComponent }).then((component) => component(...args));
 
 /** Renders an admin page with the real admin helpers and API; `search` is the query string of the page URL. */
-async function renderAdmin(path, { actor = admin(), search = '', pageId = id, responses = {} } = {}) {
+async function renderAdmin(path, { actor = admin(), search = '', pageId = id, responses = {}, catalogs = {} } = {}) {
  routes = path === detailPage ? { [`GET /hygiene-preventive-drafts/${pageId}/consent`]: { body: { current_declaration_id: null, declarations: [] } }, [`GET /hygiene-preventive-drafts/${pageId}/procedures`]: { body: { items: [] } }, ...responses } : responses;
  calls = [];
  const headers = new Headers();
@@ -115,6 +115,9 @@ async function renderAdmin(path, { actor = admin(), search = '', pageId = id, re
  const mocks = {
   ...helpers, ...hygieneApi, ...labels, ...admin_, Layout: null, Fragment: null, ApiError: FixtureApiError,
   HygieneReadOnly: readOnlyComponent, HygieneConsentHistory: consentComponent, HygieneProcedureLog: procedureComponent, $$renderComponent: renderComponent,
+  listSubjects: async () => catalogs.subjects ?? { state: 'success', page: { items: [] } },
+  listGroups: async () => catalogs.groups ?? { state: 'success', page: { items: [] } },
+  listSubjectGroups: async () => catalogs.associations ?? { state: 'failed' },
  };
  const component = await compileAstro(path, mocks);
  const value = await component({ createAstro: () => Astro }, {}, {});
@@ -122,7 +125,7 @@ async function renderAdmin(path, { actor = admin(), search = '', pageId = id, re
  return { html: await html(value), calls, cacheControl: headers.get('Cache-Control') };
 }
 
-// A1: admin gate and listing parameters. Only limit and offset exist for this list.
+// A1: admin gate and listing parameters.
 
 test('A1 only an admin session with the drafts read grant passes the gate', () => {
  assert.equal(admin_.hygieneAdminGrant(cookiesFor(admin())), true);
@@ -154,7 +157,29 @@ test('A1 the query keeps only limit and offset, and pagination offers next only 
  assert.deepEqual(JSON.parse(JSON.stringify(admin_.hygieneAdminPagination(listing, 3))), { previousOffset: 20, nextOffset: null });
 });
 
-// A2: global list page. Read-only, one request per page, paging only.
+test('A1 patient and academic UUID filters accept blanks and reject malformed or repeated IDs', () => {
+ const parse = (query) => admin_.parseHygieneAdminListing(new URLSearchParams(query));
+ assert.equal(admin_.hygieneAdminQuery(parse('patient_id=&subject_id=&academic_group_id=')), 'limit=50&offset=0');
+ assert.deepEqual(JSON.parse(JSON.stringify(parse(`patient_id=${patient}`))), { limit: 50, offset: 0, patient_id: patient });
+ for (const key of ['patient_id', 'subject_id', 'academic_group_id']) {
+  assert.throws(() => parse(`${key}=invalid`), /Los filtros no son válidos/);
+  assert.throws(() => parse(`${key}=${key === 'patient_id' ? patient : subject}&${key}=`), /Los filtros no son válidos/);
+ }
+});
+
+// A2: global list page. Read-only, with optional academic filters.
+
+test('A2 patient and academic UUID filters scope the API and travel with pager and detail return, without catalog requests', async () => {
+ const filters = `patient_id=${patient}&subject_id=${subject}&academic_group_id=${group}`;
+ const page = await renderAdmin(listPage, { search: `limit=1&offset=2&${filters}`, responses: { 'GET /hygiene-preventive-drafts': { body: { items: [draft()] } } }, catalogs: { associations: { state: 'success', page: { items: [{ subject_id: subject, academic_group_id: group }], limit: 100, offset: 0 } } } });
+ assert.deepEqual(calls.filter((call) => call.path.startsWith('/hygiene-preventive-drafts')).map((call) => call.path), [`/hygiene-preventive-drafts?limit=1&offset=2&${filters}`]);
+ assert.equal(calls.length, 1, 'no patient catalog request');
+ assert.ok(page.html.includes(`href="/hygiene-preventive-admin/${id}?limit=1&offset=2&${filters}"`));
+ assert.ok(page.html.includes(`href="?limit=1&offset=1&${filters}"`));
+ assert.ok(page.html.includes(`href="?limit=1&offset=3&${filters}"`));
+ const detail = await renderAdmin(detailPage, { search: `limit=1&offset=2&${filters}`, responses: { [`GET /hygiene-preventive-drafts/${id}`]: { body: draft() } } });
+ assert.ok(detail.html.includes(`href="/hygiene-preventive-admin?limit=1&offset=2&${filters}"`));
+});
 
 test('A2 the list sends one request with the validated paging and offers next only on a full page', async () => {
  const items = [draft({ id: '9007199254741070' }), draft({ id: '9007199254741071' })];
@@ -165,7 +190,88 @@ test('A2 the list sends one request with the validated paging and offers next on
  assert.match(page.html, /href="\?limit=2&offset=2"[^>]*>Anteriores/);
  assert.match(page.html, /href="\?limit=2&offset=6"[^>]*>Siguientes/);
  assert.equal(page.cacheControl, 'no-store');
- assert.doesNotMatch(page.html, /<form|date_from|method="POST"/);
+ assert.doesNotMatch(page.html, /date_from|method="POST"/);
+});
+
+test('A2 the GET form keeps a legacy patient filter hidden and shows named academic choices', async () => {
+ const page = await renderAdmin(listPage, {
+  search: `limit=10&offset=20&patient_id=${patient}&subject_id=${subject}&academic_group_id=${group}`,
+  responses: { 'GET /hygiene-preventive-drafts': { body: { items: [] } } },
+  catalogs: {
+   subjects: { state: 'success', page: { items: [{ id: subject, name: 'Higiene II' }] } },
+   groups: { state: 'success', page: { items: [{ id: group, name: 'Grupo A', academic_year: 2026, curriculum_semester: 2 }] } },
+   associations: { state: 'success', page: { items: [{ subject_id: subject, academic_group_id: group }], limit: 100, offset: 0 } },
+  },
+ });
+ assert.match(page.html, /<form[^>]*method="get"[^>]*>/i);
+ assert.match(page.html, /name="limit" value="10"/);
+ assert.doesNotMatch(page.html, /name="offset"/);
+ assert.match(page.html, new RegExp(`<input type="hidden" name="patient_id" value="${patient}"`));
+ assert.match(page.html, new RegExp(`<option value="${subject}" selected[^>]*>Higiene II`));
+ assert.match(page.html, new RegExp(`<option value="${group}" selected[^>]*>Grupo A · 2026 · semestre 2`));
+ assert.doesNotMatch(page.html, /patient-filter|Paciente \(UUID\)/);
+ assert.doesNotMatch(page.html, /<datalist[^>]*patient|patient-options|Doc\.|documento|email|celular/);
+ assert.match(page.html, /href="\?limit=10&offset=0"[^>]*>Limpiar filtros/);
+ assert.match(page.html, /No hay borradores que coincidan con los filtros/);
+});
+
+test('S4 subject selection offers only associated groups with readable labels and hides UUID controls and labels', async () => {
+ const associated = '33333333-3333-4333-8333-333333333333';
+ const unrelated = '44444444-4444-4444-8444-444444444444';
+ const page = await renderAdmin(listPage, {
+  search: `subject_id=${subject}&academic_group_id=${associated}`,
+  responses: { 'GET /hygiene-preventive-drafts': { body: { items: [draft()] } } },
+  catalogs: {
+   subjects: { state: 'success', page: { items: [{ id: subject, name: 'Higiene II' }] } },
+   groups: { state: 'success', page: { items: [{ id: associated, name: 'Grupo A', academic_year: 2026, curriculum_semester: 2 }, { id: unrelated, name: 'Grupo B', academic_year: 2026, curriculum_semester: 1 }] } },
+   associations: { state: 'success', page: { items: [{ subject_id: subject, academic_group_id: associated }] } },
+  },
+ });
+ assert.match(page.html, /name="subject_id"/);
+ assert.match(page.html, /name="academic_group_id"/);
+ assert.match(page.html, /Grupo A · 2026 · semestre 2/);
+ assert.doesNotMatch(page.html, /Grupo B/);
+ assert.doesNotMatch(page.html, /patient-filter|UUID|Paciente [0-9a-f]{8}-|Asignatura de origen [0-9a-f]{8}-|Grupo de origen [0-9a-f]{8}-/i);
+});
+
+test('S5 unavailable subject catalog preserves the selected subject as a human-readable option', async () => {
+ for (const subjects of [
+  { state: 'denied' },
+  { state: 'failed' },
+  { state: 'success', page: { items: [{ id: group, name: 'Otro' }], limit: 100, offset: 0 } },
+ ]) {
+  const page = await renderAdmin(listPage, {
+   search: `subject_id=${subject}&academic_group_id=${group}`,
+   responses: { 'GET /hygiene-preventive-drafts': { body: { items: [draft()] } } },
+   catalogs: { subjects, associations: { state: 'failed' } },
+  });
+  assert.match(page.html, new RegExp(`<option value="${subject}" selected[^>]*>Materia seleccionada no disponible`));
+  assert.match(page.html, /<option value=""[^>]*>Todas las materias/);
+  assert.doesNotMatch(page.html, new RegExp(`>${subject}<`));
+ }
+});
+
+test('S5 an incomplete association listing does not clear an unconfirmed group and explains partial coverage', async () => {
+ const page = await renderAdmin(listPage, {
+  search: `subject_id=${subject}&academic_group_id=${group}`,
+  responses: { 'GET /hygiene-preventive-drafts': { body: { items: [draft()] } } },
+  catalogs: { associations: { state: 'failed' } },
+ });
+ assert.match(page.html, new RegExp(`<option value="${group}" selected[^>]*>Grupo seleccionado; asociación no confirmada`));
+ assert.match(page.html, /No se pudo verificar la asociación.*cobertura es parcial/);
+});
+
+test('A2 unavailable catalogs do not block an academic ID filter or list results', async () => {
+ const page = await renderAdmin(listPage, {
+  search: `academic_group_id=${group}`,
+  responses: { 'GET /hygiene-preventive-drafts': { body: { items: [draft()] } } },
+  catalogs: { subjects: { state: 'denied' }, groups: { state: 'failed' } },
+ });
+ assert.deepEqual(calls.map((call) => call.path), [`/hygiene-preventive-drafts?limit=50&offset=0&academic_group_id=${group}`]);
+ assert.match(page.html, new RegExp(`<option value="${group}" selected[^>]*>Grupo seleccionado; asociación no confirmada`));
+ assert.match(page.html, /No tenés permiso para consultar las materias/);
+ assert.match(page.html, /No se pudo consultar el catálogo de grupos/);
+ assert.match(page.html, /Ver borrador/);
 });
 
 test('A2 date parameters are not part of this list: the request carries only limit and offset', async () => {
@@ -174,13 +280,15 @@ test('A2 date parameters are not part of this list: the request carries only lim
 });
 
 test('A2 non-admin sessions and invalid paging send no request', async () => {
- for (const [actor, search] of [[admin({ role: 'teacher' }), ''], [admin({ permissions: [] }), ''], [null, ''], [admin(), 'limit=500']]) {
+ for (const [actor, search] of [[admin({ role: 'teacher' }), ''], [admin({ permissions: [] }), ''], [null, ''], [admin(), 'limit=500'], [admin(), 'subject_id=invalid']]) {
   const page = await renderAdmin(listPage, { actor, search, responses: { 'GET /hygiene-preventive-drafts': { body: { items: [] } } } });
   assert.equal(calls.length, 0, search);
   assert.doesNotMatch(page.html ?? '', /Borrador [0-9]/);
  }
  const invalid = await renderAdmin(listPage, { search: 'limit=500', responses: {} });
  assert.match(invalid.html, /La paginación no es válida\./);
+ const invalidFilter = await renderAdmin(listPage, { search: 'subject_id=invalid' });
+ assert.match(invalidFilter.html, /Los filtros no son válidos\./);
 });
 
 test('A2 401 redirects to login, 403 is a permission notice, other failures and malformed items are an alert', async () => {
