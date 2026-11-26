@@ -4,7 +4,10 @@ import Layout from '../layouts/Layout.astro';
 import type { HygieneDraft } from '../pods/hygiene-preventive-draft/api';
 import type { HygieneAdminListing } from '../pods/hygiene-preventive-draft/admin';
 import { ApiError } from '../shared/apiClient';
-import { listAllHygieneDrafts } from '../pods/hygiene-preventive-draft/api';
+import { listAllHygieneDrafts, uuid } from '../pods/hygiene-preventive-draft/api';
+import { listSubjects } from '../pods/subject/api';
+import { listGroups } from '../pods/group/api';
+import { listSubjectGroups } from '../pods/subject-group/api';
 import { hygieneAdminGrant, hygieneAdminPagination, hygieneAdminQuery, parseHygieneAdminListing } from '../pods/hygiene-preventive-draft/admin';
 import { hygieneTimestampLabel } from '../pods/hygiene-preventive-draft/labels';
 
@@ -16,14 +19,42 @@ let items: HygieneDraft[] = [];
 let error = '';
 let forbidden = false;
 let loaded = false;
+let invalidQuery = false;
+const catalogPage = { limit: 100, offset: 0 };
+let subjects: Awaited<ReturnType<typeof listSubjects>> | undefined;
+let groups: Awaited<ReturnType<typeof listGroups>> | undefined;
+let associations: Awaited<ReturnType<typeof listSubjectGroups>> | undefined;
+let associationsComplete = false;
 if (allowed) {
 	try {
 		listing = parseHygieneAdminListing(Astro.url.searchParams);
-	} catch {
-		error = 'La paginación no es válida.';
+	} catch (failure) {
+		invalidQuery = true;
+		error = failure instanceof Error ? failure.message : 'La consulta no es válida.';
 	}
 	if (!error) {
 		try {
+			// Catalog and association permissions are independent from the draft listing.
+			subjects = await listSubjects(catalogPage, Astro.cookies);
+			groups = await listGroups(catalogPage, Astro.cookies);
+			if (listing.subject_id) {
+				const associationItems = [];
+				let offset = 0;
+				while (true) {
+					const page = await listSubjectGroups({ limit: 100, offset }, { subjectId: listing.subject_id }, Astro.cookies);
+					associations = page;
+					if (page.state !== 'success') break;
+					associationItems.push(...page.page.items);
+					if (page.page.items.length < 100) {
+						associationsComplete = true;
+						associations = { state: 'success', page: { ...page.page, items: associationItems } };
+						break;
+					}
+					offset += 100;
+				}
+				const selectedIsAssociated = associationItems.some(({ academic_group_id }) => academic_group_id === listing.academic_group_id);
+				if (associationsComplete && listing.academic_group_id && !selectedIsAssociated) delete listing.academic_group_id;
+			}
 			items = await listAllHygieneDrafts(Astro.cookies, listing);
 			loaded = true;
 		} catch (failure) {
@@ -37,6 +68,13 @@ if (allowed) {
 }
 const { previousOffset, nextOffset } = hygieneAdminPagination(listing, loaded ? items.length : 0);
 const listQuery = hygieneAdminQuery(listing);
+const filtered = !!(listing.patient_id || listing.subject_id || listing.academic_group_id);
+const clearQuery = hygieneAdminQuery({ limit: listing.limit, offset: 0 });
+const subjectNames = new Map(subjects?.state === 'success' ? subjects.page.items.map(({ id, name }) => [id, name]) : []);
+const groupNames = new Map(groups?.state === 'success' ? groups.page.items.map(({ id, name, academic_year, curriculum_semester }) => [id, `${name} · ${academic_year} · semestre ${curriculum_semester}`]) : []);
+const associatedGroupIds = new Set(associations?.state === 'success' ? associations.page.items.map(({ academic_group_id }) => academic_group_id) : []);
+const groupOptions = groups?.state === 'success' ? groups.page.items.filter(({ id }) => !listing.subject_id || associatedGroupIds.has(id)) : [];
+
 ---
 <Layout>
 	<main aria-labelledby="title">
@@ -48,10 +86,46 @@ const listQuery = hygieneAdminQuery(listing);
 		{!allowed ? <p role="alert">No tenés permiso para consultar los borradores de Higiene y Preventiva II.</p> : <>
 			{forbidden && <p role="alert">No tenés permiso vigente para consultar los borradores de Higiene y Preventiva II.</p>}
 			{error && <p role="alert">{error}</p>}
-			{loaded && (items.length === 0 ? <p>No hay borradores de Higiene y Preventiva II para esta página.</p> : <ul class="drafts">
+			{invalidQuery && <a href="/hygiene-preventive-admin">Restablecer listado</a>}
+			{loaded && <form class="filters" method="get" action="/hygiene-preventive-admin" aria-label="Filtros de borradores">
+				<input type="hidden" name="limit" value={listing.limit} />
+				{listing.patient_id && <input type="hidden" name="patient_id" value={listing.patient_id} />}
+				<p id="filter-hint">Elegí una materia y, si la asociación está disponible, uno de sus grupos vinculados.</p>
+				{subjects?.state === 'denied' && <p>No tenés permiso para consultar las materias; el listado sigue disponible.</p>}
+				{subjects?.state === 'failed' && <p>No se pudo consultar el catálogo de materias; el listado sigue disponible.</p>}
+				{subjects?.state === 'success' && subjects.page.items.length === 0 && <p>El catálogo no contiene materias disponibles.</p>}
+				{subjects?.state === 'success' && subjects.page.items.length === 100 && <p>Se muestran las primeras 100 materias; el catálogo puede tener más.</p>}
+				{groups?.state === 'denied' && <p>No tenés permiso para consultar los grupos; el listado sigue disponible.</p>}
+				{groups?.state === 'failed' && <p>No se pudo consultar el catálogo de grupos; el listado sigue disponible.</p>}
+				{groups?.state === 'success' && groups.page.items.length === 0 && <p>El catálogo no contiene grupos disponibles.</p>}
+				{groups?.state === 'success' && groups.page.items.length === 100 && <p>Se muestran los primeros 100 grupos; el catálogo puede tener más.</p>}
+				{listing.subject_id && associations?.state !== 'success' && <p>No se pudo verificar la asociación de grupos. Se conserva el filtro actual y la cobertura es parcial.</p>}
+				{listing.subject_id && associations?.state === 'success' && !associationsComplete && <p>La asociación tiene más páginas; la cobertura es parcial y los grupos no listados no se consideran incompatibles.</p>}
+				<div class="filter-fields">
+					<label for="subject-filter">Materia de origen
+						<select id="subject-filter" name="subject_id" aria-describedby="filter-hint" onchange="this.form.requestSubmit()">
+							<option value="">Todas las materias</option>
+							{subjects?.state === 'success' && subjects.page.items.filter(({ id }) => uuid(id)).map(({ id, name }) => <option value={id} selected={id === listing.subject_id}>{name}</option>)}
+							{listing.subject_id && !(subjects?.state === 'success' && subjects.page.items.some(({ id }) => id === listing.subject_id)) && <option value={listing.subject_id} selected>Materia seleccionada no disponible</option>}
+						</select>
+					</label>
+					<label for="group-filter">Grupo académico de origen
+						<select id="group-filter" name="academic_group_id" aria-describedby="filter-hint">
+							<option value="">Todos los grupos</option>
+							{groupOptions.filter(({ id }) => uuid(id)).map(({ id }) => <option value={id} selected={id === listing.academic_group_id}>{groupNames.get(id)}</option>)}
+							{listing.academic_group_id && !groupOptions.some(({ id }) => id === listing.academic_group_id) && <option value={listing.academic_group_id} selected>{groupNames.get(listing.academic_group_id) ?? 'Grupo seleccionado; asociación no confirmada'}</option>}
+						</select>
+					</label>
+				</div>
+				<div class="filter-actions">
+					<button type="submit">Aplicar filtros</button>
+					{filtered && <a href={`?${clearQuery}`}>Limpiar filtros</a>}
+				</div>
+			</form>}
+			{loaded && (items.length === 0 ? <p>{filtered ? 'No hay borradores que coincidan con los filtros en esta página.' : 'No hay borradores de Higiene y Preventiva II para esta página.'}</p> : <ul class="drafts">
 				{items.map((item) => <li>
 					<p><strong>Borrador {item.id}</strong> · versión clínica {item.version} · actualizado <time datetime={item.updated_at}>{hygieneTimestampLabel(item.updated_at)}</time></p>
-					<p class="identifier">Paciente {item.patient_id}<br />Asignatura de origen {item.origin_subject_id}<br />Grupo de origen {item.origin_group_id}</p>
+					<p class="identifier">Materia de origen {subjectNames.get(item.origin_subject_id) ?? 'No disponible'}<br />Grupo de origen {groupNames.get(item.origin_group_id) ?? 'No disponible'}</p>
 					<a href={`/hygiene-preventive-admin/${encodeURIComponent(item.id)}?${listQuery}`}>Ver borrador</a>
 				</li>)}
 			</ul>)}
@@ -68,7 +142,13 @@ const listQuery = hygieneAdminQuery(listing);
 	.drafts { list-style: none; padding: 0; display: grid; gap: 0.75rem; }
 	.drafts li { padding: 1rem; border: 1px solid var(--line); border-radius: 0.65rem; background: var(--paper); }
 	.drafts p { margin: 0 0 0.5rem; }
-	.pager { display: flex; gap: 1rem; margin: 1rem 0; }
+	.filters { margin: 1rem 0; padding: 1rem; border: 1px solid var(--line); border-radius: 0.65rem; background: var(--paper); }
+	.filters p { margin: 0 0 0.75rem; }
+	.filter-fields { display: grid; gap: 0.75rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr)); }
+	.filter-fields label { display: grid; gap: 0.25rem; }
+	.filter-fields input { width: 100%; min-width: 0; }
+	.filter-actions, .pager { display: flex; flex-wrap: wrap; gap: 1rem; margin: 1rem 0; }
+	.filter-actions { align-items: center; margin-bottom: 0; }
 	a { color: var(--rust-deep); text-decoration: underline; }
 	[role="alert"] { border: 1px solid var(--rust-line); padding: 1rem; background: var(--rust-soft); border-radius: 0.65rem; }
 </style>

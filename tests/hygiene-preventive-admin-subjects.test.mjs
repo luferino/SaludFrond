@@ -45,8 +45,7 @@ const jwtModule = await loadCjs('src/shared/jwt.ts');
 const sessionShim = { getSession: (jar) => jar.get('session')?.value ?? null, clearSession: () => undefined };
 const hygieneApi = await loadCjs('src/pods/hygiene-preventive-draft/api.ts', { '../../shared/apiClient': apiShim, '../../shared/session': sessionShim });
 const labels = await loadCjs('src/pods/hygiene-preventive-draft/labels.ts');
-// A missing module fails only the tests that call into it.
-const admin = await loadCjs('src/pods/hygiene-preventive-draft/admin.ts', { '../../shared/jwt': jwtModule }).catch((error) => ({ loadError: error.message }));
+const admin = await loadCjs('src/pods/hygiene-preventive-draft/admin.ts', { '../../shared/jwt': jwtModule, './api': hygieneApi });
 const listSearch = await loadCjs('src/pods/subject/list-search.ts');
 const subjectApi = await loadCjs('src/pods/subject/api.ts', { '../../shared/apiClient': apiShim, './list-search': listSearch });
 const academic = await loadCjs('src/shared/academic-api.ts');
