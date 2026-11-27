@@ -66,7 +66,7 @@ export function validateAssignmentReport(value: unknown): AssignmentReport {
 }
 
 export async function getAssignmentReport(dates: AssignmentReportDates, cookies: AstroCookies): Promise<AssignmentReport> {
-	const query = new URLSearchParams(dates);
+	const query = new URLSearchParams({ from: dates.from, to: dates.to });
 	return validateAssignmentReport(await apiFetch<unknown>(`/reports/assignments?${query}`, { cookies }));
 }
 
