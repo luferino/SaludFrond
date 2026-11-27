@@ -1,0 +1,61 @@
+---
+export const prerender = false;
+import Layout from '../layouts/Layout.astro';
+import { ApiError, loadAssignmentReportPage, type AssignmentReportPageState } from '../pods/assignment-report/report';
+
+Astro.response.headers.set('Cache-Control', 'no-store');
+let pageState: AssignmentReportPageState;
+try {
+	pageState = await loadAssignmentReportPage(Astro.url.searchParams, Astro.cookies);
+} catch (failure) {
+	if (failure instanceof ApiError && failure.status === 401) return Astro.redirect(`/auth/login?returnTo=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`);
+	pageState = { state: 'error' as const };
+}
+const allowed = pageState.state !== 'denied';
+const submitted = Astro.url.searchParams.has('from') || Astro.url.searchParams.has('to');
+const from = pageState.state === 'success' || pageState.state === 'empty' ? Astro.url.searchParams.get('from') ?? '' : '';
+const to = pageState.state === 'success' || pageState.state === 'empty' ? Astro.url.searchParams.get('to') ?? '' : '';
+---
+<Layout>
+	<main aria-labelledby="assignment-report-title">
+		<header>
+			<p class="eyebrow">Administración / Informes</p>
+			<h1 id="assignment-report-title">Informe de asignaciones</h1>
+			<p>Consultá los totales de asignaciones por contexto académico. Las fechas incluyen ambos días.</p>
+		</header>
+		{!allowed ? <p role="alert">No tenés permiso para consultar este informe.</p> : <>
+			<form method="get" action="/assignment-report">
+				<label for="from">Desde <input id="from" name="from" type="date" required value={from} /></label>
+				<label for="to">Hasta <input id="to" name="to" type="date" required value={to} /></label>
+				<button type="submit">Consultar</button>
+			</form>
+			{pageState.state === 'invalid' && <p role="alert">Ingresá fechas válidas: el período debe incluir ambos días y no superar 366 días.</p>}
+			{pageState.state === 'forbidden' && <p role="alert">No tenés permiso vigente para consultar este informe.</p>}
+			{pageState.state === 'error' && <p role="alert">No se pudo cargar el informe. Intentá nuevamente más tarde.</p>}
+			{pageState.state === 'initial' && <p role="status">Elegí las fechas para consultar el informe.</p>}
+			{(pageState.state === 'success' || pageState.state === 'empty') && <>
+				<p role="status">Total de asignaciones: <strong>{pageState.report.total}</strong></p>
+				{pageState.state === 'empty' ? <p role="status">No hay asignaciones para el período seleccionado.</p> : <table>
+					<caption>Asignaciones por carrera, asignatura y grupo académico</caption>
+					<thead><tr><th scope="col">Carrera</th><th scope="col">Asignatura</th><th scope="col">Grupo académico</th><th scope="col">Asignaciones</th></tr></thead>
+					<tbody>{pageState.report.items.map((item) => <tr>
+						<td>{item.career || 'Carrera no disponible'}</td><td>{pageState.subjectNames[item.subject_id] ?? item.subject_id}</td><td>{pageState.groupNames[item.academic_group_id] ?? item.academic_group_id}</td><td>{item.assignment_count}</td>
+					</tr>)}</tbody>
+				</table>}
+			</>}
+		</>}
+	</main>
+</Layout>
+<style>
+	main { max-width: 58rem; margin: auto; padding: 1.5rem 0 3rem; overflow-wrap: anywhere; color: var(--ink); }
+	header p { max-width: 48rem; }
+	form { display: flex; flex-wrap: wrap; align-items: end; gap: 1rem; margin: 1.5rem 0; }
+	label { display: grid; gap: .35rem; font-weight: 600; }
+	input, button { padding: .6rem; border: 1px solid var(--field-line); border-radius: .35rem; font: inherit; }
+	input { background: var(--field); color: var(--ink); }
+	button { background: var(--rust); color: white; font-weight: 700; cursor: pointer; }
+	table { width: 100%; border-collapse: collapse; background: var(--paper); }
+	caption { text-align: left; font-weight: 700; padding: .75rem 0; }
+	th, td { border: 1px solid var(--line); padding: .65rem; text-align: left; }
+	[role="alert"] { border: 1px solid var(--rust-line); padding: 1rem; background: var(--rust-soft); border-radius: .65rem; }
+</style>

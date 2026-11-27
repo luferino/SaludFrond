@@ -29,6 +29,7 @@ const canConsultOralSurgery = isLoggedIn && isAdmin && Array.isArray(payload?.pe
 const adminGrants = isLoggedIn && isAdmin && Array.isArray(payload?.permissions)
 	&& payload.permissions.every((permission) => typeof permission === 'string') ? payload.permissions : [];
 const canConsultHygiene = adminGrants.includes('hygiene-preventive-drafts:read');
+const canReadAssignmentReport = adminGrants.includes('assignment-reports:read');
 const canManageHygieneSubjects = adminGrants.includes('hygiene-preventive-subjects:read') || adminGrants.includes('hygiene-preventive-subjects:write');
 const currentPath = Astro.url?.pathname.replace(/\/$/, '') || '/';
 const pageTitles: Record<string, string> = {
@@ -106,6 +107,12 @@ const academicLinks = isLoggedIn && !isReception ? [
 							<nav class="module-nav" aria-label="Principal">
 								<a href="/" aria-current={currentPath === '/' ? 'page' : undefined}>Inicio <span aria-hidden="true">↗</span></a>
 							</nav>
+							{canReadAssignmentReport && <>
+								<p class="nav-label">Administración</p>
+								<nav class="module-nav" aria-label="Administración">
+									<a href="/assignment-report" aria-current={currentPath === '/assignment-report' ? 'page' : undefined}>Informe de asignaciones <span aria-hidden="true">↗</span></a>
+								</nav>
+							</>}
 							{peopleLinks.length > 0 && <>
 								<p class="nav-label">Personas</p>
 								<nav class="module-nav" aria-label="Personas">
